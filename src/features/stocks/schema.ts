@@ -23,6 +23,7 @@ export const stockFormSchema = z.object({
   currentView: z.enum(stockViews),
   currentViewMemo: z.string().trim().max(1000),
   nextReviewDate: z.string().nullable(),
+  nextEarningsDate: z.string().nullable(),
   tagsText: z.string(),
 });
 

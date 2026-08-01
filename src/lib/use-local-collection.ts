@@ -6,7 +6,7 @@ export type LocalRecord = { id: string; updatedAt?: string; deletedAt?: string |
 
 export function useLocalCollection<T extends LocalRecord>(name: string, fallback: T[]) {
   const initialItems = useRef(fallback);
-  const [items, setItems] = useState<T[]>(initialItems.current);
+  const [items, setItems] = useState<T[]>(fallback);
   const [ready, setReady] = useState(false);
   useEffect(() => { let active = true; loadCollection(name, initialItems.current).then((value) => { if (active) { setItems(value); setReady(true); } }); return () => { active = false; }; }, [name]);
   const commit = useCallback((update: (current: T[]) => T[]) => setItems((current) => { const next = update(current); void saveCollection(name, next); return next; }), [name]);
