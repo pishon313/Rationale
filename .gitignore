@@ -1,0 +1,29 @@
+node_modules
+.pnpm-store
+.next
+out
+src-tauri/target
+src-tauri/gen/schemas
+coverage
+playwright-report
+test-results
+.env
+.env.local
+.env.*.local
+!.env.example
+.DS_Store
+*.tsbuildinfo
+
+# Local investment records and credentials
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.pem
+*.key
+
+# Local tooling
+.turbo
+.vercel
+*.log

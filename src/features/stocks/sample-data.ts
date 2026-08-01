@@ -1,0 +1,11 @@
+import type { Stock } from "./types";
+
+const now = "2026-07-30T00:00:00.000Z";
+
+export const sampleStocks: Stock[] = [
+  { id: "samsung", ticker: "005930", name: "삼성전자", market: "한국", currency: "KRW", assetType: "주식", sector: "반도체", status: "보유", investmentType: "장기 코어", currentPrice: 70800, targetPrice: 86000, averagePrice: 64100, quantity: 120, thesisSummary: "메모리 업황 회복과 HBM 경쟁력 개선을 관찰합니다.", currentView: "강세", currentViewMemo: "실적 개선 속도 확인 필요", nextReviewDate: "2026-08-05", tags: ["반도체", "코어"], createdAt: now, updatedAt: now, deletedAt: null },
+  { id: "hyundai", ticker: "005380", name: "현대차", market: "한국", currency: "KRW", assetType: "주식", sector: "자동차", status: "관찰", investmentType: "중기 투자", currentPrice: 223000, targetPrice: 270000, averagePrice: 0, quantity: 0, thesisSummary: "북미 판매와 주주환원 정책을 중심으로 관찰합니다.", currentView: "중립", currentViewMemo: "관세 영향 확인", nextReviewDate: "2026-08-10", tags: ["자동차"], createdAt: now, updatedAt: now, deletedAt: null },
+  { id: "tesla", ticker: "TSLA", name: "Tesla", market: "미국", currency: "USD", assetType: "주식", sector: "자동차", status: "매수 대기", investmentType: "스윙", currentPrice: 312.45, targetPrice: 350, averagePrice: 0, quantity: 0, thesisSummary: "변동성이 큰 구간으로 가격보다 추세 회복 여부를 우선 확인합니다.", currentView: "판단 보류", currentViewMemo: "거래량 동반 반등 필요", nextReviewDate: "2026-08-01", tags: ["미국", "고변동"], createdAt: now, updatedAt: now, deletedAt: null },
+  { id: "ford", ticker: "F", name: "Ford", market: "미국", currency: "USD", assetType: "주식", sector: "자동차", status: "관찰", investmentType: "관찰 전용", currentPrice: 11.82, targetPrice: 14, averagePrice: 0, quantity: 0, thesisSummary: "현금흐름과 EV 사업 손실 축소 여부를 확인합니다.", currentView: "중립", currentViewMemo: "분기 실적 대기", nextReviewDate: "2026-08-12", tags: ["배당"], createdAt: now, updatedAt: now, deletedAt: null },
+  { id: "micron", ticker: "MU", name: "Micron Technology", market: "미국", currency: "USD", assetType: "주식", sector: "반도체", status: "보유", investmentType: "중기 투자", currentPrice: 148.2, targetPrice: 175, averagePrice: 132.6, quantity: 35, thesisSummary: "DRAM 가격과 HBM 매출 확대를 핵심 지표로 봅니다.", currentView: "강세", currentViewMemo: "급등 시 추격 매수 금지", nextReviewDate: "2026-08-03", tags: ["반도체", "미국"], createdAt: now, updatedAt: now, deletedAt: null },
+];

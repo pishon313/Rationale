@@ -1,0 +1,80 @@
+# TradeJournal
+
+투자 아이디어 → 관찰 → 매수 계획 → 실제 매매 → 계획 대비 분석 → 회고를 연결하는 개인용 로컬 투자일지입니다. Next.js와 Tauri로 제작되어 웹 개발 환경과 macOS 앱에서 실행할 수 있습니다.
+
+## 주요 기능
+
+- 종목과 투자 아이디어, 목표 가격, 검토일 관리
+- 조건 기반 매수 계획과 실제 매매 기록 연결
+- 관찰 기록 타임라인과 매매 회고
+- 계획 매매율, 원칙 준수 점수, 감정별 패턴 분석
+- 투자 원칙 관리 및 매수 입력 중 위반 가능성 경고
+- Twelve Data를 통한 온라인 현재가 갱신과 오프라인 상태 안내
+- 전체 기록 JSON 백업 및 복원
+
+## 저장 방식
+
+- Mac 앱에서는 SQLite(`tradejournal.db`)에 기록합니다.
+- 주가 API 키는 macOS Keychain에 보관합니다.
+- 서버, Supabase, 로그인은 사용하지 않습니다.
+- 브라우저 개발 모드에서는 편의를 위해 localStorage를 사용합니다.
+- 다른 Mac으로 옮길 때는 설정의 **전체 백업**과 **백업 복원**을 사용합니다.
+
+## Mac 앱 개발 실행
+
+요구 사항: Node.js 22 이상, Rust stable, Xcode Command Line Tools
+
+```bash
+npm install
+npm run app:dev
+```
+
+처음 설치한 Rust가 터미널에서 인식되지 않으면 터미널을 다시 열거나 다음을 실행합니다.
+
+```bash
+source "$HOME/.cargo/env"
+```
+
+## 설치용 Mac 앱 빌드
+
+```bash
+npm run app:build
+```
+
+결과물은 다음 위치에 생성됩니다.
+
+```text
+src-tauri/target/release/bundle/macos/TradeJournal.app
+src-tauri/target/release/bundle/dmg/*.dmg
+```
+
+개인 개발 서명 없이 만든 앱은 다른 Mac에서 Gatekeeper 경고가 표시될 수 있습니다.
+
+## 브라우저 미리보기
+
+```bash
+npm run dev
+```
+
+브라우저 미리보기 데이터와 Mac 앱의 SQLite 데이터는 서로 다른 저장소입니다. 실제 기록은 Mac 앱에서 입력하는 것을 권장합니다.
+
+## 품질 검사
+
+```bash
+npm run lint
+npm run typecheck
+npm test
+npm run build
+cargo check --manifest-path src-tauri/Cargo.toml
+```
+
+## 백업
+
+설정 → 전체 백업에서 JSON 파일을 저장할 수 있습니다. 정기적으로 iCloud Drive나 외장 디스크에 보관하세요. SQLite 파일 자체를 두 Mac에서 동시에 iCloud 동기화하는 방식은 충돌 위험이 있어 지원하지 않습니다.
+
+## 현재 제한사항
+
+- 집/회사 Mac 사이 자동 동기화는 하지 않습니다.
+- Twelve Data 무료 요금제의 호출 한도가 적용됩니다.
+- 현재 포트폴리오의 USD 환산값은 대시보드에서 참고용 환율을 사용합니다.
+- 로그인과 서버 저장 없이 동작하므로 Mac 사이 이동은 백업/복원을 사용해야 합니다.

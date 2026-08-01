@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#174c45"/>
+      <stop offset="1" stop-color="#2a8173"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="220" fill="url(#bg)"/>
+  <path d="M246 278h532" stroke="#bfe7de" stroke-width="48" stroke-linecap="round" opacity=".42"/>
+  <path d="M292 706l138-150 111 82 191-232" fill="none" stroke="#e9faf6" stroke-width="54" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="732" cy="406" r="38" fill="#e9faf6"/>
+  <text x="512" y="855" text-anchor="middle" fill="#fff" font-family="Arial, Helvetica, sans-serif" font-size="166" font-weight="700" letter-spacing="18">TJ</text>
+</svg>

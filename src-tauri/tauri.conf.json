@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "TradeJournal",
+  "version": "0.1.0",
+  "identifier": "com.tradejournal.local",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:3000",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../out"
+  },
+  "app": {
+    "windows": [{ "title": "TradeJournal", "width": 1440, "height": 900, "minWidth": 980, "minHeight": 680, "resizable": true }],
+    "security": { "csp": null }
+  },
+  "bundle": { "active": true, "targets": ["dmg", "app"], "icon": [] }
+}
