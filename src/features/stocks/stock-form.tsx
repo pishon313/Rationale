@@ -18,13 +18,13 @@ export function StockForm({ stock, onCancel, onSave }: Props) {
       assetType: stock.assetType, sector: stock.sector, status: stock.status, investmentType: stock.investmentType,
       currentPrice: stock.currentPrice, targetPrice: stock.targetPrice, averagePrice: stock.averagePrice,
       quantity: stock.quantity, thesisSummary: stock.thesisSummary, currentView: stock.currentView,
-      currentViewMemo: stock.currentViewMemo, nextReviewDate: stock.nextReviewDate,
+      currentViewMemo: stock.currentViewMemo, nextReviewDate: stock.nextReviewDate, reviewNote: stock.reviewNote ?? "",
       nextEarningsDate: stock.nextEarningsDate ?? null, tagsText: stock.tags.join(", "),
     } : {
       ticker: "", name: "", market: "한국", currency: "KRW", assetType: "주식", sector: "",
       status: "관찰", investmentType: "관찰 전용", currentPrice: 0, targetPrice: null,
       averagePrice: 0, quantity: 0, thesisSummary: "", currentView: "판단 보류", currentViewMemo: "",
-      nextReviewDate: null, nextEarningsDate: null, tagsText: "",
+      nextReviewDate: null, reviewNote: "", nextEarningsDate: null, tagsText: "",
     },
   });
 
@@ -42,7 +42,8 @@ export function StockForm({ stock, onCancel, onSave }: Props) {
       investmentType: parsed.investmentType, currentPrice: parsed.currentPrice, targetPrice: parsed.targetPrice,
       averagePrice: parsed.averagePrice, quantity: parsed.quantity, thesisSummary: parsed.thesisSummary,
       currentView: parsed.currentView, currentViewMemo: parsed.currentViewMemo,
-      nextReviewDate: parsed.nextReviewDate || null, nextEarningsDate: parsed.nextEarningsDate || null,
+      nextReviewDate: parsed.nextReviewDate || null, reviewNote: parsed.reviewNote,
+      nextEarningsDate: parsed.nextEarningsDate || null,
       tags: parsed.tagsText.split(",").map((tag) => tag.trim()).filter(Boolean),
       priceUpdatedAt: stock?.priceUpdatedAt ?? null, priceQuotedAt: stock?.priceQuotedAt ?? null,
       priceSource: stock?.priceSource ?? "manual", priceStatus: "manual",
@@ -62,6 +63,7 @@ export function StockForm({ stock, onCancel, onSave }: Props) {
     <Field label="보유 수량" error={errors.quantity?.message}><input type="number" step="any" className={fieldClass} {...register("quantity")} /></Field>
     <Field label="현재 판단"><select className={fieldClass} {...register("currentView")}>{stockViews.map((v) => <option key={v}>{v}</option>)}</select></Field>
     <Field label="다음 검토일"><input type="date" className={fieldClass} {...register("nextReviewDate")} /></Field>
+    <Field label="검토할 사항" error={errors.reviewNote?.message}><input className={fieldClass} placeholder="예: 분기 실적과 마진 추이 확인" {...register("reviewNote")} /></Field>
     <Field label="다음 실적 발표일"><input type="date" className={fieldClass} {...register("nextEarningsDate")} /></Field>
     <div className="sm:col-span-2"><Field label="투자 아이디어 요약" error={errors.thesisSummary?.message}><textarea className="mt-1 min-h-24 w-full rounded-lg border bg-[var(--surface)] p-3 text-sm" placeholder="왜 이 종목을 보고 있는지 짧게 기록하세요." {...register("thesisSummary")} /></Field></div>
     <div className="sm:col-span-2"><Field label="현재 판단 메모" error={errors.currentViewMemo?.message}><textarea className="mt-1 min-h-20 w-full rounded-lg border bg-[var(--surface)] p-3 text-sm" {...register("currentViewMemo")} /></Field></div>

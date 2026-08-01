@@ -26,6 +26,7 @@ export type Stock = {
   currentView: (typeof stockViews)[number];
   currentViewMemo: string;
   nextReviewDate: string | null;
+  reviewNote?: string;
   nextEarningsDate?: string | null;
   tags: string[];
   createdAt: string;

@@ -23,6 +23,7 @@ export const stockFormSchema = z.object({
   currentView: z.enum(stockViews),
   currentViewMemo: z.string().trim().max(1000),
   nextReviewDate: z.string().nullable(),
+  reviewNote: z.string().trim().max(300, "검토할 사항은 300자 이내로 입력해 주세요."),
   nextEarningsDate: z.string().nullable(),
   tagsText: z.string(),
 });
