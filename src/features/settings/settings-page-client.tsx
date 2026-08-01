@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
-import { isTauriApp, loadCollection, saveCollection } from "@/lib/local-repository";
+import { isTauriApp, loadCollection, saveCollectionsAtomically } from "@/lib/local-repository";
 import { sampleStocks } from "@/features/stocks/sample-data";
 import { samplePlans } from "@/features/plans/sample-data";
 import { sampleTrades } from "@/features/trades/sample-data";
@@ -17,30 +17,43 @@ import type { Trade } from "@/features/trades/types";
 import type { Observation } from "@/features/observations/types";
 import type { Review } from "@/features/reviews/types";
 import type { InvestmentRule } from "@/features/rules/types";
+import { normalizeTrade } from "@/domain/trading-ledger";
+import { validateBackupPayload } from "./backup";
 
-type Backup = { version: 2; exportedAt: string; stocks: Stock[]; plans: BuyPlan[]; trades: Trade[]; observations: Observation[]; reviews: Review[]; rules: InvestmentRule[] };
-type LegacyBackup = Omit<Backup, "version" | "observations" | "reviews" | "rules"> & { version: 1 };
+type Backup = { version: 3; exportedAt: string; stocks: Stock[]; plans: BuyPlan[]; trades: Trade[]; observations: Observation[]; reviews: Review[]; rules: InvestmentRule[] };
 
 export function SettingsPageClient() {
   const [keyValue, setKeyValue] = useState(""); const [hasKey, setHasKey] = useState(false); const [message, setMessage] = useState("");
   useEffect(() => { if (isTauriApp()) invoke<boolean>("has_api_key", { provider: "twelve-data" }).then(setHasKey); }, []);
   async function exportBackup() {
-    const backup: Backup = { version: 2, exportedAt: new Date().toISOString(), stocks: await loadCollection("stocks", sampleStocks), plans: await loadCollection("plans", samplePlans), trades: await loadCollection("trades", sampleTrades), observations: await loadCollection("observations", sampleObservations), reviews: await loadCollection("reviews", sampleReviews), rules: await loadCollection("rules", sampleRules) };
+    const backup: Backup = { version: 3, exportedAt: new Date().toISOString(), stocks: await loadCollection("stocks", sampleStocks), plans: await loadCollection("plans", samplePlans), trades: (await loadCollection("trades", sampleTrades)).map(normalizeTrade), observations: await loadCollection("observations", sampleObservations), reviews: await loadCollection("reviews", sampleReviews), rules: await loadCollection("rules", sampleRules) };
     const content = JSON.stringify(backup, null, 2); const filename = `tradejournal-backup-${new Date().toISOString().slice(0, 10)}.json`;
     if (isTauriApp()) { const path = await save({ defaultPath: filename, filters: [{ name: "TradeJournal 백업", extensions: ["json"] }] }); if (path) await writeTextFile(path, content); }
     else { const url = URL.createObjectURL(new Blob([content], { type: "application/json" })); const a = document.createElement("a"); a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url); }
     setMessage("전체 백업 파일을 저장했습니다.");
   }
   async function importBackup() {
-    let content: string | null = null;
-    if (isTauriApp()) { const path = await open({ multiple: false, filters: [{ name: "TradeJournal 백업", extensions: ["json"] }] }); if (typeof path === "string") content = await readTextFile(path); }
-    else content = await pickBrowserFile();
-    if (!content) return;
-    const parsed = JSON.parse(content) as Backup | LegacyBackup;
-    if (![1, 2].includes(parsed.version) || !Array.isArray(parsed.stocks) || !Array.isArray(parsed.plans) || !Array.isArray(parsed.trades)) throw new Error("올바른 TradeJournal 백업이 아닙니다.");
-    await saveCollection("stocks", parsed.stocks); await saveCollection("plans", parsed.plans); await saveCollection("trades", parsed.trades);
-    if (parsed.version === 2) { await saveCollection("observations", parsed.observations); await saveCollection("reviews", parsed.reviews); await saveCollection("rules", parsed.rules); }
-    setMessage("복원했습니다. 화면을 새로고침해 주세요.");
+    try {
+      let content: string | null = null;
+      if (isTauriApp()) { const path = await open({ multiple: false, filters: [{ name: "TradeJournal 백업", extensions: ["json"] }] }); if (typeof path === "string") content = await readTextFile(path); }
+      else content = await pickBrowserFile();
+      if (!content) return;
+      const parsed = validateBackupPayload(JSON.parse(content));
+      const writes = [
+        { collection: "stocks", values: parsed.stocks },
+        { collection: "plans", values: parsed.plans },
+        { collection: "trades", values: parsed.trades.map(normalizeTrade) },
+        ...(parsed.version === 1 ? [] : [
+          { collection: "observations", values: parsed.observations },
+          { collection: "reviews", values: parsed.reviews },
+          { collection: "rules", values: parsed.rules },
+        ]),
+      ];
+      await saveCollectionsAtomically(writes);
+      setMessage("복원했습니다. 화면을 새로고침해 주세요.");
+    } catch (error) {
+      setMessage(`복원 실패: ${error instanceof Error ? error.message : "백업 파일을 확인해 주세요."}`);
+    }
   }
   async function storeKey() {
     if (!isTauriApp()) { localStorage.setItem("tradejournal.stock-api-key", keyValue); setHasKey(Boolean(keyValue)); }

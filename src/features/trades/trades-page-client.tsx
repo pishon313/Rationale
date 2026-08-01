@@ -1,37 +1,92 @@
 "use client";
-import { Plus, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { sampleStocks } from "@/features/stocks/sample-data";
-import { samplePlans } from "@/features/plans/sample-data";
-import { applyBuy, applySell, emptyPosition, planPriceDeviation, type Position } from "@/domain/portfolio";
+import { AlertTriangle, Pencil, Plus, Trash2, WalletCards } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { buildTradingLedger, cashBalanceKrw, normalizeTrade, tradeAmount } from "@/domain/trading-ledger";
 import { formatCurrency } from "@/domain/money";
-import { emotions, tradeTypes, type Trade } from "./types";
-import { sampleTrades } from "./sample-data";
-import { loadCollection, saveCollection } from "@/lib/local-repository";
 import { useLocalCollection } from "@/lib/use-local-collection";
+import { sampleStocks } from "@/features/stocks/sample-data";
+import type { Stock } from "@/features/stocks/types";
+import { samplePlans } from "@/features/plans/sample-data";
+import type { BuyPlan } from "@/features/plans/types";
 import { sampleRules } from "@/features/rules/sample-data";
 import type { InvestmentRule } from "@/features/rules/types";
-import { evaluateTradeRules } from "@/domain/rules";
+import { sampleTrades } from "./sample-data";
+import type { Trade } from "./types";
+import { migrateTrades, projectStocksFromTrades } from "./migrate-trades";
+import { TradeForm } from "./trade-form";
 
 export function TradesPageClient() {
-  const [trades, setTrades] = useState(sampleTrades); const [open, setOpen] = useState(false);
-  const rules = useLocalCollection("rules", sampleRules);
-  useEffect(() => { let active = true; loadCollection("trades", sampleTrades).then((value) => { if (active) setTrades(value); }); return () => { active = false; }; }, []);
-  const save = (trade: Trade) => { const next = [trade, ...trades]; setTrades(next); void saveCollection("trades", next); setOpen(false); };
-  const holdings = useMemo(() => calculateHoldings(trades), [trades]);
-  return <><div className="flex items-end justify-between"><div><p className="text-sm text-[var(--muted)]">실제 행동과 판단 기록</p><h1 className="mt-1 text-2xl font-semibold">매매</h1></div><button onClick={() => setOpen(true)} className="flex items-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm text-white"><Plus size={17} />매매 기록</button></div><section className="mt-6 grid gap-3 md:grid-cols-3">{Array.from(holdings.entries()).map(([id, p]) => { const stock = sampleStocks.find((s) => s.id === id); return stock && <article key={id} className="rounded-xl border bg-[var(--surface)] p-4"><p className="text-sm text-[var(--muted)]">{stock.name}</p><p className="mt-2 text-xl font-semibold tabular-nums">{p.quantity.toString()}주</p><p className="mt-1 text-xs text-[var(--muted)]">평균단가 {formatCurrency(p.averagePrice, stock.currency)}</p></article>; })}</section><section className="mt-4 overflow-hidden rounded-xl border bg-[var(--surface)]"><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-[var(--surface-muted)] text-xs text-[var(--muted)]"><tr>{["거래일", "종목", "구분", "수량", "가격", "거래금액", "수수료", "감정", "계획"].map((h) => <th key={h} className="px-4 py-3 font-medium">{h}</th>)}</tr></thead><tbody>{trades.map((t) => <tr key={t.id} className="border-t"><td className="px-4 py-4 whitespace-nowrap">{t.tradedAt.slice(0, 10)}</td><td className="px-4 font-medium">{t.stockName || "현금"}</td><td className="px-4"><span className={`rounded-full px-2 py-1 text-xs ${t.tradeType === "매수" ? "bg-blue-50 text-blue-700" : t.tradeType === "매도" ? "bg-red-50 text-red-700" : "bg-[var(--surface-muted)]"}`}>{t.tradeType}</span></td><td className="px-4 text-right tabular-nums">{t.quantity || "—"}</td><td className="px-4 text-right tabular-nums">{t.price ? formatCurrency(t.price, t.currency) : "—"}</td><td className="px-4 text-right font-medium tabular-nums">{formatCurrency(t.quantity * t.price, t.currency)}</td><td className="px-4 text-right tabular-nums">{formatCurrency(t.fee, t.currency)}</td><td className="px-4">{t.emotion} {t.emotionIntensity}/5</td><td className="px-4">{t.planId ? "계획 매매" : "비계획"}</td></tr>)}</tbody></table></div></section>{open && <TradeForm rules={rules.items} onCancel={() => setOpen(false)} onSave={save} />}</>;
+  const { allItems: storedTrades, ready: tradesReady, replaceAsync: replaceTradesAsync } = useLocalCollection<Trade>("trades", sampleTrades);
+  const { allItems: allStocks, ready: stocksReady, replaceAsync: replaceStocksAsync } = useLocalCollection<Stock>("stocks", sampleStocks);
+  const { items: plans, ready: plansReady } = useLocalCollection<BuyPlan>("plans", samplePlans);
+  const { items: rules, ready: rulesReady } = useLocalCollection<InvestmentRule>("rules", sampleRules);
+  const [editing, setEditing] = useState<Trade | "new" | null>(null);
+  const [message, setMessage] = useState("");
+  const [formError, setFormError] = useState("");
+  const [isMigrating, setIsMigrating] = useState(false);
+  const [migrationFailed, setMigrationFailed] = useState(false);
+  const migrationInProgress = useRef(false);
+  const migration = useMemo(() => migrateTrades(allStocks, storedTrades), [allStocks, storedTrades]);
+  const allTrades = migration.trades;
+  const trades = useMemo(() => allTrades.filter((trade) => !trade.deletedAt), [allTrades]);
+  const ledger = useMemo(() => buildTradingLedger(trades), [trades]);
+  const openStockIds = useMemo(() => new Set(ledger.positions.filter((position) => position.quantity > 0).map((position) => position.stockId)), [ledger]);
+  const tradableStocks = useMemo(() => projectStocksFromTrades(allStocks, allTrades).filter((stock) => !stock.deletedAt || stock.quantity > 0 || openStockIds.has(stock.id)), [allStocks, allTrades, openStockIds]);
+  const editingId = editing && editing !== "new" ? editing.id : null;
+  const formLedger = useMemo(() => editingId ? buildTradingLedger(trades.filter((trade) => trade.id !== editingId)) : ledger, [editingId, ledger, trades]);
+  const dataReady = tradesReady && stocksReady && plansReady && rulesReady && !isMigrating && !migrationFailed && migration.initializedStockIds.length === 0;
+
+  useEffect(() => {
+    if (!tradesReady || !stocksReady || !plansReady || !rulesReady || !migration.initializedStockIds.length || migrationInProgress.current || migrationFailed) return;
+    migrationInProgress.current = true;
+    setIsMigrating(true);
+    const initializedIds = new Set(migration.initializedStockIds);
+    const now = new Date().toISOString();
+    const migratedStocks = allStocks.map((stock) => initializedIds.has(stock.id) ? { ...stock, ledgerInitializedAt: now, updatedAt: now } : stock);
+    void (async () => {
+      try {
+        await replaceTradesAsync(migration.trades);
+        await replaceStocksAsync(migratedStocks);
+      } catch {
+        setMigrationFailed(true);
+        setMessage("기존 보유 기록을 원장으로 옮기지 못했습니다. 앱을 다시 열어 재시도해 주세요.");
+      } finally {
+        migrationInProgress.current = false;
+        setIsMigrating(false);
+      }
+    })();
+  }, [allStocks, migration.initializedStockIds, migration.trades, migrationFailed, plansReady, replaceStocksAsync, replaceTradesAsync, rulesReady, stocksReady, tradesReady]);
+
+  async function validateAndCommit(next: Trade[], changedId?: string, showInForm = false) {
+    const candidate = buildTradingLedger(next);
+    const direct = changedId ? candidate.calculations[changedId]?.error : null;
+    const previous = new Set(ledger.errors.map((item) => `${item.tradeId}:${item.message}`));
+    const introduced = candidate.errors.find((item) => !previous.has(`${item.tradeId}:${item.message}`));
+    const validationError = direct || (introduced ? `${introduced.tradeId}: ${introduced.message}` : "");
+    if (validationError) {
+      if (showInForm) setFormError(validationError); else setMessage(validationError);
+      return false;
+    }
+    try {
+      await replaceTradesAsync(next.map(normalizeTrade));
+      setMessage(""); setFormError(""); setEditing(null); return true;
+    } catch {
+      const saveError = "원장 기록을 저장하지 못했습니다. 다시 시도해 주세요.";
+      if (showInForm) setFormError(saveError); else setMessage(saveError);
+      return false;
+    }
+  }
+  async function saveTrade(trade: Trade) { setFormError(""); const next = editing === "new" ? [trade, ...allTrades] : allTrades.map((item) => item.id === trade.id ? trade : item); await validateAndCommit(next, trade.id, true); }
+  async function deleteTrade(trade: Trade) { if (!window.confirm(`${trade.tradedAt.slice(0, 10)} ${trade.stockName || trade.tradeType} 기록을 삭제할까요? 이후 포지션과 손익이 다시 계산됩니다.`)) return; const next = allTrades.map((item) => item.id === trade.id ? { ...item, deletedAt: new Date().toISOString(), updatedAt: new Date().toISOString() } : item); if (await validateAndCommit(next)) setMessage("기록을 삭제하고 전체 원장을 다시 계산했습니다."); }
+  function openNew() { setMessage(""); setFormError(""); setEditing("new"); }
+  function openEdit(trade: Trade) { setMessage(""); setFormError(""); setEditing(trade); }
+  function closeForm() { setFormError(""); setEditing(null); }
+  const activePositions = ledger.positions.filter((item) => item.quantity > 0); const investedKrw = activePositions.reduce((sum, item) => sum + item.investedAmountKrw, 0);
+  const ordered = [...trades].filter((trade) => !trade.deletedAt).sort((a, b) => (Date.parse(b.tradedAt) || 0) - (Date.parse(a.tradedAt) || 0) || b.id.localeCompare(a.id));
+  const negativeUnreconciled = ledger.cashBalances.some((item) => !item.isReconciled);
+
+  return <><div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm text-[var(--muted)]">매매·배당·입출금을 시간순으로 재계산</p><h1 className="mt-1 text-2xl font-semibold">매매 원장</h1></div><button disabled={!dataReady} onClick={openNew} className="flex items-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm text-white disabled:opacity-50"><Plus size={17} />원장 기록</button></div>{message && <div className={`mt-4 rounded-lg p-3 text-sm ${message.includes("삭제") ? "bg-[var(--accent-soft)] text-[var(--accent)]" : "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-200"}`}>{message}</div>}{migration.warnings.length > 0 && <Notice title="기존 보유 수량 확인 필요" lines={migration.warnings} />}{negativeUnreconciled && <Notice title="기초 현금이 등록되지 않은 계좌가 있습니다" lines={["표시된 현금은 현재 기록의 순현금흐름입니다. 실제 잔액을 맞추려면 가장 오래된 날짜로 입금 기록을 추가하세요."]} />}<section className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Metric label="열린 포지션" value={`${activePositions.length}개`} note={`완료된 사이클 ${ledger.cycles.filter((item) => item.closedAt).length}개`} /><Metric label="보유 투자원금" value={formatCurrency(investedKrw, "KRW")} note="거래 당시 환율 기준" /><Metric label="누적 실현손익" value={`${ledger.totalRealizedKrw >= 0 ? "+" : ""}${formatCurrency(ledger.totalRealizedKrw, "KRW")}`} note="수수료·세금·환율 반영" /><Metric label="기록 현금 환산" value={formatCurrency(cashBalanceKrw(ledger), "KRW")} note="USD 1,380원 참고 환산" /></section><section className="mt-4 rounded-xl border bg-[var(--surface)] p-5"><div className="flex items-center gap-2"><WalletCards size={18} className="text-[var(--accent)]" /><h2 className="font-semibold">계좌별 현금</h2></div><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{ledger.cashBalances.map((item) => <div key={`${item.accountName}-${item.currency}`} className="rounded-lg bg-[var(--surface-muted)] p-3"><p className="text-xs text-[var(--muted)]">{item.accountName} · {item.currency}</p><p className="mt-1 font-semibold tabular-nums">{formatCurrency(item.balance, item.currency)}</p><p className="mt-1 text-[11px] text-[var(--muted)]">{item.isReconciled ? "입금 기록 기준" : "순현금흐름 · 조정 필요"}</p></div>)}{!ledger.cashBalances.length && <p className="text-sm text-[var(--muted)]">입출금 또는 매매 기록이 없습니다.</p>}</div></section><section className="mt-4 overflow-hidden rounded-xl border bg-[var(--surface)]"><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-[var(--surface-muted)] text-xs text-[var(--muted)]"><tr>{["일시", "계좌", "종목/구분", "수량", "가격/금액", "현금 변동", "실현손익", "포지션", ""].map((head) => <th key={head} className="whitespace-nowrap px-4 py-3 font-medium">{head}</th>)}</tr></thead><tbody>{ordered.map((trade) => { const calculation = ledger.calculations[trade.id]; const cycle = ledger.cycles.find((item) => item.id === calculation?.positionCycleId); return <tr key={trade.id} className="border-t hover:bg-[var(--surface-muted)]"><td className="whitespace-nowrap px-4 py-4">{trade.tradedAt.replace("T", " ").slice(0, 16)}</td><td className="whitespace-nowrap px-4">{trade.accountName}</td><td className="px-4"><b>{trade.stockName || trade.tradeType}</b><small className="block text-[var(--muted)]">{trade.isOpeningPosition ? "기초 포지션" : trade.tradeType}{trade.memo ? ` · ${trade.memo}` : ""}</small></td><td className="px-4 text-right tabular-nums">{trade.quantity || "—"}</td><td className="px-4 text-right tabular-nums">{formatCurrency(tradeAmount(trade), trade.currency)}</td><td className="px-4 text-right tabular-nums">{calculation ? `${calculation.cashEffect > 0 ? "+" : ""}${formatCurrency(calculation.cashEffect, trade.currency)}` : "—"}</td><td className={`px-4 text-right tabular-nums ${calculation?.realizedProfit ? calculation.realizedProfit > 0 ? "text-emerald-600" : "text-red-600" : ""}`}>{calculation?.realizedProfit ? `${calculation.realizedProfit > 0 ? "+" : ""}${formatCurrency(calculation.realizedProfit, trade.currency)}` : "—"}</td><td className="whitespace-nowrap px-4">{cycle ? `${cycle.stockName} #${cycle.sequence}` : "—"}{calculation?.error && <small className="block text-red-600">{calculation.error}</small>}</td><td className="px-4"><div className="flex"><button aria-label="기록 수정" onClick={() => openEdit(trade)} className="grid size-8 place-items-center"><Pencil size={15} /></button>{!trade.isOpeningPosition && <button aria-label="기록 삭제" onClick={() => deleteTrade(trade)} className="grid size-8 place-items-center text-red-600"><Trash2 size={15} /></button>}</div></td></tr>; })}</tbody></table></div>{!ordered.length && <div className="grid h-44 place-items-center text-sm text-[var(--muted)]">아직 원장 기록이 없습니다.</div>}</section>{editing && <TradeForm trade={editing === "new" ? undefined : editing} stocks={tradableStocks} plans={plans} rules={rules} ledger={formLedger} formError={formError} onCancel={closeForm} onSave={saveTrade} />}</>;
 }
 
-function calculateHoldings(trades: Trade[]) {
-  const result = new Map<string, Position>();
-  [...trades].sort((a, b) => a.tradedAt.localeCompare(b.tradedAt)).forEach((t) => { if (!t.stockId || (t.tradeType !== "매수" && t.tradeType !== "매도")) return; const p = result.get(t.stockId) ?? emptyPosition(); try { result.set(t.stockId, t.tradeType === "매수" ? applyBuy(p, t.quantity, t.price, t.fee) : applySell(p, t.quantity, t.price, t.fee, t.tax)); } catch {} });
-  return result;
-}
-
-function TradeForm({ rules, onCancel, onSave }: { rules: InvestmentRule[]; onCancel: () => void; onSave: (t: Trade) => void }) {
-  const [stockId, setStockId] = useState("micron"), [planId, setPlanId] = useState(""), [type, setType] = useState<Trade["tradeType"]>("매수"), [quantity, setQuantity] = useState(0), [price, setPrice] = useState(0), [fee, setFee] = useState(0), [tax, setTax] = useState(0), [emotion, setEmotion] = useState("평온"), [conditionMet, setConditionMet] = useState(true);
-  const stock = sampleStocks.find((s) => s.id === stockId)!; const plan = samplePlans.find((p) => p.id === planId); const deviation = plan?.targetPrice ? planPriceDeviation(plan.targetPrice, price) : null; const field = "mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3 text-sm";
-  const warnings = type === "매수" ? evaluateTradeRules(rules, { amount: quantity * price, planId: planId || null }) : [];
-  return <div className="fixed inset-0 z-50 flex justify-end bg-black/35"><form className="h-full w-full max-w-xl overflow-y-auto bg-[var(--surface)]" onSubmit={(e) => { e.preventDefault(); if (quantity <= 0 || price < 0) return; onSave({ id: crypto.randomUUID(), stockId, stockName: stock.name, planId: planId || null, tradeType: type, tradedAt: new Date().toISOString().slice(0, 16), quantity, price, currency: stock.currency, exchangeRate: stock.currency === "KRW" ? 1 : 1380, fee, tax, accountName: "기본 계좌", memo: "", emotion, emotionIntensity: 2, confidenceScore: 3, ruleComplianceScore: warnings.length ? 2 : conditionMet ? 5 : 3, createdAt: new Date().toISOString() }); }}><div className="flex items-center justify-between border-b p-5"><h2 className="text-lg font-semibold">매매 기록</h2><button type="button" onClick={onCancel}><X /></button></div><div className="grid gap-5 p-5 sm:grid-cols-2"><Label text="종목"><select className={field} value={stockId} onChange={(e) => setStockId(e.target.value)}>{sampleStocks.map((s) => <option value={s.id} key={s.id}>{s.name}</option>)}</select></Label><Label text="매매 유형"><select className={field} value={type} onChange={(e) => setType(e.target.value as Trade["tradeType"])}>{tradeTypes.slice(0, 2).map((v) => <option key={v}>{v}</option>)}</select></Label><Label text="수량"><input required type="number" min="0" step="any" className={field} value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} /></Label><Label text="체결 가격"><input required type="number" min="0" step="any" className={field} value={price} onChange={(e) => setPrice(Number(e.target.value))} /></Label><Label text="수수료"><input type="number" min="0" step="any" className={field} value={fee} onChange={(e) => setFee(Number(e.target.value))} /></Label><Label text="세금"><input type="number" min="0" step="any" className={field} value={tax} onChange={(e) => setTax(Number(e.target.value))} /></Label><div className="sm:col-span-2"><Label text="연결된 매수 계획"><select className={field} value={planId} onChange={(e) => setPlanId(e.target.value)}><option value="">비계획 매매</option>{samplePlans.filter((p) => p.stockId === stockId).map((p) => <option value={p.id} key={p.id}>{p.title}</option>)}</select></Label></div>{plan && <div className="sm:col-span-2 rounded-lg bg-[var(--surface-muted)] p-4 text-sm"><p className="font-medium">계획 대비 확인</p><p className="mt-2">가격 오차: {deviation ? `${deviation.greaterThan(0) ? "+" : ""}${deviation.toFixed(1)}%` : "계산 대기"}</p><label className="mt-3 flex gap-2"><input type="checkbox" checked={conditionMet} onChange={(e) => setConditionMet(e.target.checked)} />계획 조건이 충족되었음을 확인</label></div>}{warnings.length > 0 && <div className="sm:col-span-2 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"><p className="font-semibold">원칙 위반 가능성 {warnings.length}건</p>{warnings.map((warning) => <p key={warning.ruleId} className="mt-2">[{warning.severity}] {warning.message}</p>)}</div>}<Label text="감정"><select className={field} value={emotion} onChange={(e) => setEmotion(e.target.value)}>{emotions.map((v) => <option key={v}>{v}</option>)}</select></Label><div><p className="text-sm text-[var(--muted)]">거래 총액</p><p className="mt-2 text-lg font-semibold tabular-nums">{formatCurrency(quantity * price, stock.currency)}</p></div></div><div className="sticky bottom-0 flex justify-end gap-2 border-t bg-[var(--surface)] p-4"><button type="button" onClick={onCancel} className="rounded-lg border px-4 py-2 text-sm">취소</button><button className="rounded-lg bg-[var(--accent)] px-5 py-2 text-sm text-white">기록 저장</button></div></form></div>;
-}
-function Label({ text, children }: { text: string; children: React.ReactNode }) { return <label className="text-sm font-medium">{text}{children}</label>; }
+function Metric({ label, value, note }: { label: string; value: string; note: string }) { return <article className="rounded-xl border bg-[var(--surface)] p-5"><p className="text-sm text-[var(--muted)]">{label}</p><p className="mt-3 text-xl font-semibold tabular-nums">{value}</p><p className="mt-1 text-xs text-[var(--muted)]">{note}</p></article>; }
+function Notice({ title, lines }: { title: string; lines: string[] }) { return <div className="mt-4 flex gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"><AlertTriangle size={18} className="mt-0.5 shrink-0" /><div><p className="font-semibold">{title}</p>{lines.map((line) => <p key={line} className="mt-1">{line}</p>)}</div></div>; }

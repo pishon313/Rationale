@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useSyncExternalStore } from "react";
-import { BarChart3, ChartPie as CirclePie, ArrowUpRight, CalendarClock, CalendarDays, ClipboardCheck, Eye, Plus, Wallet } from "lucide-react";
+import { AlertTriangle, BarChart3, ChartPie as CirclePie, ArrowUpRight, CalendarClock, CalendarDays, ClipboardCheck, Eye, Plus, Wallet } from "lucide-react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { buildAnalytics } from "@/domain/analytics";
 import { useLocalCollection } from "@/lib/use-local-collection";
@@ -15,6 +15,8 @@ import { sampleStocks } from "@/features/stocks/sample-data";
 import { withComputed, type Stock, type StockComputed } from "@/features/stocks/types";
 import { sampleTrades } from "@/features/trades/sample-data";
 import type { Trade } from "@/features/trades/types";
+import { buildTradingLedger, cashBalanceKrw } from "@/domain/trading-ledger";
+import { migrateTrades, projectStocksFromTrades } from "@/features/trades/migrate-trades";
 
 const USD_KRW_ESTIMATE = 1380;
 const VIEW_KEY = "tradejournal.dashboard.asset-view";
@@ -28,16 +30,23 @@ export function DashboardPageClient() {
   const trades = useLocalCollection<Trade>("trades", sampleTrades);
   const observations = useLocalCollection<Observation>("observations", sampleObservations);
   const reviews = useLocalCollection<Review>("reviews", sampleReviews);
-  const holdings = stocks.items.filter((stock) => stock.quantity > 0).map(withComputed);
-  const invested = holdings.reduce((sum, stock) => sum + toKrw(stock.investedAmount, stock.currency), 0);
+  const migration = migrateTrades(stocks.allItems, trades.allItems);
+  const migratedTrades = migration.trades;
+  const ledger = buildTradingLedger(migratedTrades);
+  const holdings = projectStocksFromTrades(stocks.allItems, migratedTrades).filter((stock) => stock.quantity > 0).map(withComputed);
+  const unresolvedStockIds = new Set(migration.unresolvedStockIds);
+  const investedFromLedger = ledger.positions.filter((position) => position.quantity > 0 && !unresolvedStockIds.has(position.stockId)).reduce((sum, position) => sum + position.investedAmountKrw, 0);
+  const unresolvedInvested = holdings.filter((stock) => unresolvedStockIds.has(stock.id)).reduce((sum, stock) => sum + toKrw(stock.investedAmount, stock.currency), 0);
+  const invested = investedFromLedger + unresolvedInvested;
   const marketValue = holdings.reduce((sum, stock) => sum + toKrw(stock.marketValue, stock.currency), 0);
   const analytics = buildAnalytics(trades.items, reviews.items);
   const activePlans = plans.items.filter((plan) => !["완료", "취소", "무효화"].includes(plan.status));
   const reviewsDue = byDate(stocks.items, "nextReviewDate");
   const earningsDue = byDate(stocks.items, "nextEarningsDate");
-  const metrics = [["총 투자 원금", won.format(invested), "USD는 1,380원 추정"], ["현재 평가금액", won.format(marketValue), "저장된 현재가 기준"], ["미실현손익", `${marketValue - invested >= 0 ? "+" : ""}${won.format(marketValue - invested)}`, `${holdings.length}개 보유 종목`], ["계획 매매율", `${analytics.plannedTradeRate.toFixed(0)}%`, `매매 ${analytics.tradeCount}건 기준`]];
+  const ledgerWarningCount = migration.warnings.length + ledger.errors.length;
+  const metrics = [["총 투자 원금", won.format(invested), "원장 평균단가 기준"], ["현재 평가금액", won.format(marketValue), "저장된 현재가 기준"], ["기록 현금", won.format(cashBalanceKrw(ledger)), !ledger.cashBalances.length ? "현금 기록 없음" : ledger.cashBalances.every((item) => item.isReconciled) ? "입금 기록 기준" : "기초 입금 등록 필요"], ["실현손익", `${ledger.totalRealizedKrw >= 0 ? "+" : ""}${won.format(ledger.totalRealizedKrw)}`, "수수료·세금·환율 반영"], ["미실현손익", `${marketValue - invested >= 0 ? "+" : ""}${won.format(marketValue - invested)}`, `${holdings.length}개 보유 종목`], ["계획 매매율", `${analytics.plannedTradeRate.toFixed(0)}%`, `매매 ${analytics.tradeCount}건 기준`]];
 
-  return <><div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm text-[var(--muted)]">개인용 로컬 투자 기록</p><h1 className="mt-1 text-2xl font-semibold tracking-tight">오늘의 판단을 기록해 보세요.</h1></div><Link href="/observations" className="flex items-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-2.5 text-sm font-medium text-white"><Plus size={17} />새 관찰 기록</Link></div><section aria-label="포트폴리오 요약" className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{metrics.map(([label, value, note]) => <article key={label} className="rounded-xl border bg-[var(--surface)] p-5"><div className="flex items-center justify-between"><p className="text-sm text-[var(--muted)]">{label}</p><ArrowUpRight size={17} className="text-[var(--accent)]" /></div><p className="mt-4 text-2xl font-semibold tabular-nums">{value}</p><p className="mt-1 text-xs text-[var(--muted)]">{note}</p></article>)}</section><div className="mt-4 grid gap-4 lg:grid-cols-3"><AssetAllocation holdings={holdings} total={marketValue} /><ScheduleCard title="다가오는 검토일" icon={<CalendarDays size={19} />} stocks={reviewsDue} dateKey="nextReviewDate" empty="예정된 검토일이 없습니다." /><ScheduleCard title="다가오는 실적 발표" icon={<CalendarClock size={19} />} stocks={earningsDue} dateKey="nextEarningsDate" empty="등록된 실적 발표일이 없습니다." /></div><section className="mt-4 grid gap-3 sm:grid-cols-3"><Quick href="/plans" icon={<ClipboardCheck size={18} />} label="진행 중 계획" value={`${activePlans.length}개`} /><Quick href="/observations" icon={<Eye size={18} />} label="관찰 기록" value={`${observations.items.length}개`} /><Quick href="/reviews" icon={<ArrowUpRight size={18} />} label="회고" value={`${reviews.items.length}개`} /></section></>;
+  return <><div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm text-[var(--muted)]">개인용 로컬 투자 기록</p><h1 className="mt-1 text-2xl font-semibold tracking-tight">오늘의 판단을 기록해 보세요.</h1></div><Link href="/observations" className="flex items-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-2.5 text-sm font-medium text-white"><Plus size={17} />새 관찰 기록</Link></div>{ledgerWarningCount > 0 && <Link href="/trades" className="mt-4 flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"><AlertTriangle size={18} className="shrink-0" /><span><b>원장 확인이 필요한 기록 {ledgerWarningCount}건</b><span className="mt-1 block">현재 요약에는 계산할 수 없는 기록이 제외됐습니다. 매매 원장에서 확인해 주세요.</span></span></Link>}<section aria-label="포트폴리오 요약" className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{metrics.map(([label, value, note]) => <article key={label} className="rounded-xl border bg-[var(--surface)] p-5"><div className="flex items-center justify-between"><p className="text-sm text-[var(--muted)]">{label}</p><ArrowUpRight size={17} className="text-[var(--accent)]" /></div><p className="mt-4 text-2xl font-semibold tabular-nums">{value}</p><p className="mt-1 text-xs text-[var(--muted)]">{note}</p></article>)}</section><div className="mt-4 grid gap-4 lg:grid-cols-3"><AssetAllocation holdings={holdings} total={marketValue} /><ScheduleCard title="다가오는 검토일" icon={<CalendarDays size={19} />} stocks={reviewsDue} dateKey="nextReviewDate" empty="예정된 검토일이 없습니다." /><ScheduleCard title="다가오는 실적 발표" icon={<CalendarClock size={19} />} stocks={earningsDue} dateKey="nextEarningsDate" empty="등록된 실적 발표일이 없습니다." /></div><section className="mt-4 grid gap-3 sm:grid-cols-3"><Quick href="/plans" icon={<ClipboardCheck size={18} />} label="진행 중 계획" value={`${activePlans.length}개`} /><Quick href="/observations" icon={<Eye size={18} />} label="관찰 기록" value={`${observations.items.length}개`} /><Quick href="/reviews" icon={<ArrowUpRight size={18} />} label="회고" value={`${reviews.items.length}개`} /></section></>;
 }
 
 function AssetAllocation({ holdings, total }: { holdings: StockComputed[]; total: number }) {

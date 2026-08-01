@@ -11,6 +11,7 @@ type Props = { stock?: Stock; onCancel: () => void; onSave: (stock: Stock) => vo
 const fieldClass = "mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3 text-sm";
 
 export function StockForm({ stock, onCancel, onSave }: Props) {
+  const ledgerManaged = Boolean(stock?.ledgerInitializedAt);
   const { register, handleSubmit, formState: { errors, isSubmitting }, watch, setValue } = useForm<StockFormValues>({
     resolver: zodResolver(stockFormSchema),
     defaultValues: stock ? {
@@ -31,6 +32,7 @@ export function StockForm({ stock, onCancel, onSave }: Props) {
   const market = watch("market");
   function syncCurrency(value: string) {
     setValue("market", value as "한국" | "미국" | "기타");
+    if (ledgerManaged) return;
     if (value === "한국") setValue("currency", "KRW");
     if (value === "미국") setValue("currency", "USD");
   }
@@ -38,29 +40,31 @@ export function StockForm({ stock, onCancel, onSave }: Props) {
   return <div className="fixed inset-0 z-50 flex justify-end bg-black/35" role="dialog" aria-modal="true" aria-labelledby="stock-form-title"><form className="h-full w-full overflow-y-auto bg-[var(--surface)] shadow-2xl sm:max-w-2xl" onSubmit={handleSubmit((values) => {
     const parsed = stockFormSchema.parse(values); const now = new Date().toISOString();
     onSave({ id: stock?.id ?? crypto.randomUUID(), ticker: parsed.ticker, name: parsed.name, market: parsed.market,
-      currency: parsed.currency, assetType: parsed.assetType, sector: parsed.sector, status: parsed.status,
+      currency: ledgerManaged ? stock!.currency : parsed.currency, assetType: parsed.assetType, sector: parsed.sector, status: parsed.status,
       investmentType: parsed.investmentType, currentPrice: parsed.currentPrice, targetPrice: parsed.targetPrice,
-      averagePrice: parsed.averagePrice, quantity: parsed.quantity, thesisSummary: parsed.thesisSummary,
+      averagePrice: ledgerManaged ? stock!.averagePrice : parsed.averagePrice, quantity: ledgerManaged ? stock!.quantity : parsed.quantity, thesisSummary: parsed.thesisSummary,
       currentView: parsed.currentView, currentViewMemo: parsed.currentViewMemo,
       nextReviewDate: parsed.nextReviewDate || null, reviewNote: parsed.reviewNote,
       nextEarningsDate: parsed.nextEarningsDate || null,
       tags: parsed.tagsText.split(",").map((tag) => tag.trim()).filter(Boolean),
       priceUpdatedAt: stock?.priceUpdatedAt ?? null, priceQuotedAt: stock?.priceQuotedAt ?? null,
       priceSource: stock?.priceSource ?? "manual", priceStatus: "manual",
+      ledgerInitializedAt: stock ? stock.ledgerInitializedAt ?? null : parsed.quantity === 0 ? now : null,
       createdAt: stock?.createdAt ?? now, updatedAt: now, deletedAt: null });
   })}><div className="sticky top-0 z-10 flex items-center justify-between border-b bg-[var(--surface)] px-5 py-4"><div><h2 id="stock-form-title" className="text-lg font-semibold">{stock ? "종목 수정" : "새 종목 추가"}</h2><p className="mt-1 text-xs text-[var(--muted)]">판단에 필요한 기본 정보를 기록하세요.</p></div><button type="button" aria-label="닫기" onClick={onCancel} className="grid size-9 place-items-center rounded-lg hover:bg-[var(--surface-muted)]"><X size={19} /></button></div><div className="grid gap-5 p-5 sm:grid-cols-2">
     <Field label="티커" error={errors.ticker?.message}><input autoFocus className={fieldClass} placeholder="예: 005930, TSLA" {...register("ticker")} /></Field>
     <Field label="종목명" error={errors.name?.message}><input className={fieldClass} placeholder="예: 삼성전자" {...register("name")} /></Field>
     <Field label="시장"><select className={fieldClass} value={market} onChange={(e) => syncCurrency(e.target.value)}>{markets.map((v) => <option key={v}>{v}</option>)}</select></Field>
-    <Field label="통화"><select className={fieldClass} {...register("currency")}><option>KRW</option><option>USD</option></select></Field>
+    <Field label="통화"><select disabled={ledgerManaged} className={`${fieldClass} disabled:cursor-not-allowed disabled:opacity-60`} {...register("currency")}><option>KRW</option><option>USD</option></select></Field>
     <Field label="자산 유형" error={errors.assetType?.message}><input className={fieldClass} {...register("assetType")} /></Field>
     <Field label="섹터"><input className={fieldClass} placeholder="예: 반도체" {...register("sector")} /></Field>
     <Field label="상태"><select className={fieldClass} {...register("status")}>{stockStatuses.map((v) => <option key={v}>{v}</option>)}</select></Field>
     <Field label="투자 유형"><select className={fieldClass} {...register("investmentType")}>{investmentTypes.map((v) => <option key={v}>{v}</option>)}</select></Field>
     <Field label="현재 가격" error={errors.currentPrice?.message}><input type="number" step="any" className={fieldClass} {...register("currentPrice")} /></Field>
     <Field label="목표 가격" error={errors.targetPrice?.message}><input type="number" step="any" className={fieldClass} {...register("targetPrice")} /></Field>
-    <Field label="평균단가" error={errors.averagePrice?.message}><input type="number" step="any" className={fieldClass} {...register("averagePrice")} /></Field>
-    <Field label="보유 수량" error={errors.quantity?.message}><input type="number" step="any" className={fieldClass} {...register("quantity")} /></Field>
+    <Field label="평균단가" error={errors.averagePrice?.message}><input readOnly={ledgerManaged} type="number" step="any" className={`${fieldClass} read-only:cursor-not-allowed read-only:opacity-60`} {...register("averagePrice")} /></Field>
+    <Field label="보유 수량" error={errors.quantity?.message}><input readOnly={ledgerManaged} type="number" step="any" className={`${fieldClass} read-only:cursor-not-allowed read-only:opacity-60`} {...register("quantity")} /></Field>
+    {ledgerManaged && <p className="sm:col-span-2 rounded-lg bg-[var(--surface-muted)] p-3 text-xs leading-5 text-[var(--muted)]">통화·평균단가·보유 수량은 매매 원장에서 자동 계산됩니다. 값을 바꾸려면 해당 매매 기록을 수정해 주세요.</p>}
     <Field label="현재 판단"><select className={fieldClass} {...register("currentView")}>{stockViews.map((v) => <option key={v}>{v}</option>)}</select></Field>
     <Field label="다음 검토일"><input type="date" className={fieldClass} {...register("nextReviewDate")} /></Field>
     <Field label="검토할 사항" error={errors.reviewNote?.message}><input className={fieldClass} placeholder="예: 분기 실적과 마진 추이 확인" {...register("reviewNote")} /></Field>

@@ -1,8 +1,89 @@
-use tauri_plugin_sql::{Migration, MigrationKind};
-use serde::Serialize;
-use std::time::Duration;
+use serde::{Deserialize, Serialize};
+use std::{collections::HashSet, time::Duration};
+use tauri::State;
+use tauri_plugin_sql::{DbInstances, DbPool, Migration, MigrationKind};
 
 const SERVICE: &str = "com.tradejournal.local";
+const DATABASE_URL: &str = "sqlite:tradejournal.db";
+const COLLECTION_STATE: &str = "__tradejournal_collection_state__";
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AtomicRecordWrite {
+    id: String,
+    data: String,
+    updated_at: String,
+}
+
+#[derive(Deserialize)]
+struct AtomicCollectionWrite {
+    collection: String,
+    records: Vec<AtomicRecordWrite>,
+}
+
+#[tauri::command(rename_all = "camelCase")]
+async fn save_collections_atomically(
+    db_instances: State<'_, DbInstances>,
+    writes: Vec<AtomicCollectionWrite>,
+    state_updated_at: String,
+) -> Result<(), String> {
+    let instances = db_instances.0.read().await;
+    let pool = match instances.get(DATABASE_URL) {
+        Some(DbPool::Sqlite(pool)) => pool.clone(),
+        _ => return Err("LOCAL_DATABASE_NOT_LOADED".into()),
+    };
+    drop(instances);
+
+    let mut collection_names = HashSet::new();
+    for write in &writes {
+        if write.collection.trim().is_empty() || write.collection == COLLECTION_STATE {
+            return Err("INVALID_COLLECTION_NAME".into());
+        }
+        if !collection_names.insert(write.collection.as_str()) {
+            return Err("DUPLICATE_COLLECTION_WRITE".into());
+        }
+
+        let mut record_ids = HashSet::new();
+        for record in &write.records {
+            if record.id.trim().is_empty() {
+                return Err("INVALID_RECORD_ID".into());
+            }
+            if !record_ids.insert(record.id.as_str()) {
+                return Err("DUPLICATE_RECORD_ID".into());
+            }
+        }
+    }
+
+    let mut transaction = pool.begin().await.map_err(|error| error.to_string())?;
+    for write in writes {
+        sqlx::query("DELETE FROM app_records WHERE collection = ?")
+            .bind(&write.collection)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| error.to_string())?;
+
+        for record in write.records {
+            sqlx::query("INSERT INTO app_records (collection, id, data, updated_at) VALUES (?, ?, ?, ?)")
+                .bind(&write.collection)
+                .bind(record.id)
+                .bind(record.data)
+                .bind(record.updated_at)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+
+        sqlx::query("INSERT INTO app_records (collection, id, data, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(collection, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at")
+            .bind(COLLECTION_STATE)
+            .bind(&write.collection)
+            .bind("{}")
+            .bind(&state_updated_at)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    transaction.commit().await.map_err(|error| error.to_string())
+}
 
 #[tauri::command]
 fn save_api_key(provider: String, value: String) -> Result<(), String> {
@@ -67,10 +148,10 @@ pub fn run() {
         kind: MigrationKind::Up,
     }];
     tauri::Builder::default()
-        .plugin(tauri_plugin_sql::Builder::default().add_migrations("sqlite:tradejournal.db", migrations).build())
+        .plugin(tauri_plugin_sql::Builder::default().add_migrations(DATABASE_URL, migrations).build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![save_api_key, has_api_key, fetch_quote])
+        .invoke_handler(tauri::generate_handler![save_api_key, has_api_key, fetch_quote, save_collections_atomically])
         .run(tauri::generate_context!())
         .expect("TradeJournal 실행 중 오류가 발생했습니다");
 }

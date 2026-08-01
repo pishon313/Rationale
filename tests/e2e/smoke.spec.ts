@@ -19,3 +19,38 @@ test("매수 계획의 테이블과 칸반 보기를 전환한다", async ({ pag
   await page.getByRole("button", { name: "칸반 보기" }).click();
   await expect(page.getByRole("heading", { name: "아이디어" })).toBeVisible();
 });
+
+test("매매 원장에서 현금 입금 기록 화면을 연다", async ({ page }) => {
+  await page.goto("/trades");
+  await expect(page.getByRole("heading", { name: "매매 원장" })).toBeVisible();
+  await page.getByRole("button", { name: "원장 기록" }).click();
+  await page.getByRole("button", { name: "입금", exact: true }).click();
+  await expect(page.getByLabel("입금 금액")).toBeVisible();
+  await expect(page.getByLabel("계좌")).toBeVisible();
+});
+
+test("현금 기록을 저장하고 다시 열어 수정·삭제한다", async ({ page }) => {
+  await page.goto("/trades");
+  await page.getByRole("button", { name: "원장 기록" }).click();
+  await page.getByRole("button", { name: "입금", exact: true }).click();
+  await page.getByLabel("입금 금액").fill("100000");
+  await page.getByLabel("계좌").fill("E2E 계좌");
+  await page.getByRole("button", { name: "기록 저장" }).click();
+
+  let row = page.getByRole("row").filter({ hasText: "E2E 계좌" });
+  await expect(row).toBeVisible();
+  await page.reload();
+  row = page.getByRole("row").filter({ hasText: "E2E 계좌" });
+  await expect(row).toBeVisible();
+
+  await row.getByRole("button", { name: "기록 수정" }).click();
+  await page.getByLabel("입금 금액").fill("120000");
+  await page.getByRole("button", { name: "변경 저장" }).click();
+  await expect(page.getByRole("row").filter({ hasText: "E2E 계좌" })).toContainText("120,000");
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("row").filter({ hasText: "E2E 계좌" }).getByRole("button", { name: "기록 삭제" }).click();
+  await expect(page.getByRole("row").filter({ hasText: "E2E 계좌" })).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole("row").filter({ hasText: "E2E 계좌" })).toHaveCount(0);
+});

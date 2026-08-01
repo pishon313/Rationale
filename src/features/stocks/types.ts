@@ -28,6 +28,7 @@ export type Stock = {
   nextReviewDate: string | null;
   reviewNote?: string;
   nextEarningsDate?: string | null;
+  ledgerInitializedAt?: string | null;
   tags: string[];
   createdAt: string;
   updatedAt: string;
