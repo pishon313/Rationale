@@ -2,7 +2,6 @@
 import { X } from "lucide-react";
 import { useState } from "react";
 import { calculatePlanRisk } from "@/domain/plan-performance";
-import { sampleStocks as defaultStocks } from "@/features/stocks/sample-data";
 import type { Stock } from "@/features/stocks/types";
 import { useI18n } from "@/i18n/i18n-provider";
 import { useLocalCollection } from "@/lib/use-local-collection";
@@ -10,7 +9,7 @@ import { conditionTypes, planStatuses, scenarioTypes, type BuyPlan, type BuyPlan
 
 export function PlanForm(props: { plan?: BuyPlan; onCancel: () => void; onSave: (plan: BuyPlan) => void }) {
   const { t } = useI18n();
-  const stockStore = useLocalCollection<Stock>("stocks", defaultStocks);
+  const stockStore = useLocalCollection<Stock>("stocks", []);
   if (!stockStore.ready) return <div className="fixed inset-0 z-50 grid place-items-center bg-black/35"><div className="rounded-xl bg-[var(--surface)] p-6 text-sm text-[var(--muted)]">{t("종목을 불러오는 중...")}</div></div>;
   const archived = props.plan ? stockStore.allItems.find((stock) => stock.id === props.plan?.stockId && stock.deletedAt) : undefined;
   return <LoadedPlanForm key={props.plan?.id ?? stockStore.items[0]?.id ?? "empty"} {...props} stocks={archived ? [...stockStore.items, archived] : stockStore.items} />;

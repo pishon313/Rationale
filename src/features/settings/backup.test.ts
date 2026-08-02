@@ -6,6 +6,7 @@ import { sampleRules } from "@/features/rules/sample-data";
 import { sampleStocks } from "@/features/stocks/sample-data";
 import { sampleTrades } from "@/features/trades/sample-data";
 import { validateBackupPayload } from "./backup";
+import { backupCounts, backupWrites, snapshotWrite, type BackupV4 } from "./backup-service";
 
 const valid = {
   version: 1,
@@ -72,5 +73,19 @@ describe("validateBackupPayload", () => {
   it("rejects an initialized holding without any security history", () => {
     const stock = { ...sampleStocks[0], id: "orphan", ledgerInitializedAt: "2026-08-01", quantity: 3 };
     expect(() => validateBackupPayload({ ...valid, stocks: [stock], trades: [] })).toThrow("매매 기록이 없습니다");
+  });
+
+  it("prepares every version 4 collection for an atomic restore", () => {
+    const parsed = validateBackupPayload({ ...valid, version: 4, observations: sampleObservations, reviews: sampleReviews, rules: sampleRules, notes: [], language: "ko", dashboardNotes: [], earningsEvents: [], displayCurrency: "KRW" });
+    const names = backupWrites(parsed).map((write) => write.collection);
+    expect(names).toEqual(["stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences"]);
+    expect(backupCounts(parsed)).toMatchObject({ stocks: sampleStocks.length, trades: sampleTrades.length, notes: 0 });
+  });
+
+  it("stores the current backup as an undo snapshot before restore", () => {
+    const backup = { ...valid, version: 4, observations: sampleObservations, reviews: sampleReviews, rules: sampleRules, notes: [], language: "ko", dashboardNotes: [], earningsEvents: [], displayCurrency: "KRW" } as BackupV4;
+    const write = snapshotWrite(backup);
+    expect(write.collection).toBe("restore-snapshots");
+    expect(JSON.parse(String((write.values[0] as unknown as { content: string }).content))).toMatchObject({ version: 4, stocks: sampleStocks });
   });
 });

@@ -1,23 +1,19 @@
 "use client";
 
-import { AlertTriangle, FileUp, Pencil, Plus, Trash2, WalletCards } from "lucide-react";
+import { AlertTriangle, FileUp, Pencil, Plus, RefreshCw, Trash2, WalletCards } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fromKrw } from "@/domain/currency";
-import { buildTradingLedger, cashBalanceKrw, normalizeTrade, tradeAmount } from "@/domain/trading-ledger";
-import { samplePlans } from "@/features/plans/sample-data";
+import { currencies, fromKrw, type Currency } from "@/domain/currency";
+import { buildTradingLedger, cashBalanceKrw, normalizeTrade, tradeAmount, type TradingLedger } from "@/domain/trading-ledger";
 import type { BuyPlan } from "@/features/plans/types";
-import { sampleRules } from "@/features/rules/sample-data";
 import type { InvestmentRule } from "@/features/rules/types";
-import { sampleStocks } from "@/features/stocks/sample-data";
 import type { Stock } from "@/features/stocks/types";
 import { useI18n } from "@/i18n/i18n-provider";
 import { useLocalCollection } from "@/lib/use-local-collection";
 import { useCurrencyPreference, useExchangeRates } from "@/lib/use-exchange-rates";
 import { CsvImportDialog } from "./csv-import-dialog";
 import { migrateTrades, projectStocksFromTrades } from "./migrate-trades";
-import { sampleTrades } from "./sample-data";
 import { TradeForm } from "./trade-form";
-import { displayTradeSystemText, translateTradeText } from "./trade-i18n";
+import { canonicalTradeAccount, displayTradeSystemText, translateTradeText } from "./trade-i18n";
 import type { Trade } from "./types";
 
 export function TradesPageClient() {
@@ -31,11 +27,14 @@ export function TradesPageClient() {
     maximumFractionDigits: currency === "KRW" || currency === "JPY" ? 0 : 2,
   });
   const display = (valueKrw: number) => money(fromKrw(valueKrw, currencyPreference.displayCurrency, exchangeRates.snapshot.ratesToKrw), currencyPreference.displayCurrency);
-  const { allItems: storedTrades, ready: tradesReady, replaceAsync: replaceTradesAsync } = useLocalCollection<Trade>("trades", sampleTrades);
-  const { allItems: allStocks, ready: stocksReady, replaceAsync: replaceStocksAsync } = useLocalCollection<Stock>("stocks", sampleStocks);
-  const { items: plans, ready: plansReady } = useLocalCollection<BuyPlan>("plans", samplePlans);
-  const { items: rules, ready: rulesReady } = useLocalCollection<InvestmentRule>("rules", sampleRules);
+  const { allItems: storedTrades, ready: tradesReady, replaceAsync: replaceTradesAsync } = useLocalCollection<Trade>("trades", []);
+  const { allItems: allStocks, ready: stocksReady, replaceAsync: replaceStocksAsync } = useLocalCollection<Stock>("stocks", []);
+  const { items: plans, ready: plansReady } = useLocalCollection<BuyPlan>("plans", []);
+  const { items: rules, ready: rulesReady } = useLocalCollection<InvestmentRule>("rules", []);
   const [editing, setEditing] = useState<Trade | "new" | null>(null);
+  const [newTradeType, setNewTradeType] = useState<Trade["tradeType"]>("매수");
+  const [accountManagerOpen, setAccountManagerOpen] = useState(false);
+  const [balanceAdjustmentOpen, setBalanceAdjustmentOpen] = useState(false);
   const [csvOpen, setCsvOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [formError, setFormError] = useState("");
@@ -123,11 +122,42 @@ export function TradesPageClient() {
     if (await validateAndCommit(next)) setMessage("기록을 삭제하고 전체 원장을 다시 계산했습니다.");
   }
 
+  async function renameAccount(source: string, target: string) {
+    const normalized = canonicalTradeAccount(target.trim(), t);
+    if (!normalized || normalized === source) return false;
+    const merging = trades.some((trade) => trade.accountName === normalized);
+    if (merging && !window.confirm(t("{source} 계좌를 {target} 계좌로 병합할까요? 모든 기록이 대상 계좌로 이동합니다.", { source: displayTradeSystemText(source, t), target: displayTradeSystemText(normalized, t) }))) return false;
+    const now = new Date().toISOString();
+    const next = allTrades.map((trade) => trade.accountName === source ? { ...trade, accountName: normalized, updatedAt: now } : trade);
+    const saved = await validateAndCommit(next);
+    if (saved) setMessage(merging ? "계좌를 병합하고 전체 원장을 다시 계산했습니다." : "계좌 이름을 변경하고 전체 원장을 다시 계산했습니다.");
+    return saved;
+  }
+
+  async function adjustBalance(accountName: string, currency: Currency, targetBalance: number) {
+    const normalizedAccount = canonicalTradeAccount(accountName.trim(), t);
+    if (!normalizedAccount || !Number.isFinite(targetBalance)) return false;
+    const current = ledger.cashBalances.find((balance) => balance.accountName === normalizedAccount && balance.currency === currency)?.balance ?? 0;
+    const difference = targetBalance - current;
+    if (Math.abs(difference) < 0.00000001) return true;
+    const now = new Date().toISOString();
+    const adjustment: Trade = {
+      id: crypto.randomUUID(), stockId: null, stockName: "", planId: null,
+      tradeType: difference > 0 ? "입금" : "출금", tradedAt: now, quantity: 0, price: 0, amount: Math.abs(difference),
+      currency, exchangeRate: currency === "KRW" ? 1 : exchangeRates.snapshot.ratesToKrw[currency], fee: 0, tax: 0,
+      accountName: normalizedAccount, memo: "잔액 조정", emotion: "평온", emotionIntensity: 1, confidenceScore: 3,
+      ruleComplianceScore: 5, ruleViolations: [], createdAt: now, updatedAt: now, deletedAt: null,
+    };
+    const saved = await validateAndCommit([adjustment, ...allTrades], adjustment.id);
+    if (saved) setMessage("계좌 잔액을 조정하고 전체 원장을 다시 계산했습니다.");
+    return saved;
+  }
+
   const activePositions = ledger.positions.filter((item) => item.quantity > 0);
   const investedKrw = activePositions.reduce((sum, item) => sum + item.investedAmountKrw, 0);
   const ordered = [...trades].sort((a, b) => (Date.parse(b.tradedAt) || 0) - (Date.parse(a.tradedAt) || 0) || b.id.localeCompare(a.id));
   const negativeUnreconciled = ledger.cashBalances.some((item) => !item.isReconciled);
-  const successMessage = message.includes("추가") || message.includes("삭제");
+  const successMessage = message.includes("추가") || message.includes("삭제") || message.includes("변경") || message.includes("병합");
   const rateDate = exchangeRates.snapshot.rateDate
     ? safeFormatDate(exchangeRates.snapshot.rateDate, formatDate, { dateStyle: "medium" })
     : t("기본값");
@@ -136,8 +166,10 @@ export function TradesPageClient() {
     <div className="flex flex-wrap items-end justify-between gap-4">
       <div><p className="text-sm text-[var(--muted)]">{t("매매·배당·입출금을 시간순으로 재계산")}</p><h1 className="mt-1 text-2xl font-semibold">{t("매매 원장")}</h1></div>
       <div className="flex gap-2">
+        <button disabled={!dataReady || !ledger.cashBalances.length && !ledger.positions.length} onClick={() => setAccountManagerOpen(true)} className="flex items-center gap-2 rounded-lg border px-4 py-2 text-sm disabled:opacity-50"><RefreshCw size={17} />{t("계좌 관리")}</button>
+        <button disabled={!dataReady} onClick={() => setBalanceAdjustmentOpen(true)} className="flex items-center gap-2 rounded-lg border px-4 py-2 text-sm disabled:opacity-50"><WalletCards size={17} />{t("계좌 등록·잔액 조정")}</button>
         <button disabled={!dataReady} onClick={() => setCsvOpen(true)} className="flex items-center gap-2 rounded-lg border px-4 py-2 text-sm disabled:opacity-50"><FileUp size={17} />{t("파일 가져오기")}</button>
-        <button disabled={!dataReady} onClick={() => { setMessage(""); setFormError(""); setEditing("new"); }} className="flex items-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm text-white disabled:opacity-50"><Plus size={17} />{t("원장 기록")}</button>
+        <button disabled={!dataReady} onClick={() => { setNewTradeType("매수"); setMessage(""); setFormError(""); setEditing("new"); }} className="flex items-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm text-white disabled:opacity-50"><Plus size={17} />{t("원장 기록")}</button>
       </div>
     </div>
     {message && <div className={`mt-4 rounded-lg p-3 text-sm ${successMessage ? "bg-[var(--accent-soft)] text-[var(--accent)]" : "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-200"}`}>{translateTradeText(message, t, formatNumber)}</div>}
@@ -160,9 +192,34 @@ export function TradesPageClient() {
       <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-[var(--surface-muted)] text-xs text-[var(--muted)]"><tr>{["일시", "계좌", "종목/구분", "수량", "가격/금액", "현금 변동", "실현손익", "포지션", ""].map((head) => <th key={head} className="whitespace-nowrap px-4 py-3 font-medium">{t(head)}</th>)}</tr></thead><tbody>{ordered.map((trade) => <TradeRow key={trade.id} trade={trade} ledger={ledger} onEdit={() => { setMessage(""); setFormError(""); setEditing(trade); }} onDelete={() => void deleteTrade(trade)} />)}</tbody></table></div>
       {!ordered.length && <div className="grid h-44 place-items-center text-sm text-[var(--muted)]">{t("아직 원장 기록이 없습니다.")}</div>}
     </section>
-    {editing && <TradeForm trade={editing === "new" ? undefined : editing} stocks={tradableStocks} plans={plans} rules={rules} ledger={formLedger} formError={formError} onCancel={() => { setFormError(""); setEditing(null); }} onSave={saveTrade} />}
+    {editing && <TradeForm trade={editing === "new" ? undefined : editing} initialType={editing === "new" ? newTradeType : undefined} stocks={tradableStocks} plans={plans} rules={rules} ledger={formLedger} formError={formError} onCancel={() => { setFormError(""); setEditing(null); }} onSave={saveTrade} />}
+    {accountManagerOpen && <AccountManager accounts={[...new Set([...ledger.cashBalances.map((item) => item.accountName), ...ledger.positions.map((item) => item.accountName)])]} onClose={() => setAccountManagerOpen(false)} onRename={renameAccount} />}
+    {balanceAdjustmentOpen && <BalanceAdjustment balances={ledger.cashBalances} onClose={() => setBalanceAdjustmentOpen(false)} onSave={adjustBalance} />}
     {csvOpen && <CsvImportDialog stocks={tradableStocks} existing={allTrades} onCancel={() => setCsvOpen(false)} onImport={importCsv} />}
   </>;
+}
+
+function BalanceAdjustment({ balances, onClose, onSave }: { balances: TradingLedger["cashBalances"]; onClose: () => void; onSave: (account: string, currency: Currency, balance: number) => Promise<boolean> }) {
+  const { t, formatNumber } = useI18n();
+  const [account, setAccount] = useState(balances[0]?.accountName ?? "기본 계좌");
+  const [currency, setCurrency] = useState<Currency>(balances[0]?.currency ?? "KRW");
+  const current = balances.find((balance) => balance.accountName === canonicalTradeAccount(account, t) && balance.currency === currency)?.balance ?? 0;
+  const [target, setTarget] = useState(String(current));
+  const [saving, setSaving] = useState(false);
+  function sync(nextAccount: string, nextCurrency: Currency) {
+    setAccount(nextAccount); setCurrency(nextCurrency);
+    const next = balances.find((balance) => balance.accountName === canonicalTradeAccount(nextAccount, t) && balance.currency === nextCurrency)?.balance ?? 0;
+    setTarget(String(next));
+  }
+  return <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"><form className="w-full max-w-md rounded-xl bg-[var(--surface)] p-5 shadow-2xl" onSubmit={(event) => { event.preventDefault(); setSaving(true); void onSave(account, currency, Number(target)).then((saved) => { setSaving(false); if (saved) onClose(); }); }}><h2 className="text-lg font-semibold">{t("계좌 등록·잔액 조정")}</h2><p className="mt-2 text-sm leading-6 text-[var(--muted)]">{t("새 계좌명을 입력하거나 기존 계좌를 선택한 뒤 실제 현금 잔액을 입력하세요. 차액이 입금 또는 출금으로 기록됩니다.")}</p><label className="mt-5 block text-sm">{t("계좌")}<input required list="balance-account-names" className="mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3" value={displayTradeSystemText(account, t)} onChange={(event) => sync(event.target.value, currency)} /><datalist id="balance-account-names">{[...new Set(balances.map((balance) => balance.accountName))].map((name) => <option key={name} value={displayTradeSystemText(name, t)} />)}</datalist></label><label className="mt-4 block text-sm">{t("통화")}<select className="mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3" value={currency} onChange={(event) => sync(account, event.target.value as Currency)}>{currencies.map((item) => <option key={item}>{item}</option>)}</select></label><label className="mt-4 block text-sm">{t("실제 현금 잔액")}<input required type="number" step="any" className="mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3" value={target} onChange={(event) => setTarget(event.target.value)} /><small className="mt-1 block text-[var(--muted)]">{t("현재 기록 잔액: {amount}", { amount: formatNumber(current) })}</small></label><div className="mt-6 flex justify-end gap-2"><button type="button" onClick={onClose} className="rounded-lg border px-4 py-2 text-sm">{t("취소")}</button><button disabled={saving || !account.trim() || target === "" || !Number.isFinite(Number(target))} className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm text-white disabled:opacity-50">{t(saving ? "저장 중" : "저장")}</button></div></form></div>;
+}
+
+function AccountManager({ accounts, onClose, onRename }: { accounts: string[]; onClose: () => void; onRename: (source: string, target: string) => Promise<boolean> }) {
+  const { t } = useI18n();
+  const [source, setSource] = useState(accounts[0] ?? "");
+  const [target, setTarget] = useState("");
+  const [saving, setSaving] = useState(false);
+  return <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"><form className="w-full max-w-md rounded-xl bg-[var(--surface)] p-5 shadow-2xl" onSubmit={(event) => { event.preventDefault(); setSaving(true); void onRename(source, target).then((saved) => { setSaving(false); if (saved) onClose(); }); }}><h2 className="text-lg font-semibold">{t("계좌 관리")}</h2><p className="mt-2 text-sm leading-6 text-[var(--muted)]">{t("계좌명을 변경할 수 있습니다. 이미 존재하는 계좌명을 입력하면 두 계좌의 모든 기록을 병합합니다.")}</p><label className="mt-5 block text-sm">{t("변경할 계좌")}<select className="mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3" value={source} onChange={(event) => setSource(event.target.value)}>{accounts.map((account) => <option key={account} value={account}>{displayTradeSystemText(account, t)}</option>)}</select></label><label className="mt-4 block text-sm">{t("새 계좌명 또는 병합할 계좌명")}<input required className="mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3" value={target} onChange={(event) => setTarget(event.target.value)} /></label><div className="mt-6 flex justify-end gap-2"><button type="button" onClick={onClose} className="rounded-lg border px-4 py-2 text-sm">{t("취소")}</button><button disabled={saving || !target.trim() || target.trim() === source} className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm text-white disabled:opacity-50">{t(saving ? "저장 중" : "변경")}</button></div></form></div>;
 }
 
 function TradeRow({ trade, ledger, onEdit, onDelete }: { trade: Trade; ledger: ReturnType<typeof buildTradingLedger>; onEdit: () => void; onDelete: () => void }) {

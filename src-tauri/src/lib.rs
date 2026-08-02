@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, time::Duration};
-use tauri::State;
+use std::{collections::HashSet, fs, time::{Duration, SystemTime, UNIX_EPOCH}};
+use tauri::{Manager, State};
 use tauri_plugin_sql::{DbInstances, DbPool, Migration, MigrationKind};
 
 const SERVICE: &str = "com.tradejournal.local";
@@ -139,6 +139,31 @@ async fn fetch_quote(symbol: String, market: String) -> Result<QuoteResult, Stri
     })
 }
 
+#[tauri::command]
+fn write_automatic_backup(app: tauri::AppHandle, content: String) -> Result<String, String> {
+    let directory = app.path().app_data_dir().map_err(|error| error.to_string())?.join("backups");
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| error.to_string())?.as_secs();
+    let filename = format!("tradejournal-auto-{timestamp}.json");
+    let path = directory.join(&filename);
+    let temporary = directory.join(format!(".{filename}.tmp"));
+    fs::write(&temporary, content.as_bytes()).map_err(|error| error.to_string())?;
+    fs::rename(&temporary, &path).map_err(|error| error.to_string())?;
+
+    let mut backups = fs::read_dir(&directory)
+        .map_err(|error| error.to_string())?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|entry| entry.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.starts_with("tradejournal-auto-") && name.ends_with(".json")))
+        .collect::<Vec<_>>();
+    backups.sort();
+    let remove_count = backups.len().saturating_sub(7);
+    for old in backups.into_iter().take(remove_count) {
+        fs::remove_file(old).map_err(|error| error.to_string())?;
+    }
+    Ok(path.to_string_lossy().into_owned())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let migrations = vec![Migration {
@@ -151,7 +176,7 @@ pub fn run() {
         .plugin(tauri_plugin_sql::Builder::default().add_migrations(DATABASE_URL, migrations).build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![save_api_key, has_api_key, fetch_quote, save_collections_atomically])
+        .invoke_handler(tauri::generate_handler![save_api_key, has_api_key, fetch_quote, save_collections_atomically, write_automatic_backup])
         .run(tauri::generate_context!())
         .expect("TradeJournal 실행 중 오류가 발생했습니다");
 }

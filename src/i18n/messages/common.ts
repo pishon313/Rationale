@@ -4,7 +4,7 @@ export const commonMessages: MessageCatalog = {
   ja: {
     "ダッシュボード": "ダッシュボード",
     "대시보드": "ダッシュボード", "종목": "銘柄", "매수 계획": "買付計画", "매매": "取引", "관찰 기록": "観察記録", "회고": "振り返り", "분석": "分析", "투자 원칙": "投資原則", "설정": "設定",
-    "저장": "保存", "취소": "キャンセル", "수정": "編集", "삭제": "削除", "닫기": "閉じる", "추가": "追加", "새 기록": "新規記録", "검색": "検索", "전체": "すべて", "선택": "選択", "미설정": "未設定", "미기록": "未記録", "없음": "なし", "로딩 중": "読み込み中", "저장 중...": "保存中...", "자동 저장됨": "自動保存済み",
+    "저장": "保存", "취소": "キャンセル", "수정": "編集", "삭제": "削除", "닫기": "閉じる", "추가": "追加", "새 기록": "新規記録", "검색": "検索", "전체": "すべて", "선택": "選択", "미설정": "未設定", "미기록": "未記録", "없음": "なし", "로딩 중": "読み込み中", "저장 중...": "保存中...", "자동 저장됨": "自動保存済み", "저장 중": "保存中", "저장됨": "保存済み", "저장 오류": "保存エラー", "재시도": "再試行",
     "매수": "買付", "매도": "売却", "배당": "配当", "입금": "入金", "출금": "出金",
     "평온": "平静", "확신": "確信", "불안": "不安", "공포": "恐怖", "조급함": "焦り", "손실 만회 심리": "損失回復心理", "과도한 자신감": "過信", "무기력": "無気力", "기타": "その他",
     "한국": "韓国", "미국": "米国", "보유": "保有", "매수 대기": "買付待ち", "관찰": "観察", "매도 완료": "売却完了", "재진입 대기": "再エントリー待ち", "아이디어 폐기": "アイデア破棄",
@@ -18,7 +18,7 @@ export const commonMessages: MessageCatalog = {
   },
   en: {
     "대시보드": "Dashboard", "종목": "Stocks", "매수 계획": "Buy Plans", "매매": "Trades", "관찰 기록": "Observations", "회고": "Reviews", "분석": "Analytics", "투자 원칙": "Investment Rules", "설정": "Settings",
-    "저장": "Save", "취소": "Cancel", "수정": "Edit", "삭제": "Delete", "닫기": "Close", "추가": "Add", "새 기록": "New entry", "검색": "Search", "전체": "All", "선택": "Select", "미설정": "Not set", "미기록": "Not recorded", "없음": "None", "로딩 중": "Loading", "저장 중...": "Saving...", "자동 저장됨": "Auto-saved",
+    "저장": "Save", "취소": "Cancel", "수정": "Edit", "삭제": "Delete", "닫기": "Close", "추가": "Add", "새 기록": "New entry", "검색": "Search", "전체": "All", "선택": "Select", "미설정": "Not set", "미기록": "Not recorded", "없음": "None", "로딩 중": "Loading", "저장 중...": "Saving...", "자동 저장됨": "Auto-saved", "저장 중": "Saving", "저장됨": "Saved", "저장 오류": "Save error", "재시도": "Retry",
     "매수": "Buy", "매도": "Sell", "배당": "Dividend", "입금": "Deposit", "출금": "Withdrawal",
     "평온": "Calm", "확신": "Confident", "불안": "Anxious", "공포": "Fearful", "조급함": "Impatient", "손실 만회 심리": "Loss-chasing", "과도한 자신감": "Overconfident", "무기력": "Unmotivated", "기타": "Other",
     "한국": "Korea", "미국": "United States", "보유": "Holding", "매수 대기": "Waiting to buy", "관찰": "Watching", "매도 완료": "Sold", "재진입 대기": "Waiting to re-enter", "아이디어 폐기": "Idea discarded",
@@ -32,7 +32,7 @@ export const commonMessages: MessageCatalog = {
   },
   fr: {
     "대시보드": "Tableau de bord", "종목": "Titres", "매수 계획": "Plans d’achat", "매매": "Transactions", "관찰 기록": "Observations", "회고": "Bilans", "분석": "Analyses", "투자 원칙": "Règles d’investissement", "설정": "Paramètres",
-    "저장": "Enregistrer", "취소": "Annuler", "수정": "Modifier", "삭제": "Supprimer", "닫기": "Fermer", "추가": "Ajouter", "새 기록": "Nouvelle entrée", "검색": "Rechercher", "전체": "Tout", "선택": "Sélectionner", "미설정": "Non défini", "미기록": "Non renseigné", "없음": "Aucun", "로딩 중": "Chargement", "저장 중...": "Enregistrement...", "자동 저장됨": "Enregistré automatiquement",
+    "저장": "Enregistrer", "취소": "Annuler", "수정": "Modifier", "삭제": "Supprimer", "닫기": "Fermer", "추가": "Ajouter", "새 기록": "Nouvelle entrée", "검색": "Rechercher", "전체": "Tout", "선택": "Sélectionner", "미설정": "Non défini", "미기록": "Non renseigné", "없음": "Aucun", "로딩 중": "Chargement", "저장 중...": "Enregistrement...", "자동 저장됨": "Enregistré automatiquement", "저장 중": "Enregistrement", "저장됨": "Enregistré", "저장 오류": "Erreur d’enregistrement", "재시도": "Réessayer",
     "매수": "Achat", "매도": "Vente", "배당": "Dividende", "입금": "Dépôt", "출금": "Retrait",
     "평온": "Calme", "확신": "Confiant", "불안": "Anxieux", "공포": "Craintif", "조급함": "Impatient", "손실 만회 심리": "Recherche de récupération", "과도한 자신감": "Surconfiant", "무기력": "Démotivé", "기타": "Autre",
     "한국": "Corée", "미국": "États-Unis", "보유": "En portefeuille", "매수 대기": "En attente d’achat", "관찰": "Sous surveillance", "매도 완료": "Vendu", "재진입 대기": "En attente de réentrée", "아이디어 폐기": "Idée abandonnée",
@@ -46,7 +46,7 @@ export const commonMessages: MessageCatalog = {
   },
   it: {
     "대시보드": "Dashboard", "종목": "Titoli", "매수 계획": "Piani di acquisto", "매매": "Operazioni", "관찰 기록": "Osservazioni", "회고": "Revisioni", "분석": "Analisi", "투자 원칙": "Regole d’investimento", "설정": "Impostazioni",
-    "저장": "Salva", "취소": "Annulla", "수정": "Modifica", "삭제": "Elimina", "닫기": "Chiudi", "추가": "Aggiungi", "새 기록": "Nuova voce", "검색": "Cerca", "전체": "Tutto", "선택": "Seleziona", "미설정": "Non impostato", "미기록": "Non registrato", "없음": "Nessuno", "로딩 중": "Caricamento", "저장 중...": "Salvataggio...", "자동 저장됨": "Salvato automaticamente",
+    "저장": "Salva", "취소": "Annulla", "수정": "Modifica", "삭제": "Elimina", "닫기": "Chiudi", "추가": "Aggiungi", "새 기록": "Nuova voce", "검색": "Cerca", "전체": "Tutto", "선택": "Seleziona", "미설정": "Non impostato", "미기록": "Non registrato", "없음": "Nessuno", "로딩 중": "Caricamento", "저장 중...": "Salvataggio...", "자동 저장됨": "Salvato automaticamente", "저장 중": "Salvataggio", "저장됨": "Salvato", "저장 오류": "Errore di salvataggio", "재시도": "Riprova",
     "매수": "Acquisto", "매도": "Vendita", "배당": "Dividendo", "입금": "Deposito", "출금": "Prelievo",
     "평온": "Calmo", "확신": "Sicuro", "불안": "Ansioso", "공포": "Impaurito", "조급함": "Impaziente", "손실 만회 심리": "Recupero perdite", "과도한 자신감": "Troppa sicurezza", "무기력": "Demotivato", "기타": "Altro",
     "한국": "Corea", "미국": "Stati Uniti", "보유": "In portafoglio", "매수 대기": "In attesa di acquisto", "관찰": "Osservazione", "매도 완료": "Venduto", "재진입 대기": "In attesa di rientro", "아이디어 폐기": "Idea scartata",
@@ -60,7 +60,7 @@ export const commonMessages: MessageCatalog = {
   },
   es: {
     "대시보드": "Panel", "종목": "Valores", "매수 계획": "Planes de compra", "매매": "Operaciones", "관찰 기록": "Observaciones", "회고": "Revisiones", "분석": "Análisis", "투자 원칙": "Reglas de inversión", "설정": "Configuración",
-    "저장": "Guardar", "취소": "Cancelar", "수정": "Editar", "삭제": "Eliminar", "닫기": "Cerrar", "추가": "Añadir", "새 기록": "Nueva entrada", "검색": "Buscar", "전체": "Todo", "선택": "Seleccionar", "미설정": "Sin configurar", "미기록": "Sin registrar", "없음": "Ninguno", "로딩 중": "Cargando", "저장 중...": "Guardando...", "자동 저장됨": "Guardado automáticamente",
+    "저장": "Guardar", "취소": "Cancelar", "수정": "Editar", "삭제": "Eliminar", "닫기": "Cerrar", "추가": "Añadir", "새 기록": "Nueva entrada", "검색": "Buscar", "전체": "Todo", "선택": "Seleccionar", "미설정": "Sin configurar", "미기록": "Sin registrar", "없음": "Ninguno", "로딩 중": "Cargando", "저장 중...": "Guardando...", "자동 저장됨": "Guardado automáticamente", "저장 중": "Guardando", "저장됨": "Guardado", "저장 오류": "Error al guardar", "재시도": "Reintentar",
     "매수": "Compra", "매도": "Venta", "배당": "Dividendo", "입금": "Depósito", "출금": "Retiro",
     "평온": "Tranquilo", "확신": "Seguro", "불안": "Ansioso", "공포": "Temeroso", "조급함": "Impaciente", "손실 만회 심리": "Recuperación de pérdidas", "과도한 자신감": "Exceso de confianza", "무기력": "Desmotivado", "기타": "Otro",
     "한국": "Corea", "미국": "Estados Unidos", "보유": "En cartera", "매수 대기": "En espera de compra", "관찰": "En observación", "매도 완료": "Vendido", "재진입 대기": "En espera de reentrada", "아이디어 폐기": "Idea descartada",

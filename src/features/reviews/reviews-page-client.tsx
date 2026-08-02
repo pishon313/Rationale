@@ -5,19 +5,17 @@ import { CheckCircle2, Pencil, Plus, Tag, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { ImageAttachments } from "@/components/image-attachments";
 import { Field, ModalActions, ModalHeader } from "@/features/observations/observations-page-client";
-import { sampleStocks } from "@/features/stocks/sample-data";
 import type { Stock } from "@/features/stocks/types";
 import { emotions } from "@/features/trades/types";
 import { useI18n } from "@/i18n/i18n-provider";
 import { localDateValue } from "@/lib/local-date";
 import { useLocalCollection } from "@/lib/use-local-collection";
-import { sampleReviews } from "./sample-data";
 import { reviewEvaluations, type Review } from "./types";
 
 export function ReviewsPageClient() {
   const { formatDate, t } = useI18n();
-  const store = useLocalCollection("reviews", sampleReviews);
-  const stocks = useLocalCollection<Stock>("stocks", sampleStocks);
+  const store = useLocalCollection<Review>("reviews", []);
+  const stocks = useLocalCollection<Stock>("stocks", []);
   const [editing, setEditing] = useState<Review | "new" | null>(null);
   const formatReviewedAt = (value: string) => {
     const date = new Date(`${value}T00:00:00`);

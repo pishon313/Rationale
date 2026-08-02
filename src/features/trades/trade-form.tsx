@@ -17,6 +17,7 @@ import { emotions, tradeTypes, type Trade } from "./types";
 
 type Props = {
   trade?: Trade;
+  initialType?: Trade["tradeType"];
   stocks: Stock[];
   plans: BuyPlan[];
   rules: InvestmentRule[];
@@ -30,12 +31,12 @@ type RateNote = { key: string; date?: string };
 
 const field = "mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3 text-sm";
 
-export function TradeForm({ trade, stocks, plans, rules, ledger, formError = "", onCancel, onSave }: Props) {
+export function TradeForm({ trade, initialType = "매수", stocks, plans, rules, ledger, formError = "", onCancel, onSave }: Props) {
   const { t, formatDate, formatNumber } = useI18n();
   const exchangeRates = useExchangeRates();
   const firstStock = stocks[0];
   const openingPosition = trade?.isOpeningPosition === true;
-  const [type, setType] = useState<Trade["tradeType"]>(openingPosition ? "매수" : trade?.tradeType ?? "매수");
+  const [type, setType] = useState<Trade["tradeType"]>(openingPosition ? "매수" : trade?.tradeType ?? initialType);
   const [stockId, setStockId] = useState(trade?.stockId ?? firstStock?.id ?? "");
   const [planId, setPlanId] = useState(trade?.planId ?? "");
   const [tradedAt, setTradedAt] = useState(() => toLocalDateTime(trade?.tradedAt));

@@ -4,20 +4,18 @@
 import { Calendar, Pencil, Plus, Tag, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { ImageAttachments } from "@/components/image-attachments";
-import { sampleStocks } from "@/features/stocks/sample-data";
 import type { Stock } from "@/features/stocks/types";
 import { useI18n } from "@/i18n/i18n-provider";
 import { localDateTimeValue } from "@/lib/local-date";
 import { useLocalCollection } from "@/lib/use-local-collection";
-import { sampleObservations } from "./sample-data";
 import type { Observation } from "./types";
 
 const stockViews: Observation["stockView"][] = ["강세", "중립", "약세", "판단 보류"];
 
 export function ObservationsPageClient() {
   const { formatDate, t } = useI18n();
-  const store = useLocalCollection("observations", sampleObservations);
-  const stocks = useLocalCollection<Stock>("stocks", sampleStocks);
+  const store = useLocalCollection<Observation>("observations", []);
+  const stocks = useLocalCollection<Stock>("stocks", []);
   const [editing, setEditing] = useState<Observation | "new" | null>(null);
   const [stockFilter, setStockFilter] = useState("전체");
   const items = useMemo(
