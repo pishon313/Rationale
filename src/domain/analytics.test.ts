@@ -10,6 +10,7 @@ describe("buildAnalytics", () => {
     expect(result.plannedTradeRate).toBe(50);
     expect(result.averageRuleScore).toBe(4.5);
     expect(result.averageProcessScore).toBe(4);
+    expect(result.monthlyTrades).toEqual([{ month: "2026-07", count: 2 }]);
   });
 
   it("빈 기록을 안전하게 처리한다", () => {

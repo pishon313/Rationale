@@ -6,6 +6,32 @@ test("대시보드 앱 셸을 표시한다", async ({ page }) => {
   await expect(page.getByRole("navigation", { name: "주요 메뉴" })).toBeVisible();
 });
 
+test("지원하는 여섯 언어를 즉시 전환하고 저장한다", async ({ page }) => {
+  await page.goto("/settings");
+  const language = page.locator('select:has(option[value="ko"])');
+  const headings = {
+    ko: "설정",
+    ja: "設定",
+    en: "Settings",
+    fr: "Paramètres",
+    it: "Impostazioni",
+    es: "Configuración",
+  } as const;
+
+  for (const [locale, heading] of Object.entries(headings)) {
+    await language.selectOption(locale);
+    await expect(page.locator("html")).toHaveAttribute("lang", locale);
+    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+  }
+
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("lang", "es");
+  await expect(language).toHaveValue("es");
+
+  await language.selectOption("ko");
+  await expect(page.locator("html")).toHaveAttribute("lang", "ko");
+});
+
 test("종목 목록에서 샘플 종목 상세로 이동한다", async ({ page }) => {
   await page.goto("/stocks");
   await expect(page.getByRole("heading", { name: "종목", exact: true })).toBeVisible();

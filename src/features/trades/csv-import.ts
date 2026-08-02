@@ -11,8 +11,52 @@ export type CsvImportResult = { trades: Trade[]; errors: Array<{ row: number; me
 export async function parseTradeFile(file: File): Promise<ParsedCsv> {
   const extension = file.name.split(".").pop()?.toLowerCase();
   if (extension === "xls" || extension === "xlsx") return parseExcelWorkbook(await file.arrayBuffer());
-  if (extension === "csv" || extension === "tsv") return parseCsv(await file.text());
+  if (extension === "csv" || extension === "tsv") return parseCsv(decodeDelimitedText(await file.arrayBuffer()));
   throw new Error("CSV, TSV, XLS 또는 XLSX 파일을 선택해 주세요.");
+}
+
+type DecodedCandidate = { encoding: string; text: string; score: number };
+
+/**
+ * Broker exports are frequently saved in a platform-specific legacy encoding.
+ * Prefer a BOM when present, then select the decoding whose header maps to the
+ * most journal fields and whose text contains the fewest damaged characters.
+ */
+export function decodeDelimitedText(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const bomEncoding = detectBomEncoding(bytes);
+  const encodings = ["utf-8", "utf-16le", "utf-16be", "euc-kr", "windows-949", "cp949", "shift_jis", "windows-1252"];
+  const candidates: DecodedCandidate[] = [];
+
+  encodings.forEach((encoding, priority) => {
+    try {
+      const text = new TextDecoder(encoding).decode(bytes);
+      const parsed = parseCsv(text);
+      const mapping = detectCsvMapping(parsed.headers);
+      const mappedFields = Object.keys(mapping).length;
+      const criticalFields = ["tradedAt", "tradeType", "quantity", "price"] satisfies CsvField[];
+      const mappedCriticalFields = criticalFields.filter((field) => mapping[field] !== undefined).length;
+      const replacementCharacters = countMatches(text, /\uFFFD/g);
+      const nullCharacters = countMatches(text, /\0/g);
+      const unwantedControls = countMatches(text, /[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g);
+      const bomBonus = encoding === bomEncoding ? 1_000_000 : 0;
+      const score = bomBonus
+        + mappedFields * 10_000
+        + mappedCriticalFields * 2_000
+        - replacementCharacters * 2_000
+        - nullCharacters * 1_000
+        - unwantedControls * 500
+        - priority;
+      candidates.push({ encoding, text, score });
+    } catch {
+      // TextDecoder availability differs by browser. Unsupported or invalid
+      // candidates are simply excluded from selection.
+    }
+  });
+
+  const best = candidates.sort((left, right) => right.score - left.score)[0];
+  if (!best) throw new Error("파일 문자 인코딩을 읽을 수 없습니다.");
+  return best.text.replace(/^\uFEFF/, "");
 }
 
 export async function parseExcelWorkbook(buffer: ArrayBuffer): Promise<ParsedCsv> {
@@ -27,15 +71,25 @@ export async function parseExcelWorkbook(buffer: ArrayBuffer): Promise<ParsedCsv
 }
 
 const aliases: Record<CsvField, string[]> = {
-  tradedAt: ["거래일시", "체결일시", "거래일자", "체결일자", "거래일", "체결일", "date", "datetime", "tradedat", "executedat"],
-  time: ["거래시간", "체결시간", "시간", "time"],
-  ticker: ["종목코드", "티커", "코드", "symbol", "ticker", "code"],
-  stockName: ["종목명", "상품명", "name", "stockname", "security"],
-  tradeType: ["매매구분", "거래구분", "구분", "매수매도", "type", "side", "tradetype"],
-  quantity: ["체결수량", "거래수량", "수량", "quantity", "qty", "shares"],
-  price: ["체결가", "체결가격", "거래단가", "단가", "가격", "price", "unitprice"],
-  fee: ["수수료", "commission", "fee"], tax: ["세금", "제세금", "tax"], currency: ["통화", "currency", "ccy"],
-  exchangeRate: ["환율", "적용환율", "exchangerate", "fxrate"], accountName: ["계좌", "계좌명", "account", "accountname"],
+  tradedAt: [
+    "거래일시", "체결일시", "거래일자", "체결일자", "거래일", "체결일",
+    "取引日時", "約定日時", "取引日", "約定日",
+    "date", "datetime", "trade date", "transaction date", "execution date", "traded at", "executed at",
+    "date de transaction", "date d’exécution", "date d'exécution", "date d'opération",
+    "data operazione", "data di esecuzione", "data transazione",
+    "fecha de operación", "fecha de ejecución", "fecha de transacción",
+  ],
+  time: ["거래시간", "체결시간", "시간", "取引時間", "約定時間", "時刻", "time", "execution time", "heure", "heure d’exécution", "ora", "ora di esecuzione", "hora", "hora de ejecución"],
+  ticker: ["종목코드", "티커", "코드", "銘柄コード", "証券コード", "ティッカー", "コード", "symbol", "ticker", "code", "code valeur", "symbole", "codice titolo", "simbolo", "código del valor", "símbolo"],
+  stockName: ["종목명", "상품명", "銘柄名", "商品名", "証券名", "name", "stock name", "security", "security name", "nom du titre", "nom de la valeur", "nome titolo", "nome del titolo", "nombre del valor", "nombre del título"],
+  tradeType: ["매매구분", "거래구분", "구분", "매수매도", "売買区分", "取引区分", "売買", "区分", "type", "side", "trade type", "transaction type", "type d’opération", "type d'operation", "sens", "tipo operazione", "tipo di operazione", "tipo de operación", "lado"],
+  quantity: ["체결수량", "거래수량", "수량", "約定数量", "取引数量", "数量", "株数", "quantity", "qty", "shares", "quantité", "nombre de titres", "quantità", "numero titoli", "cantidad", "número de títulos"],
+  price: ["체결가", "체결가격", "거래단가", "단가", "가격", "約定価格", "約定単価", "取引価格", "単価", "価格", "price", "unit price", "execution price", "prix", "prix d’exécution", "cours", "prezzo", "prezzo di esecuzione", "prezzo unitario", "precio", "precio de ejecución", "precio unitario"],
+  fee: ["수수료", "手数料", "commission", "commissions", "fee", "fees", "frais", "commissioni", "comisión", "comisiones"],
+  tax: ["세금", "제세금", "税", "税金", "tax", "taxes", "impôt", "impôts", "imposta", "imposte", "impuesto", "impuestos"],
+  currency: ["통화", "通貨", "currency", "ccy", "devise", "valuta", "moneda", "divisa"],
+  exchangeRate: ["환율", "적용환율", "為替レート", "適用為替レート", "為替", "exchange rate", "fx rate", "taux de change", "cambio", "tasso di cambio", "tipo de cambio"],
+  accountName: ["계좌", "계좌명", "口座", "口座名", "account", "account name", "compte", "nom du compte", "conto", "nome conto", "cuenta", "nombre de cuenta"],
 };
 
 export const csvFieldLabels: Record<CsvField, string> = { tradedAt: "거래일", time: "시간", ticker: "종목코드", stockName: "종목명", tradeType: "매수/매도", quantity: "수량", price: "체결가", fee: "수수료", tax: "세금", currency: "통화", exchangeRate: "환율", accountName: "계좌명" };
@@ -62,7 +116,8 @@ export function parseCsv(text: string): ParsedCsv {
 export function detectCsvMapping(headers: string[]): CsvMapping {
   const mapping: CsvMapping = {};
   for (const field of csvFields) {
-    const index = headers.findIndex((header) => aliases[field].includes(normalizeHeader(header)));
+    const normalizedAliases = new Set(aliases[field].map(normalizeHeader));
+    const index = headers.findIndex((header) => normalizedAliases.has(normalizeHeader(header)));
     if (index >= 0) mapping[field] = index;
   }
   return mapping;
@@ -93,24 +148,136 @@ export function convertCsvRows(parsed: ParsedCsv, mapping: CsvMapping, stocks: S
 }
 
 function detectDelimiter(text: string) { const first = text.split(/\r?\n/, 1)[0] ?? ""; const tabs = (first.match(/\t/g) ?? []).length; const commas = (first.match(/,/g) ?? []).length; const semicolons = (first.match(/;/g) ?? []).length; return tabs > commas && tabs > semicolons ? "\t" : semicolons > commas ? ";" : ","; }
-function normalizeHeader(value: string) { return value.toLowerCase().replace(/[\s_()\-/]/g, ""); }
+function detectBomEncoding(bytes: Uint8Array) {
+  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) return "utf-8";
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return "utf-16le";
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return "utf-16be";
+  return null;
+}
+function countMatches(value: string, pattern: RegExp) { return value.match(pattern)?.length ?? 0; }
+function normalizeHeader(value: string) { return value.normalize("NFKD").toLowerCase().replace(/\p{M}/gu, "").normalize("NFC").replace(/[^\p{L}\p{N}]/gu, ""); }
 function normalizeTicker(value: string) { return value.trim().replace(/^'/, "").toUpperCase().replace(/\s/g, ""); }
 function normalizeName(value: string) { return value.trim().toLowerCase().replace(/\s/g, ""); }
 function value(row: string[], index?: number) { return index === undefined ? "" : row[index]?.trim() ?? ""; }
-function optionalNumber(value: string) { if (!value) return 0; const negative = /^\(.*\)$/.test(value); const parsed = Number(value.replace(/[,$₩원\s()]/g, "")); if (!Number.isFinite(parsed) || parsed < 0) throw new Error(`숫자 형식이 올바르지 않습니다: ${value}`); return negative ? -parsed : parsed; }
+function optionalNumber(value: string) {
+  if (!value) return 0;
+  const trimmed = value.trim();
+  const negative = /^\(.*\)$/.test(trimmed);
+  const unsigned = trimmed
+    .replace(/[()$₩€¥￥원]/g, "")
+    .replace(/[\s\u00A0\u202F]/g, "");
+  const normalized = normalizeLocaleNumber(unsigned);
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed < 0) throw new Error(`숫자 형식이 올바르지 않습니다: ${value}`);
+  return negative ? -parsed : parsed;
+}
+function normalizeLocaleNumber(value: string) {
+  if (!/^\d+(?:[.,]\d+)*$/.test(value)) return Number.NaN.toString();
+  const commaIndex = value.lastIndexOf(",");
+  const dotIndex = value.lastIndexOf(".");
+
+  if (commaIndex >= 0 && dotIndex >= 0) {
+    const decimalSeparator = commaIndex > dotIndex ? "," : ".";
+    const thousandsSeparator = decimalSeparator === "," ? "." : ",";
+    const decimalParts = value.split(decimalSeparator);
+    if (decimalParts.length !== 2 || !decimalParts[1]) return Number.NaN.toString();
+    const integerGroups = decimalParts[0].split(thousandsSeparator);
+    if (integerGroups.length > 1 && (integerGroups[0].length > 3 || integerGroups.slice(1).some((group) => group.length !== 3))) {
+      return Number.NaN.toString();
+    }
+    return `${integerGroups.join("")}.${decimalParts[1]}`;
+  }
+
+  if (commaIndex >= 0) {
+    const groups = value.split(",");
+    if (groups.length > 2) {
+      if (groups.slice(1).every((group) => group.length === 3)) return groups.join("");
+      if (groups.slice(1, -1).every((group) => group.length === 3) && groups.at(-1)!.length <= 2) {
+        return `${groups.slice(0, -1).join("")}.${groups.at(-1)}`;
+      }
+      return Number.NaN.toString();
+    }
+    return groups[1].length === 3 ? groups.join("") : `${groups[0]}.${groups[1]}`;
+  }
+
+  if ((value.match(/\./g) ?? []).length > 1) {
+    const groups = value.split(".");
+    return groups.slice(1).every((group) => group.length === 3) ? groups.join("") : Number.NaN.toString();
+  }
+  return value;
+}
 function parsePositive(value: string, label: string) { const parsed = optionalNumber(value); if (parsed <= 0) throw new Error(`${label}은 0보다 커야 합니다.`); return parsed; }
-function parseTradeType(value: string): "매수" | "매도" { const normalized = value.trim().toLowerCase(); if (["매수", "buy", "b"].includes(normalized) || normalized.includes("매수")) return "매수"; if (["매도", "sell", "s"].includes(normalized) || normalized.includes("매도")) return "매도"; throw new Error(`매수/매도 구분을 확인해 주세요: ${value || "미입력"}`); }
-function parseCurrency(value: string, fallback: Stock["currency"]): Trade["currency"] { const normalized = value.trim().toUpperCase(); if (!normalized) return fallback; if (normalized === "KRW" || normalized === "원" || normalized === "원화") return "KRW"; if (normalized === "USD" || normalized === "달러") return "USD"; if (normalized === "JPY" || normalized === "엔" || normalized === "엔화") return "JPY"; if (normalized === "EUR" || normalized === "유로") return "EUR"; throw new Error(`지원하지 않는 통화입니다: ${value}`); }
+function parseTradeType(value: string): "매수" | "매도" {
+  const normalized = normalizeTerm(value);
+  const buyTerms = new Set(["매수", "매입", "買", "買い", "買付", "買付け", "購入", "buy", "b", "purchase", "buyorder", "achat", "acheter", "achete", "ordredachat", "acquisto", "comprare", "comprato", "ordinediacquisto", "compra", "comprar", "comprado", "ordendecompra"]);
+  const sellTerms = new Set(["매도", "매각", "売", "売り", "売却", "sell", "s", "sale", "sold", "sellorder", "vente", "vendre", "vendu", "ordredevente", "vendita", "vendere", "venduto", "ordinedivendita", "venta", "vender", "vendido", "ordendeventa"]);
+  const isBuy = buyTerms.has(normalized) || normalized.includes("매수") || normalized.includes("買付");
+  const isSell = sellTerms.has(normalized) || normalized.includes("매도") || normalized.includes("売却");
+  if (isBuy !== isSell) return isBuy ? "매수" : "매도";
+  throw new Error(`매수/매도 구분을 확인해 주세요: ${value || "미입력"}`);
+}
+function parseCurrency(value: string, fallback: Stock["currency"]): Trade["currency"] {
+  const raw = value.trim();
+  if (!raw) return fallback;
+  if (raw === "₩") return "KRW";
+  if (raw === "$" || raw.toUpperCase() === "US$") return "USD";
+  if (raw === "¥" || raw === "￥") return "JPY";
+  if (raw === "€") return "EUR";
+  const normalized = normalizeTerm(raw);
+  const terms: Record<Trade["currency"], string[]> = {
+    KRW: ["krw", "원", "원화", "ウォン", "韓国ウォン", "won", "koreanwon", "southkoreanwon", "wonsudcoreen", "woncoreen", "wonsudcoreano", "woncoreano"],
+    USD: ["usd", "달러", "米ドル", "ドル", "dollar", "dollars", "usdollar", "usdollars", "dollaramericain", "dollarsamericains", "dollarostatunitense", "dollaristatunitensi", "dolarestadounidense", "dolaresestadounidenses"],
+    JPY: ["jpy", "엔", "엔화", "円", "日本円", "yen", "yens", "japaneseyen", "yenjaponais", "yengiapponese", "yenjapones"],
+    EUR: ["eur", "유로", "ユーロ", "euro", "euros"],
+  };
+  for (const currency of Object.keys(terms) as Trade["currency"][]) if (terms[currency].includes(normalized)) return currency;
+  throw new Error(`지원하지 않는 통화입니다: ${value}`);
+}
+function normalizeTerm(value: string) { return value.normalize("NFKD").toLowerCase().replace(/\p{M}/gu, "").normalize("NFC").replace(/[^\p{L}\p{N}]/gu, ""); }
 function parseDateTime(dateValue: string, timeValue: string) {
   if (!dateValue) throw new Error("거래일이 없습니다.");
-  let date = dateValue.trim().replace(/[./]/g, "-");
-  if (/^\d{8}$/.test(date)) date = `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`;
-  if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(date)) { const [year, month, day] = date.split("-"); date = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`; }
-  const time = timeValue ? normalizeTime(timeValue) : date.includes("T") || /\d \d/.test(date) ? "" : "09:00";
-  const combined = time ? `${date}T${time}` : date.replace(" ", "T");
-  if (!Number.isFinite(Date.parse(combined))) throw new Error(`거래일 형식을 확인해 주세요: ${dateValue}`);
-  return combined.slice(0, 16);
+  const raw = dateValue.trim();
+  let year: number; let month: number; let day: number; let embeddedTime = "";
+  const compact = raw.match(/^(\d{4})(\d{2})(\d{2})(?:[T\s]+(.+))?$/);
+  const yearFirst = raw.match(/^(\d{4})([-/.])(\d{1,2})\2(\d{1,2})(?:[T\s]+(.+))?$/);
+  const dayOrMonthFirst = raw.match(/^(\d{1,2})([-/.])(\d{1,2})\2(\d{4})(?:[T\s]+(.+))?$/);
+
+  if (compact) {
+    year = Number(compact[1]); month = Number(compact[2]); day = Number(compact[3]); embeddedTime = compact[4] ?? "";
+  } else if (yearFirst) {
+    year = Number(yearFirst[1]); month = Number(yearFirst[3]); day = Number(yearFirst[4]); embeddedTime = yearFirst[5] ?? "";
+  } else if (dayOrMonthFirst) {
+    const first = Number(dayOrMonthFirst[1]); const second = Number(dayOrMonthFirst[3]); year = Number(dayOrMonthFirst[4]); embeddedTime = dayOrMonthFirst[5] ?? "";
+    if (first <= 12 && second <= 12) throw new Error(`날짜가 모호합니다: ${dateValue}. YYYY-MM-DD 형식으로 입력해 주세요.`);
+    if (first > 12 && second <= 12) { day = first; month = second; }
+    else if (second > 12 && first <= 12) { month = first; day = second; }
+    else throw new Error(`거래일 형식을 확인해 주세요: ${dateValue}`);
+  } else {
+    throw new Error(`거래일 형식을 확인해 주세요: ${dateValue}`);
+  }
+
+  if (!isValidCalendarDate(year, month, day)) throw new Error(`거래일 형식을 확인해 주세요: ${dateValue}`);
+  const normalizedTime = normalizeTime(timeValue || embeddedTime || "09:00");
+  if (!normalizedTime) throw new Error(`거래 시간을 확인해 주세요: ${timeValue || embeddedTime}`);
+  const date = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  return `${date}T${normalizedTime.slice(0, 5)}`;
 }
-function normalizeTime(value: string) { const digits = value.trim(); if (/^\d{6}$/.test(digits)) return `${digits.slice(0, 2)}:${digits.slice(2, 4)}:${digits.slice(4, 6)}`; if (/^\d{4}$/.test(digits)) return `${digits.slice(0, 2)}:${digits.slice(2, 4)}`; return digits; }
+function normalizeTime(value: string) {
+  const raw = value.trim();
+  let hours: number; let minutes: number; let seconds = 0;
+  if (/^\d{6}$/.test(raw)) { hours = Number(raw.slice(0, 2)); minutes = Number(raw.slice(2, 4)); seconds = Number(raw.slice(4, 6)); }
+  else if (/^\d{4}$/.test(raw)) { hours = Number(raw.slice(0, 2)); minutes = Number(raw.slice(2, 4)); }
+  else {
+    const match = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:\s*(?:Z|[+-]\d{2}:?\d{2}))?$/i);
+    if (!match) return "";
+    hours = Number(match[1]); minutes = Number(match[2]); seconds = Number(match[3] ?? 0);
+  }
+  if (hours > 23 || minutes > 59 || seconds > 59) return "";
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+function isValidCalendarDate(year: number, month: number, day: number) {
+  if (!Number.isInteger(year) || year < 1 || year > 9999 || month < 1 || month > 12 || day < 1) return false;
+  return day <= new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
 function fingerprint(trade: Trade) { return [trade.tradedAt.slice(0, 16), trade.stockId, trade.tradeType, trade.quantity, trade.price, trade.accountName].join("|"); }
 function csvId(row: string[], index: number) { let hash = 2166136261; for (const char of `${row.join("|")}|${index}`) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619); return `csv-${(hash >>> 0).toString(36)}-${index + 2}`; }

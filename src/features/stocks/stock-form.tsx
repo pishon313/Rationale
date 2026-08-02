@@ -3,6 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { X } from "lucide-react";
 import { useForm } from "react-hook-form";
+import { useI18n } from "@/i18n/i18n-provider";
 import { currencies, investmentTypes, markets, stockStatuses, stockViews, type Stock } from "./types";
 import { stockFormSchema, type StockFormValues } from "./schema";
 
@@ -11,7 +12,12 @@ type Props = { stock?: Stock; onCancel: () => void; onSave: (stock: Stock) => vo
 const fieldClass = "mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3 text-sm";
 
 export function StockForm({ stock, onCancel, onSave }: Props) {
+  const { t } = useI18n();
   const ledgerManaged = Boolean(stock?.ledgerInitializedAt);
+  const errorText = (message: string | undefined, fallback: string) => {
+    if (!message) return undefined;
+    return /[가-힣]/.test(message) ? t(message) : t(fallback);
+  };
   const { register, handleSubmit, formState: { errors, isSubmitting }, watch, setValue } = useForm<StockFormValues>({
     resolver: zodResolver(stockFormSchema),
     defaultValues: stock ? {
@@ -51,28 +57,28 @@ export function StockForm({ stock, onCancel, onSave }: Props) {
       priceSource: stock?.priceSource ?? "manual", priceStatus: "manual",
       ledgerInitializedAt: stock ? stock.ledgerInitializedAt ?? null : parsed.quantity === 0 ? now : null,
       createdAt: stock?.createdAt ?? now, updatedAt: now, deletedAt: null });
-  })}><div className="sticky top-0 z-10 flex items-center justify-between border-b bg-[var(--surface)] px-5 py-4"><div><h2 id="stock-form-title" className="text-lg font-semibold">{stock ? "종목 수정" : "새 종목 추가"}</h2><p className="mt-1 text-xs text-[var(--muted)]">판단에 필요한 기본 정보를 기록하세요.</p></div><button type="button" aria-label="닫기" onClick={onCancel} className="grid size-9 place-items-center rounded-lg hover:bg-[var(--surface-muted)]"><X size={19} /></button></div><div className="grid gap-5 p-5 sm:grid-cols-2">
-    <Field label="티커" error={errors.ticker?.message}><input autoFocus className={fieldClass} placeholder="예: 005930, TSLA" {...register("ticker")} /></Field>
-    <Field label="종목명" error={errors.name?.message}><input className={fieldClass} placeholder="예: 삼성전자" {...register("name")} /></Field>
-    <Field label="시장"><select className={fieldClass} value={market} onChange={(e) => syncCurrency(e.target.value)}>{markets.map((v) => <option key={v}>{v}</option>)}</select></Field>
-    <Field label="통화"><select disabled={ledgerManaged} className={`${fieldClass} disabled:cursor-not-allowed disabled:opacity-60`} {...register("currency")}>{currencies.map((currency) => <option key={currency}>{currency}</option>)}</select></Field>
-    <Field label="자산 유형" error={errors.assetType?.message}><input className={fieldClass} {...register("assetType")} /></Field>
-    <Field label="섹터"><input className={fieldClass} placeholder="예: 반도체" {...register("sector")} /></Field>
-    <Field label="상태"><select className={fieldClass} {...register("status")}>{stockStatuses.map((v) => <option key={v}>{v}</option>)}</select></Field>
-    <Field label="투자 유형"><select className={fieldClass} {...register("investmentType")}>{investmentTypes.map((v) => <option key={v}>{v}</option>)}</select></Field>
-    <Field label="현재 가격" error={errors.currentPrice?.message}><input type="number" step="any" className={fieldClass} {...register("currentPrice")} /></Field>
-    <Field label="목표 가격" error={errors.targetPrice?.message}><input type="number" step="any" className={fieldClass} {...register("targetPrice")} /></Field>
-    <Field label="평균단가" error={errors.averagePrice?.message}><input readOnly={ledgerManaged} type="number" step="any" className={`${fieldClass} read-only:cursor-not-allowed read-only:opacity-60`} {...register("averagePrice")} /></Field>
-    <Field label="보유 수량" error={errors.quantity?.message}><input readOnly={ledgerManaged} type="number" step="any" className={`${fieldClass} read-only:cursor-not-allowed read-only:opacity-60`} {...register("quantity")} /></Field>
-    {ledgerManaged && <p className="sm:col-span-2 rounded-lg bg-[var(--surface-muted)] p-3 text-xs leading-5 text-[var(--muted)]">통화·평균단가·보유 수량은 매매 원장에서 자동 계산됩니다. 값을 바꾸려면 해당 매매 기록을 수정해 주세요.</p>}
-    <Field label="현재 판단"><select className={fieldClass} {...register("currentView")}>{stockViews.map((v) => <option key={v}>{v}</option>)}</select></Field>
-    <Field label="다음 검토일"><input type="date" className={fieldClass} {...register("nextReviewDate")} /></Field>
-    <Field label="검토할 사항" error={errors.reviewNote?.message}><input className={fieldClass} placeholder="예: 분기 실적과 마진 추이 확인" {...register("reviewNote")} /></Field>
-    <Field label="다음 실적 발표일"><input type="date" className={fieldClass} {...register("nextEarningsDate")} /></Field>
-    <div className="sm:col-span-2"><Field label="투자 아이디어 요약" error={errors.thesisSummary?.message}><textarea className="mt-1 min-h-24 w-full rounded-lg border bg-[var(--surface)] p-3 text-sm" placeholder="왜 이 종목을 보고 있는지 짧게 기록하세요." {...register("thesisSummary")} /></Field></div>
-    <div className="sm:col-span-2"><Field label="현재 판단 메모" error={errors.currentViewMemo?.message}><textarea className="mt-1 min-h-20 w-full rounded-lg border bg-[var(--surface)] p-3 text-sm" {...register("currentViewMemo")} /></Field></div>
-    <div className="sm:col-span-2"><Field label="태그"><input className={fieldClass} placeholder="쉼표로 구분: 반도체, 코어" {...register("tagsText")} /></Field></div>
-  </div><div className="sticky bottom-0 flex justify-end gap-2 border-t bg-[var(--surface)] p-4"><button type="button" onClick={onCancel} className="rounded-lg border px-4 py-2 text-sm">취소</button><button disabled={isSubmitting} className="rounded-lg bg-[var(--accent)] px-5 py-2 text-sm font-medium text-white">{stock ? "변경 저장" : "종목 추가"}</button></div></form></div>;
+  })}><div className="sticky top-0 z-10 flex items-center justify-between border-b bg-[var(--surface)] px-5 py-4"><div><h2 id="stock-form-title" className="text-lg font-semibold">{t(stock ? "종목 수정" : "새 종목 추가")}</h2><p className="mt-1 text-xs text-[var(--muted)]">{t("판단에 필요한 기본 정보를 기록하세요.")}</p></div><button type="button" aria-label={t("닫기")} onClick={onCancel} className="grid size-9 place-items-center rounded-lg hover:bg-[var(--surface-muted)]"><X size={19} /></button></div><div className="grid gap-5 p-5 sm:grid-cols-2">
+    <Field label={t("티커")} error={errorText(errors.ticker?.message, "티커는 20자 이내로 입력해 주세요.")}><input autoFocus className={fieldClass} placeholder={t("예: 005930, TSLA")} {...register("ticker")} /></Field>
+    <Field label={t("종목명")} error={errorText(errors.name?.message, "종목명은 100자 이내로 입력해 주세요.")}><input className={fieldClass} placeholder={t("예: 삼성전자")} {...register("name")} /></Field>
+    <Field label={t("시장")}><select className={fieldClass} value={market} onChange={(e) => syncCurrency(e.target.value)}>{markets.map((v) => <option key={v} value={v}>{t(v)}</option>)}</select></Field>
+    <Field label={t("통화")}><select disabled={ledgerManaged} className={`${fieldClass} disabled:cursor-not-allowed disabled:opacity-60`} {...register("currency")}>{currencies.map((currency) => <option key={currency} value={currency}>{currency}</option>)}</select></Field>
+    <Field label={t("자산 유형")} error={errorText(errors.assetType?.message, "자산 유형을 입력해 주세요.")}><input className={fieldClass} {...register("assetType")} /></Field>
+    <Field label={t("섹터")} error={errorText(errors.sector?.message, "섹터는 60자 이내로 입력해 주세요.")}><input className={fieldClass} placeholder={t("예: 반도체")} {...register("sector")} /></Field>
+    <Field label={t("상태")}><select className={fieldClass} {...register("status")}>{stockStatuses.map((v) => <option key={v} value={v}>{t(v)}</option>)}</select></Field>
+    <Field label={t("투자 유형")}><select className={fieldClass} {...register("investmentType")}>{investmentTypes.map((v) => <option key={v} value={v}>{t(v)}</option>)}</select></Field>
+    <Field label={t("현재 가격")} error={errorText(errors.currentPrice?.message, "0 이상의 값을 입력해 주세요.")}><input type="number" step="any" className={fieldClass} {...register("currentPrice")} /></Field>
+    <Field label={t("목표 가격")} error={errorText(errors.targetPrice?.message, "0 이상의 값을 입력해 주세요.")}><input type="number" step="any" className={fieldClass} {...register("targetPrice")} /></Field>
+    <Field label={t("평균단가")} error={errorText(errors.averagePrice?.message, "0 이상의 값을 입력해 주세요.")}><input readOnly={ledgerManaged} type="number" step="any" className={`${fieldClass} read-only:cursor-not-allowed read-only:opacity-60`} {...register("averagePrice")} /></Field>
+    <Field label={t("보유 수량")} error={errorText(errors.quantity?.message, "0 이상의 값을 입력해 주세요.")}><input readOnly={ledgerManaged} type="number" step="any" className={`${fieldClass} read-only:cursor-not-allowed read-only:opacity-60`} {...register("quantity")} /></Field>
+    {ledgerManaged && <p className="sm:col-span-2 rounded-lg bg-[var(--surface-muted)] p-3 text-xs leading-5 text-[var(--muted)]">{t("통화·평균단가·보유 수량은 매매 원장에서 자동 계산됩니다. 값을 바꾸려면 해당 매매 기록을 수정해 주세요.")}</p>}
+    <Field label={t("현재 판단")}><select className={fieldClass} {...register("currentView")}>{stockViews.map((v) => <option key={v} value={v}>{t(v)}</option>)}</select></Field>
+    <Field label={t("다음 검토일")}><input type="date" className={fieldClass} {...register("nextReviewDate")} /></Field>
+    <Field label={t("검토할 사항")} error={errorText(errors.reviewNote?.message, "검토할 사항은 300자 이내로 입력해 주세요.")}><input className={fieldClass} placeholder={t("예: 분기 실적과 마진 추이 확인")} {...register("reviewNote")} /></Field>
+    <Field label={t("다음 실적 발표일")}><input type="date" className={fieldClass} {...register("nextEarningsDate")} /></Field>
+    <div className="sm:col-span-2"><Field label={t("투자 아이디어 요약")} error={errorText(errors.thesisSummary?.message, "투자 아이디어 요약은 500자 이내로 입력해 주세요.")}><textarea className="mt-1 min-h-24 w-full rounded-lg border bg-[var(--surface)] p-3 text-sm" placeholder={t("왜 이 종목을 보고 있는지 짧게 기록하세요.")} {...register("thesisSummary")} /></Field></div>
+    <div className="sm:col-span-2"><Field label={t("현재 판단 메모")} error={errorText(errors.currentViewMemo?.message, "현재 판단 메모는 1000자 이내로 입력해 주세요.")}><textarea className="mt-1 min-h-20 w-full rounded-lg border bg-[var(--surface)] p-3 text-sm" {...register("currentViewMemo")} /></Field></div>
+    <div className="sm:col-span-2"><Field label={t("태그")}><input className={fieldClass} placeholder={t("쉼표로 구분: 반도체, 코어")} {...register("tagsText")} /></Field></div>
+  </div><div className="sticky bottom-0 flex justify-end gap-2 border-t bg-[var(--surface)] p-4"><button type="button" onClick={onCancel} className="rounded-lg border px-4 py-2 text-sm">{t("취소")}</button><button disabled={isSubmitting} className="rounded-lg bg-[var(--accent)] px-5 py-2 text-sm font-medium text-white">{t(stock ? "변경 저장" : "종목 추가")}</button></div></form></div>;
 }
 
 function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) {

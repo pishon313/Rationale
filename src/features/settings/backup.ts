@@ -1,9 +1,15 @@
 import type { Observation } from "@/features/observations/types";
+import type { Note } from "@/features/notes/types";
+import type { Currency } from "@/domain/currency";
 import { conditionTypes, planStatuses, scenarioTypes, type BuyPlan } from "@/features/plans/types";
 import { reviewEvaluations, type Review } from "@/features/reviews/types";
 import { ruleTypes, severities, type InvestmentRule } from "@/features/rules/types";
 import { currencies, investmentTypes, markets, stockStatuses, stockViews, type Stock } from "@/features/stocks/types";
 import { tradeTypes, type Trade } from "@/features/trades/types";
+import { isLocale, type Locale } from "@/i18n/types";
+
+export type DashboardNoteBackup = { id: string; content: string; updatedAt: string };
+export type EarningsEventBackup = { id: string; name: string; ticker: string; date: string; updatedAt: string; deletedAt: string | null };
 
 type CoreBackup = {
   exportedAt: string;
@@ -19,9 +25,20 @@ export type ValidatedBackup =
       observations: Observation[];
       reviews: Review[];
       rules: InvestmentRule[];
+    })
+  | (CoreBackup & {
+      version: 4;
+      observations: Observation[];
+      reviews: Review[];
+      rules: InvestmentRule[];
+      notes: Note[];
+      language: Locale;
+      dashboardNotes?: DashboardNoteBackup[];
+      earningsEvents?: EarningsEventBackup[];
+      displayCurrency?: Currency;
     });
 
-const supportedVersions = new Set([1, 2, 3]);
+const supportedVersions = new Set([1, 2, 3, 4]);
 const supportedTradeTypes = new Set<string>(tradeTypes);
 const supportedCurrencies = new Set<string>(currencies);
 
@@ -53,6 +70,28 @@ export function validateBackupPayload(value: unknown): ValidatedBackup {
   observations.forEach(validateObservationRecord);
   reviews.forEach(validateReviewRecord);
   rules.forEach(validateRuleRecord);
+  if (value.version === 4) {
+    const notes = validateRecords(value.notes, "Note");
+    notes.forEach(validateNoteRecord);
+    if (!isLocale(value.language)) throw new Error("언어 설정이 올바르지 않습니다.");
+    const dashboardNotes = value.dashboardNotes === undefined ? undefined : validateRecords(value.dashboardNotes, "대시보드 메모");
+    dashboardNotes?.forEach(validateDashboardNoteRecord);
+    const earningsEvents = value.earningsEvents === undefined ? undefined : validateRecords(value.earningsEvents, "실적 발표 일정");
+    earningsEvents?.forEach(validateEarningsEventRecord);
+    if (value.displayCurrency !== undefined) requireEnum(value.displayCurrency, currencies, "통화 설정", "표시 통화");
+    return {
+      version: 4,
+      ...core,
+      observations: observations as Observation[],
+      reviews: reviews as Review[],
+      rules: rules as InvestmentRule[],
+      notes: notes as Note[],
+      language: value.language,
+      dashboardNotes: dashboardNotes as DashboardNoteBackup[] | undefined,
+      earningsEvents: earningsEvents as EarningsEventBackup[] | undefined,
+      displayCurrency: value.displayCurrency as Currency | undefined,
+    };
+  }
   return {
     version: value.version as 2 | 3,
     ...core,
@@ -60,6 +99,28 @@ export function validateBackupPayload(value: unknown): ValidatedBackup {
     reviews: reviews as Review[],
     rules: rules as InvestmentRule[],
   };
+}
+
+function validateDashboardNoteRecord(note: Record<string, unknown>, index: number) {
+  const label = `대시보드 메모 ${index + 1}번째 항목`;
+  requireStrings(note, ["content", "updatedAt"], label);
+  if (note.updatedAt !== "") requireTimestamp(note.updatedAt, label, "수정 일시");
+}
+
+function validateEarningsEventRecord(event: Record<string, unknown>, index: number) {
+  const label = `실적 발표 일정 ${index + 1}번째 항목`;
+  requireStrings(event, ["name", "ticker", "date", "updatedAt"], label);
+  requireTimestamp(event.date, label, "발표일");
+  requireTimestamp(event.updatedAt, label, "수정 일시");
+  requireNullableTimestamp(event.deletedAt, label, "삭제 일시");
+}
+
+function validateNoteRecord(note: Record<string, unknown>, index: number) {
+  const label = `Note ${index + 1}번째 항목`;
+  requireStrings(note, ["title", "content", "createdAt", "updatedAt"], label);
+  requireTimestamp(note.createdAt, label, "생성 일시");
+  requireTimestamp(note.updatedAt, label, "수정 일시");
+  requireNullableTimestamp(note.deletedAt, label, "삭제 일시");
 }
 
 function validateStockRecord(stock: Record<string, unknown>, index: number) {

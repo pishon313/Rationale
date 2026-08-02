@@ -24,10 +24,10 @@ export function calculateBuyCost(
   return calculateTradeAmount(quantity, price).add(money(fee));
 }
 
-export function formatCurrency(value: MoneyInput, currency: Currency) {
-  const locale = currency === "KRW" ? "ko-KR" : currency === "JPY" ? "ja-JP" : currency === "EUR" ? "de-DE" : "en-US";
+export function formatCurrency(value: MoneyInput, currency: Currency, locale?: string) {
+  const formattingLocale = locale ?? (currency === "KRW" ? "ko-KR" : currency === "JPY" ? "ja-JP" : currency === "EUR" ? "de-DE" : "en-US");
   const whole = currency === "KRW" || currency === "JPY";
-  return new Intl.NumberFormat(locale, {
+  return new Intl.NumberFormat(formattingLocale, {
     style: "currency",
     currency,
     minimumFractionDigits: whole ? 0 : 2,

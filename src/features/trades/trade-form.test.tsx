@@ -7,6 +7,16 @@ import { sampleRules } from "@/features/rules/sample-data";
 import { sampleTrades } from "./sample-data";
 import { TradeForm } from "./trade-form";
 
+vi.mock("@/i18n/i18n-provider", () => ({
+  useI18n: () => ({
+    locale: "ko",
+    localeTag: "ko-KR",
+    t: (key: string, params?: Record<string, string | number>) => Object.entries(params ?? {}).reduce((result, [name, value]) => result.replaceAll(`{${name}}`, String(value)), key),
+    formatDate: (value: Date | string | number, options?: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("ko-KR", options).format(new Date(value)),
+    formatNumber: (value: number, options?: Intl.NumberFormatOptions) => new Intl.NumberFormat("ko-KR", options).format(value),
+  }),
+}));
+
 describe("TradeForm", () => {
   it("실제 전달된 종목과 계획을 선택지로 표시한다", () => {
     const stock = { ...sampleStocks[0], id: "user-stock", name: "사용자 종목", ticker: "USER" };

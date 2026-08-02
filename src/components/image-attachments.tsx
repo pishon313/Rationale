@@ -2,10 +2,12 @@
 /* eslint-disable @next/next/no-img-element */
 import { ImagePlus, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
+import { useI18n } from "@/i18n/i18n-provider";
 
 const maxImages = 5;
 
 export function ImageAttachments({ values, onChange }: { values: string[]; onChange: (values: string[]) => void }) {
+  const { t } = useI18n();
   const input = useRef<HTMLInputElement>(null);
   const [error, setError] = useState("");
   async function add(files: FileList | null) {
@@ -16,14 +18,14 @@ export function ImageAttachments({ values, onChange }: { values: string[]; onCha
       const images = [...files].filter((file) => file.type.startsWith("image/")).slice(0, room);
       const encoded = await Promise.all(images.map(resizeImage));
       onChange([...values, ...encoded]);
-      if (files.length > room) setError(`이미지는 최대 ${maxImages}장까지 첨부할 수 있습니다.`);
+      if (files.length > room) setError(t("이미지는 최대 {count}장까지 첨부할 수 있습니다.", { count: maxImages }));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "이미지를 읽지 못했습니다.");
+      setError(t(cause instanceof Error ? cause.message : "이미지를 읽지 못했습니다."));
     } finally {
       if (input.current) input.current.value = "";
     }
   }
-  return <div><div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">{values.map((source, index) => <div key={`${source.slice(-24)}-${index}`} className="group relative aspect-video overflow-hidden rounded-lg border bg-[var(--surface-muted)]"><img src={source} alt={`첨부 이미지 ${index + 1}`} className="size-full object-cover" /><button type="button" aria-label={`첨부 이미지 ${index + 1} 삭제`} onClick={() => onChange(values.filter((_, itemIndex) => itemIndex !== index))} className="absolute right-2 top-2 grid size-8 place-items-center rounded-full bg-black/65 text-white"><Trash2 size={14} /></button></div>)}</div><input ref={input} type="file" accept="image/*" multiple className="sr-only" onChange={(event) => void add(event.target.files)} /><button type="button" disabled={values.length >= maxImages} onClick={() => input.current?.click()} className="mt-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm disabled:opacity-50"><ImagePlus size={16} />이미지 추가 <span className="text-xs text-[var(--muted)]">({values.length}/{maxImages})</span></button>{error && <p className="mt-2 text-xs text-red-600">{error}</p>}<p className="mt-2 text-xs text-[var(--muted)]">오프라인 사용을 위해 앱 데이터에 저장하며, 백업 파일에도 포함됩니다.</p></div>;
+  return <div><div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">{values.map((source, index) => <div key={`${source.slice(-24)}-${index}`} className="group relative aspect-video overflow-hidden rounded-lg border bg-[var(--surface-muted)]"><img src={source} alt={t("첨부 이미지 {number}", { number: index + 1 })} className="size-full object-cover" /><button type="button" aria-label={t("첨부 이미지 {number} 삭제", { number: index + 1 })} onClick={() => onChange(values.filter((_, itemIndex) => itemIndex !== index))} className="absolute right-2 top-2 grid size-8 place-items-center rounded-full bg-black/65 text-white"><Trash2 size={14} /></button></div>)}</div><input ref={input} type="file" accept="image/*" multiple className="sr-only" onChange={(event) => void add(event.target.files)} /><button type="button" disabled={values.length >= maxImages} onClick={() => input.current?.click()} className="mt-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm disabled:opacity-50"><ImagePlus size={16} />{t("이미지 추가")} <span className="text-xs text-[var(--muted)]">({values.length}/{maxImages})</span></button>{error && <p className="mt-2 text-xs text-red-600">{error}</p>}<p className="mt-2 text-xs text-[var(--muted)]">{t("오프라인 사용을 위해 앱 데이터에 저장하며, 백업 파일에도 포함됩니다.")}</p></div>;
 }
 
 function resizeImage(file: File): Promise<string> {

@@ -29,7 +29,7 @@ export function buildAnalytics(trades: Trade[], reviews: Review[]): AnalyticsSum
     plannedTradeRate: activeTrades.length ? activeTrades.filter((trade) => trade.planId).length / activeTrades.length * 100 : 0,
     averageRuleScore: average(activeTrades.map((trade) => trade.ruleComplianceScore)),
     averageProcessScore: average(reviews.map((review) => review.processScore)),
-    monthlyTrades: [...monthly].sort(([a], [b]) => a.localeCompare(b)).map(([month, count]) => ({ month: month.slice(5) + "월", count })),
+    monthlyTrades: [...monthly].sort(([a], [b]) => a.localeCompare(b)).map(([month, count]) => ({ month, count })),
     emotions: [...emotionGroups].map(([emotion, values]) => ({ emotion, count: values.length, averageRuleScore: average(values.map((value) => value.ruleComplianceScore)) })).sort((a, b) => b.count - a.count),
   };
 }

@@ -25,6 +25,30 @@ describe("validateBackupPayload", () => {
     expect(validateBackupPayload(backup).version).toBe(3);
   });
 
+  it("accepts a complete version 2 backup", () => {
+    const backup = { ...valid, version: 2, observations: sampleObservations, reviews: sampleReviews, rules: sampleRules };
+    expect(validateBackupPayload(backup).version).toBe(2);
+  });
+
+  it("accepts notes and language in a version 4 backup", () => {
+    const backup = { ...valid, version: 4, observations: sampleObservations, reviews: sampleReviews, rules: sampleRules, notes: [{ id: "n1", title: "Memo", content: "Text", createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", deletedAt: null }], language: "en", dashboardNotes: [{ id: "dashboard-note", content: "Next week", updatedAt: "2026-08-01T00:00:00.000Z" }], earningsEvents: [{ id: "e1", name: "NVIDIA", ticker: "NVDA", date: "2026-08-20", updatedAt: "2026-08-01T00:00:00.000Z", deletedAt: null }], displayCurrency: "USD" };
+    const parsed = validateBackupPayload(backup);
+    expect(parsed.version).toBe(4);
+    if (parsed.version === 4) {
+      expect(parsed.language).toBe("en");
+      expect(parsed.dashboardNotes?.[0].content).toBe("Next week");
+      expect(parsed.earningsEvents?.[0].ticker).toBe("NVDA");
+      expect(parsed.displayCurrency).toBe("USD");
+    }
+  });
+
+  it("keeps compatibility with early version 4 backups", () => {
+    const backup = { ...valid, version: 4, observations: sampleObservations, reviews: sampleReviews, rules: sampleRules, notes: [], language: "ja" };
+    const parsed = validateBackupPayload(backup);
+    expect(parsed.version).toBe(4);
+    if (parsed.version === 4) expect(parsed.dashboardNotes).toBeUndefined();
+  });
+
   it("rejects duplicate record IDs before restore", () => {
     expect(() => validateBackupPayload({ ...valid, trades: [sampleTrades[0], sampleTrades[0]] })).toThrow("중복 ID");
   });

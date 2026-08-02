@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
+import { I18nProvider } from "@/i18n/i18n-provider";
 
 export const metadata: Metadata = {
   title: { default: "TradeJournal", template: "%s · TradeJournal" },
@@ -10,7 +11,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="ko" suppressHydrationWarning>
-      <body><ThemeProvider>{children}</ThemeProvider></body>
+      <body><ThemeProvider><I18nProvider>{children}</I18nProvider></ThemeProvider></body>
     </html>
   );
 }
