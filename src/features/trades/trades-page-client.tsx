@@ -61,7 +61,7 @@ export function TradesPageClient() {
     catch { const error = "원장 기록을 저장하지 못했습니다. 다시 시도해 주세요."; if (showInForm) setFormError(error); else setMessage(error); return false; }
   }
   async function saveTrade(trade: Trade) { setFormError(""); const next = editing === "new" ? [trade, ...allTrades] : allTrades.map((item) => item.id === trade.id ? trade : item); await validateAndCommit(next, trade.id, true); }
-  async function importCsv(imported: Trade[]) { const saved = await validateAndCommit([...imported, ...allTrades]); if (saved) { setCsvOpen(false); setMessage(`${imported.length}건의 CSV 거래를 원장에 추가했습니다.`); } return saved; }
+  async function importCsv(imported: Trade[]) { const saved = await validateAndCommit([...imported, ...allTrades]); if (saved) { setCsvOpen(false); setMessage(`${imported.length}건의 거래 내역을 원장에 추가했습니다.`); } return saved; }
   async function deleteTrade(trade: Trade) { if (!window.confirm(`${trade.tradedAt.slice(0, 10)} ${trade.stockName || trade.tradeType} 기록을 삭제할까요? 이후 포지션과 손익이 다시 계산됩니다.`)) return; const next = allTrades.map((item) => item.id === trade.id ? { ...item, deletedAt: new Date().toISOString(), updatedAt: new Date().toISOString() } : item); if (await validateAndCommit(next)) setMessage("기록을 삭제하고 전체 원장을 다시 계산했습니다."); }
   const activePositions = ledger.positions.filter((item) => item.quantity > 0);
   const investedKrw = activePositions.reduce((sum, item) => sum + item.investedAmountKrw, 0);
@@ -70,7 +70,7 @@ export function TradesPageClient() {
   const successMessage = message.includes("추가") || message.includes("삭제");
 
   return <>
-    <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm text-[var(--muted)]">매매·배당·입출금을 시간순으로 재계산</p><h1 className="mt-1 text-2xl font-semibold">매매 원장</h1></div><div className="flex gap-2"><button disabled={!dataReady} onClick={() => setCsvOpen(true)} className="flex items-center gap-2 rounded-lg border px-4 py-2 text-sm disabled:opacity-50"><FileUp size={17} />CSV 가져오기</button><button disabled={!dataReady} onClick={() => { setMessage(""); setFormError(""); setEditing("new"); }} className="flex items-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm text-white disabled:opacity-50"><Plus size={17} />원장 기록</button></div></div>
+    <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm text-[var(--muted)]">매매·배당·입출금을 시간순으로 재계산</p><h1 className="mt-1 text-2xl font-semibold">매매 원장</h1></div><div className="flex gap-2"><button disabled={!dataReady} onClick={() => setCsvOpen(true)} className="flex items-center gap-2 rounded-lg border px-4 py-2 text-sm disabled:opacity-50"><FileUp size={17} />파일 가져오기</button><button disabled={!dataReady} onClick={() => { setMessage(""); setFormError(""); setEditing("new"); }} className="flex items-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm text-white disabled:opacity-50"><Plus size={17} />원장 기록</button></div></div>
     {message && <div className={`mt-4 rounded-lg p-3 text-sm ${successMessage ? "bg-[var(--accent-soft)] text-[var(--accent)]" : "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-200"}`}>{message}</div>}
     {migration.warnings.length > 0 && <Notice title="기존 보유 수량 확인 필요" lines={migration.warnings} />}
     {negativeUnreconciled && <Notice title="기초 현금이 등록되지 않은 계좌가 있습니다" lines={["표시된 현금은 현재 기록의 순현금흐름입니다. 실제 잔액을 맞추려면 가장 오래된 날짜로 입금 기록을 추가하세요."]} />}

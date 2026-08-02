@@ -8,6 +8,24 @@ export type CsvMapping = Partial<Record<CsvField, number>>;
 export type ParsedCsv = { headers: string[]; rows: string[][] };
 export type CsvImportResult = { trades: Trade[]; errors: Array<{ row: number; message: string }>; skippedDuplicates: number };
 
+export async function parseTradeFile(file: File): Promise<ParsedCsv> {
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  if (extension === "xls" || extension === "xlsx") return parseExcelWorkbook(await file.arrayBuffer());
+  if (extension === "csv" || extension === "tsv") return parseCsv(await file.text());
+  throw new Error("CSV, TSV, XLS 또는 XLSX 파일을 선택해 주세요.");
+}
+
+export async function parseExcelWorkbook(buffer: ArrayBuffer): Promise<ParsedCsv> {
+  const XLSX = await import("@e965/xlsx");
+  const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+  const firstSheetName = workbook.SheetNames[0];
+  if (!firstSheetName) throw new Error("엑셀 파일에서 시트를 찾지 못했습니다.");
+  const sheet = workbook.Sheets[firstSheetName];
+  const records = XLSX.utils.sheet_to_json<Array<string | number | boolean | Date>>(sheet, { header: 1, defval: "", raw: false, dateNF: "yyyy-mm-dd" });
+  const rows = records.map((row) => row.map((cell) => String(cell ?? "").trim())).filter((row) => row.some(Boolean));
+  return { headers: rows[0] ?? [], rows: rows.slice(1) };
+}
+
 const aliases: Record<CsvField, string[]> = {
   tradedAt: ["거래일시", "체결일시", "거래일자", "체결일자", "거래일", "체결일", "date", "datetime", "tradedat", "executedat"],
   time: ["거래시간", "체결시간", "시간", "time"],
@@ -65,7 +83,7 @@ export function convertCsvRows(parsed: ParsedCsv, mapping: CsvMapping, stocks: S
       const currency = parseCurrency(value(row, mapping.currency), stock.currency);
       const exchangeRate = currency === "KRW" ? 1 : optionalNumber(value(row, mapping.exchangeRate)) || fallbackRatesToKrw[currency];
       const now = new Date().toISOString();
-      const trade: Trade = { id: csvId(row, index), stockId: stock.id, stockName: stock.name, planId: null, tradeType, tradedAt, quantity, price, currency, exchangeRate, fee: optionalNumber(value(row, mapping.fee)), tax: optionalNumber(value(row, mapping.tax)), accountName: value(row, mapping.accountName) || "CSV 가져오기", memo: "증권사 CSV 가져오기", emotion: "평온", emotionIntensity: 1, confidenceScore: 3, ruleComplianceScore: 3, ruleViolations: [], createdAt: now, updatedAt: now, deletedAt: null };
+      const trade: Trade = { id: csvId(row, index), stockId: stock.id, stockName: stock.name, planId: null, tradeType, tradedAt, quantity, price, currency, exchangeRate, fee: optionalNumber(value(row, mapping.fee)), tax: optionalNumber(value(row, mapping.tax)), accountName: value(row, mapping.accountName) || "파일 가져오기", memo: "증권사 거래 내역 가져오기", emotion: "평온", emotionIntensity: 1, confidenceScore: 3, ruleComplianceScore: 3, ruleViolations: [], createdAt: now, updatedAt: now, deletedAt: null };
       const key = fingerprint(trade);
       if (fingerprints.has(key)) { skippedDuplicates += 1; return; }
       fingerprints.add(key); trades.push(trade);

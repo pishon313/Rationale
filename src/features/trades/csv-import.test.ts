@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Stock } from "@/features/stocks/types";
-import { convertCsvRows, detectCsvMapping, parseCsv } from "./csv-import";
+import * as XLSX from "@e965/xlsx";
+import { convertCsvRows, detectCsvMapping, parseCsv, parseExcelWorkbook } from "./csv-import";
 
 const stocks = [{ id: "s1", ticker: "005930", name: "삼성전자", currency: "KRW", deletedAt: null }] as Stock[];
 
@@ -20,5 +21,19 @@ describe("CSV import", () => {
     const result = convertCsvRows(parsed, mapping, stocks, [first]);
     expect(result.skippedDuplicates).toBe(1);
     expect(result.errors[0].row).toBe(3);
+  });
+
+  it.each(["xlsx", "xls"] as const)(".%s 첫 시트를 읽어 기존 변환 흐름에 연결한다", async (bookType) => {
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ["체결일자", "종목코드", "매매구분", "체결수량", "체결가"],
+      ["2026-08-01", "005930", "매수", 3, 71000],
+    ]);
+    XLSX.utils.book_append_sheet(workbook, sheet, "거래내역");
+    const bytes = XLSX.write(workbook, { type: "array", bookType });
+    const parsed = await parseExcelWorkbook(bytes);
+    const result = convertCsvRows(parsed, detectCsvMapping(parsed.headers), stocks, []);
+    expect(result.errors).toHaveLength(0);
+    expect(result.trades[0]).toMatchObject({ stockId: "s1", quantity: 3, price: 71000 });
   });
 });
