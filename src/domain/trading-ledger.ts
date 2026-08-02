@@ -1,4 +1,5 @@
 import Decimal from "decimal.js";
+import { currencies, fallbackRatesToKrw, type RatesToKrw } from "./currency";
 import { applyBuy, applySell, emptyPosition, type Position } from "./portfolio";
 import { tradeTypes, type Trade } from "@/features/trades/types";
 
@@ -28,13 +29,14 @@ export function normalizeTrade(trade: Trade): Trade {
   return {
     ...trade,
     amount: trade.amount ?? undefined,
-    exchangeRate: Number.isFinite(trade.exchangeRate) ? trade.exchangeRate : trade.currency === "KRW" ? 1 : 1380,
+    exchangeRate: Number.isFinite(trade.exchangeRate) ? trade.exchangeRate : fallbackRatesToKrw[trade.currency],
     accountName: trade.accountName?.trim() || "기본 계좌",
     memo: trade.memo ?? "",
     emotion: trade.emotion || "평온",
     emotionIntensity: trade.emotionIntensity || 1,
     confidenceScore: trade.confidenceScore || 3,
     ruleComplianceScore: trade.ruleComplianceScore || 3,
+    ruleViolations: trade.ruleViolations ?? [],
     updatedAt: trade.updatedAt ?? trade.createdAt,
     deletedAt: trade.deletedAt ?? null,
   };
@@ -134,14 +136,14 @@ export function aggregatePositions(ledger: TradingLedger) {
   return result;
 }
 
-export function cashBalanceKrw(ledger: TradingLedger, usdKrw = 1380) { return ledger.cashBalances.reduce((sum, item) => sum + item.balance * (item.currency === "USD" ? usdKrw : 1), 0); }
+export function cashBalanceKrw(ledger: TradingLedger, input: RatesToKrw | number = fallbackRatesToKrw) { const rates = typeof input === "number" ? { ...fallbackRatesToKrw, USD: input } : input; return ledger.cashBalances.reduce((sum, item) => sum + item.balance * rates[item.currency], 0); }
 export function tradeAmount(trade: Trade) { return trade.tradeType === "매수" || trade.tradeType === "매도" ? trade.quantity * trade.price : trade.amount ?? trade.quantity * trade.price; }
 export function positionKey(accountName: string, stockId: string, currency?: Trade["currency"]) { return `${accountName}::${stockId}${currency ? `::${currency}` : ""}`; }
 
 function validateTrade(trade: Trade) {
   if (!isValidTimestamp(trade.tradedAt) || !isValidTimestamp(trade.createdAt)) throw new Error("거래 일시가 올바르지 않습니다.");
   if (!(tradeTypes as readonly string[]).includes(trade.tradeType)) throw new Error("거래 유형이 올바르지 않습니다.");
-  if (trade.currency !== "KRW" && trade.currency !== "USD") throw new Error("통화가 올바르지 않습니다.");
+  if (!currencies.includes(trade.currency)) throw new Error("통화가 올바르지 않습니다.");
   if (trade.isOpeningPosition && trade.tradeType !== "매수") throw new Error("기초 포지션은 매수 유형이어야 합니다.");
   if (!trade.accountName.trim()) throw new Error("계좌명을 입력해 주세요.");
   if (![trade.quantity, trade.price, trade.amount ?? 0, trade.exchangeRate, trade.fee, trade.tax].every(Number.isFinite)) throw new Error("숫자 입력값이 올바르지 않습니다.");

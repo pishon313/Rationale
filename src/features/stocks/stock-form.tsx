@@ -3,7 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { X } from "lucide-react";
 import { useForm } from "react-hook-form";
-import { investmentTypes, markets, stockStatuses, stockViews, type Stock } from "./types";
+import { currencies, investmentTypes, markets, stockStatuses, stockViews, type Stock } from "./types";
 import { stockFormSchema, type StockFormValues } from "./schema";
 
 type Props = { stock?: Stock; onCancel: () => void; onSave: (stock: Stock) => void };
@@ -55,7 +55,7 @@ export function StockForm({ stock, onCancel, onSave }: Props) {
     <Field label="티커" error={errors.ticker?.message}><input autoFocus className={fieldClass} placeholder="예: 005930, TSLA" {...register("ticker")} /></Field>
     <Field label="종목명" error={errors.name?.message}><input className={fieldClass} placeholder="예: 삼성전자" {...register("name")} /></Field>
     <Field label="시장"><select className={fieldClass} value={market} onChange={(e) => syncCurrency(e.target.value)}>{markets.map((v) => <option key={v}>{v}</option>)}</select></Field>
-    <Field label="통화"><select disabled={ledgerManaged} className={`${fieldClass} disabled:cursor-not-allowed disabled:opacity-60`} {...register("currency")}><option>KRW</option><option>USD</option></select></Field>
+    <Field label="통화"><select disabled={ledgerManaged} className={`${fieldClass} disabled:cursor-not-allowed disabled:opacity-60`} {...register("currency")}>{currencies.map((currency) => <option key={currency}>{currency}</option>)}</select></Field>
     <Field label="자산 유형" error={errors.assetType?.message}><input className={fieldClass} {...register("assetType")} /></Field>
     <Field label="섹터"><input className={fieldClass} placeholder="예: 반도체" {...register("sector")} /></Field>
     <Field label="상태"><select className={fieldClass} {...register("status")}>{stockStatuses.map((v) => <option key={v}>{v}</option>)}</select></Field>

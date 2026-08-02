@@ -1,5 +1,6 @@
 export const tradeTypes = ["매수", "매도", "배당", "입금", "출금"] as const;
 export const emotions = ["평온", "확신", "불안", "공포", "FOMO", "조급함", "손실 만회 심리", "과도한 자신감", "무기력", "기타"] as const;
+export type RecordedRuleViolation = { ruleId: string; title: string; severity: "안내" | "주의" | "경고"; message: string };
 export type Trade = {
   id: string;
   stockId: string | null;
@@ -11,7 +12,7 @@ export type Trade = {
   price: number;
   amount?: number;
   isOpeningPosition?: boolean;
-  currency: "KRW" | "USD";
+  currency: Currency;
   exchangeRate: number;
   fee: number;
   tax: number;
@@ -21,7 +22,9 @@ export type Trade = {
   emotionIntensity: number;
   confidenceScore: number;
   ruleComplianceScore: number;
+  ruleViolations?: RecordedRuleViolation[];
   createdAt: string;
   updatedAt?: string;
   deletedAt?: string | null;
 };
+import type { Currency } from "@/domain/currency";

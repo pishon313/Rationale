@@ -1,4 +1,5 @@
 import Decimal from "decimal.js";
+import type { Currency } from "./currency";
 
 export type MoneyInput = Decimal.Value;
 
@@ -23,11 +24,13 @@ export function calculateBuyCost(
   return calculateTradeAmount(quantity, price).add(money(fee));
 }
 
-export function formatCurrency(value: MoneyInput, currency: "KRW" | "USD") {
-  return new Intl.NumberFormat(currency === "KRW" ? "ko-KR" : "en-US", {
+export function formatCurrency(value: MoneyInput, currency: Currency) {
+  const locale = currency === "KRW" ? "ko-KR" : currency === "JPY" ? "ja-JP" : currency === "EUR" ? "de-DE" : "en-US";
+  const whole = currency === "KRW" || currency === "JPY";
+  return new Intl.NumberFormat(locale, {
     style: "currency",
     currency,
-    minimumFractionDigits: currency === "KRW" ? 0 : 2,
-    maximumFractionDigits: currency === "KRW" ? 0 : 2,
+    minimumFractionDigits: whole ? 0 : 2,
+    maximumFractionDigits: whole ? 0 : 2,
   }).format(money(value).toNumber());
 }

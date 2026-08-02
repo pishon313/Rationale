@@ -5,11 +5,12 @@ import { useMemo, useState } from "react";
 import { type ColumnDef, flexRender, getCoreRowModel, getFilteredRowModel, getSortedRowModel, type SortingState, useReactTable, type VisibilityState } from "@tanstack/react-table";
 import { ChevronDown, ChevronsUpDown, Eye, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { formatCurrency } from "@/domain/money";
+import type { Currency } from "@/domain/currency";
 import { stockStatuses, type Stock, type StockComputed, withComputed } from "./types";
 
 type Props = { stocks: Stock[]; onEdit: (stock: Stock) => void; onDelete: (stock: Stock) => void };
 
-function money(value: number, currency: "KRW" | "USD") { return formatCurrency(value, currency).replace("₩", "₩ "); }
+function money(value: number, currency: Currency) { return formatCurrency(value, currency).replace("₩", "₩ "); }
 
 export function StockTable({ stocks, onEdit, onDelete }: Props) {
   const [sorting, setSorting] = useState<SortingState>([]);

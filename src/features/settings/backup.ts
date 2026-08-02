@@ -23,7 +23,7 @@ export type ValidatedBackup =
 
 const supportedVersions = new Set([1, 2, 3]);
 const supportedTradeTypes = new Set<string>(tradeTypes);
-const supportedCurrencies = new Set(["KRW", "USD"]);
+const supportedCurrencies = new Set<string>(currencies);
 
 export function validateBackupPayload(value: unknown): ValidatedBackup {
   if (!isRecord(value) || typeof value.version !== "number" || !supportedVersions.has(value.version)) {
@@ -94,6 +94,8 @@ function validatePlanRecord(plan: Record<string, unknown>, index: number) {
   requireEnum(plan.status, planStatuses, label, "상태");
   requireNonNegativeNumbers(plan, ["plannedAmount", "plannedQuantity", "priority"], label);
   requireNullableNumber(plan.targetPrice, label, "목표 가격");
+  if (plan.stopLossPrice !== undefined) requireNullableNumber(plan.stopLossPrice, label, "손절가");
+  if (plan.takeProfitPrice !== undefined) requireNullableNumber(plan.takeProfitPrice, label, "목표가");
   requireNullableNumber(plan.priceRangeMin, label, "최소 가격");
   requireNullableNumber(plan.priceRangeMax, label, "최대 가격");
   requireNullableNumber(plan.plannedPortfolioPercent, label, "예정 비중");
@@ -123,7 +125,8 @@ function validateObservationRecord(observation: Record<string, unknown>, index: 
 
 function validateReviewRecord(review: Record<string, unknown>, index: number) {
   const label = `회고 ${index + 1}번째 항목`;
-  requireStrings(review, ["stockId", "stockName", "reviewedAt", "result", "decisionQuality", "executionQuality", "emotionState", "strengths", "mistakes", "nextAction", "lessons", "evaluation", "createdAt", "updatedAt"], label);
+  requireStrings(review, ["stockName", "reviewedAt", "result", "decisionQuality", "executionQuality", "emotionState", "strengths", "mistakes", "nextAction", "lessons", "evaluation", "createdAt", "updatedAt"], label);
+  if (review.stockId !== null && typeof review.stockId !== "string") throw new Error(`${label}의 종목 연결이 올바르지 않습니다.`);
   requireEnum(review.evaluation, reviewEvaluations, label, "평가");
   if (review.tradeId !== null && typeof review.tradeId !== "string") throw new Error(`${label}의 거래 연결이 올바르지 않습니다.`);
   if (typeof review.planCompliance !== "boolean") throw new Error(`${label}의 계획 준수 값이 올바르지 않습니다.`);
@@ -132,6 +135,9 @@ function validateReviewRecord(review: Record<string, unknown>, index: number) {
   requireTimestamp(review.createdAt, label, "생성 일시");
   requireTimestamp(review.updatedAt, label, "수정 일시");
   requireNullableTimestamp(review.deletedAt, label, "삭제 일시");
+  if (review.strategyTags !== undefined) requireStringArray(review.strategyTags, label, "전략 태그");
+  if (review.mistakeTags !== undefined) requireStringArray(review.mistakeTags, label, "실수 태그");
+  if (review.attachmentUrls !== undefined) requireStringArray(review.attachmentUrls, label, "첨부 이미지");
 }
 
 function validateRuleRecord(rule: Record<string, unknown>, index: number) {
@@ -196,6 +202,9 @@ function validateTradeRecord(trade: Record<string, unknown>, index: number) {
   const tax = requiredNumber(trade.tax, label, "세금");
   if (exchangeRate <= 0 || (trade.currency === "KRW" && exchangeRate !== 1)) throw new Error(`${label}의 환율이 올바르지 않습니다.`);
   if (fee < 0 || tax < 0) throw new Error(`${label}의 수수료 또는 세금이 올바르지 않습니다.`);
+  if (trade.ruleViolations !== undefined) {
+    if (!Array.isArray(trade.ruleViolations) || trade.ruleViolations.some((item) => !isRecord(item) || typeof item.ruleId !== "string" || typeof item.title !== "string" || typeof item.message !== "string" || !["안내", "주의", "경고"].includes(String(item.severity)))) throw new Error(`${label}의 원칙 위반 기록이 올바르지 않습니다.`);
+  }
 
   const isSecurity = trade.tradeType === "매수" || trade.tradeType === "매도";
   if (isSecurity) {

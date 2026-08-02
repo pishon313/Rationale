@@ -7,7 +7,8 @@ export type BuyPlanCondition = { id: string; label: string; isRequired: boolean;
 export type BuyPlan = {
   id: string; stockId: string; stockName: string; ticker: string; title: string;
   scenarioType: (typeof scenarioTypes)[number]; conditionType: (typeof conditionTypes)[number]; conditionDescription: string;
-  targetPrice: number | null; priceRangeMin: number | null; priceRangeMax: number | null;
+  /** 계획 진입가. 기존 데이터의 targetPrice 의미를 유지합니다. */
+  targetPrice: number | null; stopLossPrice?: number | null; takeProfitPrice?: number | null; priceRangeMin: number | null; priceRangeMax: number | null;
   plannedAmount: number; plannedQuantity: number; plannedPortfolioPercent: number | null;
   priority: number; status: (typeof planStatuses)[number]; invalidationCondition: string;
   expectedHoldingPeriod: string; memo: string; conditions: BuyPlanCondition[];

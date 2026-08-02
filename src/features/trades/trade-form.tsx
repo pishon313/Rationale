@@ -1,7 +1,8 @@
 "use client";
 
 import { X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { currencies, fallbackRatesToKrw, fetchHistoricalRateToKrw } from "@/domain/currency";
 import { formatCurrency } from "@/domain/money";
 import { planPriceDeviation } from "@/domain/portfolio";
 import { evaluateTradeRules } from "@/domain/rules";
@@ -9,6 +10,7 @@ import { tradeAmount, type TradingLedger } from "@/domain/trading-ledger";
 import type { BuyPlan } from "@/features/plans/types";
 import type { InvestmentRule } from "@/features/rules/types";
 import type { Stock } from "@/features/stocks/types";
+import { useExchangeRates } from "@/lib/use-exchange-rates";
 import { emotions, tradeTypes, type Trade } from "./types";
 
 type Props = {
@@ -25,6 +27,7 @@ type Props = {
 const field = "mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3 text-sm";
 
 export function TradeForm({ trade, stocks, plans, rules, ledger, formError = "", onCancel, onSave }: Props) {
+  const exchangeRates = useExchangeRates();
   const firstStock = stocks[0];
   const openingPosition = trade?.isOpeningPosition === true;
   const [type, setType] = useState<Trade["tradeType"]>(openingPosition ? "매수" : trade?.tradeType ?? "매수");
@@ -35,7 +38,8 @@ export function TradeForm({ trade, stocks, plans, rules, ledger, formError = "",
   const [price, setPrice] = useState(trade?.price ?? 0);
   const [amount, setAmount] = useState(trade ? tradeAmount(trade) : 0);
   const [currency, setCurrency] = useState<Trade["currency"]>(trade?.currency ?? firstStock?.currency ?? "KRW");
-  const [exchangeRate, setExchangeRate] = useState(trade?.exchangeRate ?? (currency === "KRW" ? 1 : 1380));
+  const [exchangeRate, setExchangeRate] = useState(trade?.exchangeRate ?? fallbackRatesToKrw[currency]);
+  const [rateNote, setRateNote] = useState(trade ? "저장된 거래 환율" : "기준환율 확인 중");
   const [fee, setFee] = useState(trade?.fee ?? 0);
   const [tax, setTax] = useState(trade?.tax ?? 0);
   const [accountName, setAccountName] = useState(trade?.accountName ?? "기본 계좌");
@@ -49,7 +53,7 @@ export function TradeForm({ trade, stocks, plans, rules, ledger, formError = "",
   const stock = stocks.find((item) => item.id === stockId);
   const isSecurity = type === "매수" || type === "매도";
   const isDividend = type === "배당";
-  const linkedPlans = plans.filter((plan) => plan.stockId === stockId && !["완료", "취소", "무효화"].includes(plan.status));
+  const linkedPlans = plans.filter((plan) => plan.stockId === stockId && (type === "매도" || !["완료", "취소", "무효화"].includes(plan.status)));
   const plan = plans.find((item) => item.id === planId);
   const deviation = plan?.targetPrice ? planPriceDeviation(plan.targetPrice, price) : null;
   const warnings = type === "매수" ? evaluateTradeRules(rules, { amount: quantity * price, planId: planId || null }) : [];
@@ -62,9 +66,16 @@ export function TradeForm({ trade, stocks, plans, rules, ledger, formError = "",
     .reduce((sum, item) => sum + item.quantity, 0);
   const visibleError = localError || formError;
 
+  useEffect(() => {
+    if (currency === "KRW" || trade && trade.currency === currency) return;
+    let active = true;
+    fetchHistoricalRateToKrw(currency, tradedAt.slice(0, 10)).then((result) => { if (active) { setExchangeRate(result.rate); setRateNote(`${result.date} 기준환율 · 직접 수정 가능`); } }).catch(() => { if (active) { setExchangeRate(exchangeRates.snapshot.ratesToKrw[currency]); setRateNote(`${exchangeRates.snapshot.rateDate ?? "저장된"} 환율 · 오프라인`); } });
+    return () => { active = false; };
+  }, [currency, exchangeRates.snapshot.rateDate, exchangeRates.snapshot.ratesToKrw, trade, tradedAt]);
+
   function syncStockCurrency(nextStock?: Stock) {
     if (!nextStock) return;
-    const nextRate = nextStock.currency === "KRW" ? 1 : currency === "KRW" || exchangeRate === 1 ? 1380 : exchangeRate || 1380;
+    const nextRate = exchangeRates.snapshot.ratesToKrw[nextStock.currency];
     setCurrency(nextStock.currency);
     setExchangeRate(nextRate);
   }
@@ -80,7 +91,7 @@ export function TradeForm({ trade, stocks, plans, rules, ledger, formError = "",
     if (openingPosition && next !== "매수") return;
     setType(next);
     setLocalError("");
-    if (next !== "매수") setPlanId("");
+    if (next !== "매수" && next !== "매도") setPlanId("");
     if (next === "매수" || next === "매도") syncStockCurrency(stock);
   }
 
@@ -111,7 +122,7 @@ export function TradeForm({ trade, stocks, plans, rules, ledger, formError = "",
       id: trade?.id ?? crypto.randomUUID(),
       stockId: isSecurity || isDividend ? stockId || null : null,
       stockName: isSecurity || isDividend ? stock?.name ?? trade?.stockName ?? "" : "",
-      planId: type === "매수" ? planId || null : null,
+      planId: isSecurity ? planId || null : null,
       tradeType: type,
       tradedAt,
       quantity: isSecurity ? quantity : 0,
@@ -128,6 +139,7 @@ export function TradeForm({ trade, stocks, plans, rules, ledger, formError = "",
       emotionIntensity: isSecurity ? emotionIntensity : 1,
       confidenceScore: trade?.confidenceScore ?? 3,
       ruleComplianceScore: isSecurity ? (warnings.length ? 2 : conditionMet ? 5 : 3) : 5,
+      ruleViolations: isSecurity ? warnings : [],
       createdAt: trade?.createdAt ?? now,
       updatedAt: now,
       deletedAt: null,
@@ -175,13 +187,13 @@ export function TradeForm({ trade, stocks, plans, rules, ledger, formError = "",
           {!isSecurity && <Label text={type === "배당" ? "세전 배당금" : `${type} 금액`}><input required type="number" min="0" step="any" className={field} value={amount} onChange={(event) => setAmount(Number(event.target.value))} /></Label>}
           <Label text="거래 일시"><input required type="datetime-local" className={field} value={tradedAt} onChange={(event) => setTradedAt(event.target.value)} /></Label>
           <Label text="계좌"><input required list="account-names" className={field} value={accountName} onChange={(event) => setAccountName(event.target.value)} /><datalist id="account-names">{accounts.map((item) => <option key={item}>{item}</option>)}</datalist></Label>
-          {(!isSecurity || !stock) && <Label text="통화"><select className={field} value={currency} onChange={(event) => { const next = event.target.value as Trade["currency"]; setCurrency(next); setExchangeRate(next === "KRW" ? 1 : currency === "KRW" ? 1380 : exchangeRate || 1380); }}><option>KRW</option><option>USD</option></select></Label>}
-          {currency === "USD" && <Label text="적용 환율"><input required type="number" min="0" step="any" className={field} value={exchangeRate} onChange={(event) => setExchangeRate(Number(event.target.value))} /></Label>}
+          {(!isSecurity || !stock) && <Label text="통화"><select className={field} value={currency} onChange={(event) => { const next = event.target.value as Trade["currency"]; setCurrency(next); setExchangeRate(exchangeRates.snapshot.ratesToKrw[next]); }} >{currencies.map((item) => <option key={item}>{item}</option>)}</select></Label>}
+          {currency !== "KRW" && <Label text="적용 환율"><input aria-label="적용 환율" required type="number" min="0" step="any" className={field} value={exchangeRate} onChange={(event) => { setExchangeRate(Number(event.target.value)); setRateNote("직접 입력한 환율"); }} /><small className="mt-1 block text-[var(--muted)]">1 {currency}당 KRW · {rateNote}</small></Label>}
           <Label text="수수료"><input type="number" min="0" step="any" className={field} value={fee} onChange={(event) => setFee(Number(event.target.value))} /></Label>
           <Label text="세금"><input type="number" min="0" step="any" className={field} value={tax} onChange={(event) => setTax(Number(event.target.value))} /></Label>
 
-          {type === "매수" && <div className="sm:col-span-2"><Label text="연결된 매수 계획"><select className={field} value={planId} onChange={(event) => setPlanId(event.target.value)}><option value="">비계획 매매</option>{linkedPlans.map((item) => <option value={item.id} key={item.id}>{item.title}</option>)}</select></Label></div>}
-          {plan && <div className="sm:col-span-2 rounded-lg bg-[var(--surface-muted)] p-4 text-sm"><p className="font-medium">계획 대비 확인</p><p className="mt-2">가격 오차: {deviation ? `${deviation.greaterThan(0) ? "+" : ""}${deviation.toFixed(1)}%` : "계산 대기"}</p><label className="mt-3 flex gap-2"><input type="checkbox" checked={conditionMet} onChange={(event) => setConditionMet(event.target.checked)} />계획 조건이 충족되었음을 확인</label></div>}
+          {isSecurity && <div className="sm:col-span-2"><Label text="연결된 매매 계획"><select className={field} value={planId} onChange={(event) => setPlanId(event.target.value)}><option value="">비계획 매매</option>{linkedPlans.map((item) => <option value={item.id} key={item.id}>{item.title}</option>)}</select></Label></div>}
+          {plan && <div className="sm:col-span-2 rounded-lg bg-[var(--surface-muted)] p-4 text-sm"><p className="font-medium">계획 대비 확인</p><div className="mt-2 grid gap-1 sm:grid-cols-3"><p>가격 오차: {deviation ? `${deviation.greaterThan(0) ? "+" : ""}${deviation.toFixed(1)}%` : "계산 대기"}</p><p>수량: {quantity.toLocaleString()} / {plan.plannedQuantity.toLocaleString()}</p><p>금액: {(quantity * price).toLocaleString()} / {plan.plannedAmount.toLocaleString()}</p></div>{type === "매수" && <label className="mt-3 flex gap-2"><input type="checkbox" checked={conditionMet} onChange={(event) => setConditionMet(event.target.checked)} />계획 조건이 충족되었음을 확인</label>}</div>}
           {warnings.length > 0 && <div className="sm:col-span-2 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"><p className="font-semibold">원칙 위반 가능성 {warnings.length}건</p>{warnings.map((warning) => <p key={warning.ruleId} className="mt-2">[{warning.severity}] {warning.message}</p>)}</div>}
           {isSecurity && <>
             <Label text="감정"><select className={field} value={emotion} onChange={(event) => setEmotion(event.target.value)}>{emotions.map((item) => <option key={item}>{item}</option>)}</select></Label>

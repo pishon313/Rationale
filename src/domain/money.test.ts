@@ -17,5 +17,7 @@ describe("money", () => {
   it("KRW와 USD를 지정된 자릿수로 표시한다", () => {
     expect(formatCurrency("1234.56", "KRW")).toContain("1,235");
     expect(formatCurrency("1234.5", "USD")).toBe("$1,234.50");
+    expect(formatCurrency("1234", "JPY")).toContain("1,234");
+    expect(formatCurrency("1234.5", "EUR")).toContain("1.234,50");
   });
 });

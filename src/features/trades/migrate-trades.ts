@@ -1,4 +1,5 @@
 import { aggregatePositions, buildTradingLedger, normalizeTrade } from "@/domain/trading-ledger";
+import { fallbackRatesToKrw } from "@/domain/currency";
 import type { Stock } from "@/features/stocks/types";
 import type { Trade } from "./types";
 
@@ -27,7 +28,7 @@ export function migrateTrades(stocks: Stock[], input: Trade[]): TradeMigration {
         opening.push({
           id, stockId: stock.id, stockName: stock.name, planId: null,
           tradeType: "매수", tradedAt: createdAt, quantity: stock.quantity, price: stock.averagePrice,
-          currency: stock.currency, exchangeRate: stock.currency === "KRW" ? 1 : 1380, fee: 0, tax: 0,
+          currency: stock.currency, exchangeRate: fallbackRatesToKrw[stock.currency], fee: 0, tax: 0,
           accountName: "기본 계좌", memo: "기존 보유 포지션 자동 이관", emotion: "평온", emotionIntensity: 1,
           confidenceScore: 3, ruleComplianceScore: 3, isOpeningPosition: true,
           createdAt, updatedAt: createdAt, deletedAt: null,
@@ -64,7 +65,7 @@ function hasMaterialCostDifference(stock: Stock, ledgerCost: number, trades: Tra
   const buyCosts = trades
     .filter((trade) => trade.stockId === stock.id && trade.tradeType === "매수" && openCycleTradeIds.has(trade.id))
     .reduce((sum, trade) => sum + trade.fee + trade.tax, 0);
-  const priceRounding = stock.quantity * (stock.currency === "KRW" ? 0.5 : 0.005);
+  const priceRounding = stock.quantity * (stock.currency === "KRW" || stock.currency === "JPY" ? 0.5 : 0.005);
   const floatingPointTolerance = Math.max(Math.abs(rawCost), Math.abs(ledgerCost), 1) * 1e-8;
   return Math.abs(rawCost - ledgerCost) > buyCosts + priceRounding + floatingPointTolerance;
 }
