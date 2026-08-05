@@ -1,13 +1,17 @@
 type Identifiable = { id: string; updatedAt?: string };
 export type CollectionWrite = { collection: string; values: readonly Identifiable[] };
 export type PersistenceSnapshot = { pendingWrites: number; error: string | null; canRetry: boolean; lastSavedAt: string | null };
+type VersionedWrite = CollectionWrite & { generation: number };
+type FailedWrite = VersionedWrite & { error: string; failureOrder: number };
 
 const COLLECTION_STATE = "__tradejournal_collection_state__";
 const browserKey = (collection: string) => `tradejournal.${collection}.v1`;
 const listeners = new Set<() => void>();
 let persistenceSnapshot: PersistenceSnapshot = { pendingWrites: 0, error: null, canRetry: false, lastSavedAt: null };
 let writeQueue: Promise<void> = Promise.resolve();
-let failedWrites: CollectionWrite[] | null = null;
+const collectionGenerations = new Map<string, number>();
+const failedWrites = new Map<string, FailedWrite>();
+let failureOrder = 0;
 
 export function subscribePersistence(listener: () => void) {
   listeners.add(listener);
@@ -19,7 +23,7 @@ export function getPersistenceSnapshot() {
 }
 
 export function clearPersistenceError() {
-  failedWrites = null;
+  failedWrites.clear();
   updatePersistence({ error: null, canRetry: false });
 }
 
@@ -28,10 +32,14 @@ export function reportPersistenceError(error: unknown, fallback: string) {
 }
 
 export async function retryLastSave() {
-  if (!failedWrites) return;
-  const retry = failedWrites;
-  failedWrites = null;
-  updatePersistence({ error: null, canRetry: false });
+  discardSupersededFailures();
+  const retry = [...failedWrites.values()].map(({ collection, values }) => ({ collection, values }));
+  if (!retry.length) {
+    updatePersistence({ error: null, canRetry: false });
+    return;
+  }
+  for (const { collection } of retry) failedWrites.delete(collection);
+  syncFailureSnapshot();
   await saveCollectionsAtomically(retry);
 }
 
@@ -69,21 +77,17 @@ export async function saveCollection<T extends Identifiable>(collection: string,
 
 export function saveCollectionsAtomically(writes: readonly CollectionWrite[]) {
   assertUniqueCollections(writes);
-  const prepared = cloneWrites(writes);
+  const prepared = versionWrites(cloneWrites(writes));
   updatePersistence({ pendingWrites: persistenceSnapshot.pendingWrites + 1 });
   const task = writeQueue.catch(() => undefined).then(() => performSave(prepared));
   writeQueue = task.then(() => undefined, () => undefined);
   return task.then(
     () => {
       updatePersistence({ lastSavedAt: new Date().toISOString() });
-      if (failedWrites === prepared) {
-        failedWrites = null;
-        updatePersistence({ error: null, canRetry: false });
-      }
+      clearFailuresCoveredBy(prepared);
     },
     (error) => {
-      failedWrites = prepared;
-      updatePersistence({ error: persistenceErrorMessage(error, "기록을 저장하지 못했습니다."), canRetry: true });
+      recordFailure(prepared, error);
       throw error;
     },
   ).finally(() => updatePersistence({ pendingWrites: Math.max(0, persistenceSnapshot.pendingWrites - 1) }));
@@ -115,6 +119,52 @@ async function performSave(writes: readonly CollectionWrite[]) {
 
 function cloneWrites(writes: readonly CollectionWrite[]): CollectionWrite[] {
   return writes.map(({ collection, values }) => ({ collection, values: JSON.parse(JSON.stringify(values)) as Identifiable[] }));
+}
+
+function versionWrites(writes: readonly CollectionWrite[]): VersionedWrite[] {
+  return writes.map((write) => {
+    const generation = (collectionGenerations.get(write.collection) ?? 0) + 1;
+    collectionGenerations.set(write.collection, generation);
+    return { ...write, generation };
+  });
+}
+
+function recordFailure(writes: readonly VersionedWrite[], error: unknown) {
+  const message = persistenceErrorMessage(error, "기록을 저장하지 못했습니다.");
+  const order = ++failureOrder;
+  for (const write of writes) {
+    if (collectionGenerations.get(write.collection) !== write.generation) continue;
+    failedWrites.set(write.collection, { ...write, error: message, failureOrder: order });
+  }
+  syncFailureSnapshot();
+}
+
+function clearFailuresCoveredBy(writes: readonly VersionedWrite[]) {
+  let changed = false;
+  for (const write of writes) {
+    const failed = failedWrites.get(write.collection);
+    if (failed && failed.generation <= write.generation) {
+      failedWrites.delete(write.collection);
+      changed = true;
+    }
+  }
+  if (changed) syncFailureSnapshot();
+}
+
+function discardSupersededFailures() {
+  let changed = false;
+  for (const [collection, failed] of failedWrites) {
+    if (collectionGenerations.get(collection) !== failed.generation) {
+      failedWrites.delete(collection);
+      changed = true;
+    }
+  }
+  if (changed) syncFailureSnapshot();
+}
+
+function syncFailureSnapshot() {
+  const latest = [...failedWrites.values()].sort((a, b) => b.failureOrder - a.failureOrder)[0];
+  updatePersistence({ error: latest?.error ?? null, canRetry: Boolean(latest) });
 }
 
 function updatePersistence(next: Partial<PersistenceSnapshot>) {

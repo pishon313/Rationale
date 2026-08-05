@@ -67,6 +67,84 @@ describe("browser local repository", () => {
     expect(JSON.parse(localStorage.getItem("tradejournal.notes.v1") ?? "null")).toEqual([{ id: "note-1" }]);
     expect(getPersistenceSnapshot()).toMatchObject({ error: null, canRetry: false, pendingWrites: 0 });
   });
+
+  it("does not retry an older failure after the same collection saves newer data", async () => {
+    const originalSetItem = Storage.prototype.setItem;
+    const payloads: string[] = [];
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+      if (key === "tradejournal.stocks.v1") payloads.push(value);
+      if (value.includes('"id":"A1"')) throw new Error("first write failed");
+      return originalSetItem.call(this, key, value);
+    });
+
+    await expect(saveCollection("stocks", [{ id: "A1" }])).rejects.toThrow("first write failed");
+    await saveCollection("stocks", [{ id: "B" }]);
+    await retryLastSave();
+
+    expect(JSON.parse(localStorage.getItem("tradejournal.stocks.v1") ?? "null")).toEqual([{ id: "B" }]);
+    expect(payloads.filter((value) => value.includes('"id":"A1"'))).toHaveLength(1);
+    expect(getPersistenceSnapshot()).toMatchObject({ error: null, canRetry: false, pendingWrites: 0 });
+  });
+
+  it("retries only collections that were not superseded by a newer success", async () => {
+    const originalSetItem = Storage.prototype.setItem;
+    let plansAttempts = 0;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+      if (key === "tradejournal.plans.v1" && value.includes('"id":"P1"')) {
+        plansAttempts += 1;
+        if (plansAttempts === 1) throw new Error("plans failed");
+      }
+      return originalSetItem.call(this, key, value);
+    });
+
+    await expect(saveCollectionsAtomically([
+      { collection: "stocks", values: [{ id: "A1" }] },
+      { collection: "plans", values: [{ id: "P1" }] },
+    ])).rejects.toThrow("plans failed");
+    await saveCollection("stocks", [{ id: "A2" }]);
+    expect(getPersistenceSnapshot()).toMatchObject({ canRetry: true });
+
+    await retryLastSave();
+
+    expect(JSON.parse(localStorage.getItem("tradejournal.stocks.v1") ?? "null")).toEqual([{ id: "A2" }]);
+    expect(JSON.parse(localStorage.getItem("tradejournal.plans.v1") ?? "null")).toEqual([{ id: "P1" }]);
+    expect(plansAttempts).toBe(2);
+    expect(getPersistenceSnapshot()).toMatchObject({ error: null, canRetry: false, pendingWrites: 0 });
+  });
+
+  it("clears retry state when a newer save for the failed collection succeeds", async () => {
+    const originalSetItem = Storage.prototype.setItem;
+    let failed = false;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+      if (!failed && key === "tradejournal.stocks.v1") { failed = true; throw new Error("stale failure"); }
+      return originalSetItem.call(this, key, value);
+    });
+
+    await expect(saveCollection("stocks", [{ id: "A1" }])).rejects.toThrow("stale failure");
+    expect(getPersistenceSnapshot()).toMatchObject({ error: expect.stringContaining("stale failure"), canRetry: true });
+    await saveCollection("stocks", [{ id: "A2" }]);
+    expect(getPersistenceSnapshot()).toMatchObject({ error: null, canRetry: false, pendingWrites: 0 });
+  });
+
+  it("keeps a retryable failure when retry itself fails", async () => {
+    const originalSetItem = Storage.prototype.setItem;
+    let attempts = 0;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+      if (key === "tradejournal.notes.v1") {
+        attempts += 1;
+        if (attempts <= 2) throw new Error(`disk failure ${attempts}`);
+      }
+      return originalSetItem.call(this, key, value);
+    });
+
+    await expect(saveCollection("notes", [{ id: "note-1" }])).rejects.toThrow("disk failure 1");
+    await expect(retryLastSave()).rejects.toThrow("disk failure 2");
+    expect(getPersistenceSnapshot()).toMatchObject({ error: expect.stringContaining("disk failure 2"), canRetry: true, pendingWrites: 0 });
+
+    await retryLastSave();
+    expect(JSON.parse(localStorage.getItem("tradejournal.notes.v1") ?? "null")).toEqual([{ id: "note-1" }]);
+    expect(getPersistenceSnapshot()).toMatchObject({ error: null, canRetry: false, pendingWrites: 0 });
+  });
 });
 
 describe("Tauri local repository", () => {
@@ -127,5 +205,22 @@ describe("Tauri local repository", () => {
     await second;
     expect(sqlMocks.invoke).toHaveBeenCalledTimes(2);
     expect(sqlMocks.invoke.mock.calls[1]?.[1]).toMatchObject({ writes: [{ records: [expect.objectContaining({ id: "newer" })] }] });
+  });
+
+  it("keeps queue order and prevents a queued newer save from yielding to an older failure", async () => {
+    sqlMocks.load.mockResolvedValue({ select: vi.fn(), execute: vi.fn() });
+    sqlMocks.invoke.mockRejectedValueOnce(new Error("older failed")).mockResolvedValueOnce(undefined);
+
+    const older = saveCollection("stocks", [{ id: "older" }]);
+    const newer = saveCollection("stocks", [{ id: "newer" }]);
+    expect(getPersistenceSnapshot().pendingWrites).toBe(2);
+
+    await expect(older).rejects.toThrow("older failed");
+    await newer;
+    expect(sqlMocks.invoke.mock.calls.map((call) => ((call[1] as { writes: Array<{ records: Array<{ id: string }> }> }).writes[0]?.records[0]?.id))).toEqual(["older", "newer"]);
+    expect(getPersistenceSnapshot()).toMatchObject({ error: null, canRetry: false, pendingWrites: 0 });
+
+    await retryLastSave();
+    expect(sqlMocks.invoke).toHaveBeenCalledTimes(2);
   });
 });
