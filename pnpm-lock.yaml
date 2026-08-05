@@ -9,98 +9,98 @@ importers:
   .:
     dependencies:
       '@e965/xlsx':
-        specifier: ^0.20.3
+        specifier: 0.20.3
         version: 0.20.3
       '@hookform/resolvers':
-        specifier: ^5.5.7
+        specifier: 5.5.7
         version: 5.5.7(@standard-schema/spec@1.1.0)(react-hook-form@7.83.0(react@19.2.8))(zod@4.4.3)
       '@tanstack/react-table':
-        specifier: ^8.21.3
+        specifier: 8.21.3
         version: 8.21.3(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@tauri-apps/api':
-        specifier: ^2.11.1
+        specifier: 2.11.1
         version: 2.11.1
       '@tauri-apps/plugin-dialog':
-        specifier: ^2.7.2
+        specifier: 2.7.2
         version: 2.7.2
       '@tauri-apps/plugin-fs':
-        specifier: ^2.5.1
+        specifier: 2.5.1
         version: 2.5.1
       '@tauri-apps/plugin-sql':
-        specifier: ^2.4.0
+        specifier: 2.4.0
         version: 2.4.0
       decimal.js:
-        specifier: latest
+        specifier: 10.6.0
         version: 10.6.0
       lucide-react:
-        specifier: latest
+        specifier: 1.28.0
         version: 1.28.0(react@19.2.8)
       next:
-        specifier: latest
+        specifier: 16.2.12
         version: 16.2.12(@babel/core@7.29.7(supports-color@7.2.0))(@playwright/test@1.62.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       next-themes:
-        specifier: latest
+        specifier: 0.4.6
         version: 0.4.6(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       react:
-        specifier: latest
+        specifier: 19.2.8
         version: 19.2.8
       react-dom:
-        specifier: latest
+        specifier: 19.2.8
         version: 19.2.8(react@19.2.8)
       react-hook-form:
-        specifier: ^7.83.0
+        specifier: 7.83.0
         version: 7.83.0(react@19.2.8)
       recharts:
-        specifier: ^3.10.1
+        specifier: 3.10.1
         version: 3.10.1(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react-is@17.0.2)(react@19.2.8)(redux@5.0.1)
       tailwind-merge:
-        specifier: latest
+        specifier: 3.6.0
         version: 3.6.0
       zod:
-        specifier: latest
+        specifier: 4.4.3
         version: 4.4.3
     devDependencies:
       '@playwright/test':
-        specifier: latest
+        specifier: 1.62.1
         version: 1.62.1
       '@tailwindcss/postcss':
-        specifier: latest
+        specifier: 4.3.3
         version: 4.3.3
       '@tauri-apps/cli':
-        specifier: ^2.11.4
+        specifier: 2.11.4
         version: 2.11.4
       '@testing-library/jest-dom':
-        specifier: latest
+        specifier: 7.0.0
         version: 7.0.0(@testing-library/dom@10.4.1)
       '@testing-library/react':
-        specifier: latest
+        specifier: 16.3.2
         version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@types/node':
-        specifier: latest
+        specifier: 26.1.2
         version: 26.1.2
       '@types/react':
-        specifier: latest
+        specifier: 19.2.18
         version: 19.2.18
       '@types/react-dom':
-        specifier: latest
+        specifier: 19.2.4
         version: 19.2.4(@types/react@19.2.18)
       eslint:
         specifier: 9.39.2
         version: 9.39.2(jiti@2.7.0)(supports-color@7.2.0)
       eslint-config-next:
-        specifier: latest
+        specifier: 16.2.12
         version: 16.2.12(@typescript-eslint/parser@8.65.0(eslint@9.39.2(jiti@2.7.0)(supports-color@7.2.0))(supports-color@7.2.0)(typescript@6.0.2))(eslint@9.39.2(jiti@2.7.0)(supports-color@7.2.0))(supports-color@7.2.0)(typescript@6.0.2)
       jsdom:
-        specifier: latest
+        specifier: 30.0.1
         version: 30.0.1
       tailwindcss:
-        specifier: latest
+        specifier: 4.3.3
         version: 4.3.3
       typescript:
         specifier: 6.0.2
         version: 6.0.2
       vitest:
-        specifier: latest
+        specifier: 4.1.10
         version: 4.1.10(@types/node@26.1.2)(jsdom@30.0.1)(vite@8.1.5(@types/node@26.1.2)(jiti@2.7.0))
 
 packages:

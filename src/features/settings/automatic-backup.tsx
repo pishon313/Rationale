@@ -5,24 +5,32 @@ import { useEffect } from "react";
 import { isTauriApp, reportPersistenceError } from "@/lib/local-repository";
 import { createBackupPayload } from "./backup-service";
 
-export const lastAutomaticBackupKey = "tradejournal.last-automatic-backup-at";
-export const lastAutomaticBackupPathKey = "tradejournal.last-automatic-backup-path";
-const oneDay = 24 * 60 * 60 * 1000;
+export const automaticBackupStatusEvent = "tradejournal:automatic-backup";
+export type AutomaticBackupStatus = { path: string | null; createdAtMs: number | null; backupNeeded: boolean; created: boolean };
+const deprecatedStatusKeys = ["tradejournal.last-automatic-backup-at", "tradejournal.last-automatic-backup-path"];
 
 export function AutomaticBackup() {
   useEffect(() => {
     if (!isTauriApp()) return;
-    const last = Date.parse(localStorage.getItem(lastAutomaticBackupKey) ?? "");
-    if (Number.isFinite(last) && Date.now() - last < oneDay) return;
     let active = true;
     void (async () => {
+      let status: AutomaticBackupStatus;
+      try {
+        status = await invoke<AutomaticBackupStatus>("get_automatic_backup_status");
+        if (!active) return;
+        publishStatus(status);
+        for (const key of deprecatedStatusKeys) {
+          try { localStorage.removeItem(key); } catch { /* Deprecated cache cleanup must not block backups. */ }
+        }
+      } catch (error) {
+        reportPersistenceError(error, "자동 백업 상태를 확인하지 못했습니다.");
+        return;
+      }
+      if (!status.backupNeeded) return;
       try {
         const backup = await createBackupPayload();
-        const path = await invoke<string>("write_automatic_backup", { content: JSON.stringify(backup, null, 2) });
-        if (!active) return;
-        localStorage.setItem(lastAutomaticBackupKey, backup.exportedAt);
-        localStorage.setItem(lastAutomaticBackupPathKey, path);
-        window.dispatchEvent(new Event("tradejournal:automatic-backup"));
+        const next = await invoke<AutomaticBackupStatus>("ensure_automatic_backup", { content: JSON.stringify(backup, null, 2) });
+        if (active) publishStatus(next);
       } catch (error) {
         reportPersistenceError(error, "자동 백업을 저장하지 못했습니다.");
       }
@@ -30,4 +38,8 @@ export function AutomaticBackup() {
     return () => { active = false; };
   }, []);
   return null;
+}
+
+function publishStatus(status: AutomaticBackupStatus) {
+  window.dispatchEvent(new CustomEvent<AutomaticBackupStatus>(automaticBackupStatusEvent, { detail: status }));
 }

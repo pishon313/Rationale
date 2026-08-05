@@ -1,1 +1,3 @@
-fn main() { tradejournal_lib::run() }
+fn main() {
+    tradejournal_lib::run()
+}

@@ -7,22 +7,25 @@ export type LocalRecord = { id: string; updatedAt?: string; deletedAt?: string |
 export function useLocalCollection<T extends LocalRecord>(name: string, fallback: T[]) {
   const initialItems = useRef(fallback);
   const [items, setItems] = useState<T[]>(fallback);
+  const latestItems = useRef(fallback);
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState("");
   useEffect(() => {
     let active = true;
     loadCollection(name, initialItems.current)
-      .then((value) => { if (active) { setItems(value); setReady(true); setLoadError(""); } })
+      .then((value) => { if (active) { latestItems.current = value; setItems(value); setReady(true); setLoadError(""); } })
       .catch(() => { if (active) setLoadError("기록을 불러오지 못했습니다."); });
     return () => { active = false; };
   }, [name]);
-  const commit = useCallback((update: (current: T[]) => T[]) => setItems((current) => {
-    const next = update(current);
+  const commit = useCallback((update: (current: T[]) => T[]) => {
+    const next = update(latestItems.current);
+    latestItems.current = next;
+    setItems(next);
     void saveCollection(name, next).catch(() => undefined);
-    return next;
-  }), [name]);
+  }, [name]);
   const replaceAsync = useCallback(async (next: T[]) => {
     await saveCollection(name, next);
+    latestItems.current = next;
     setItems(next);
   }, [name]);
   return {

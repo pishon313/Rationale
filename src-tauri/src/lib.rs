@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
     fs,
+    path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{Manager, State};
@@ -16,6 +18,7 @@ use tauri_plugin_sql::{DbInstances, DbPool, Migration, MigrationKind};
 use zeroize::{Zeroize, Zeroizing};
 
 const SERVICE: &str = "com.tradejournal.local";
+const QUOTE_PROVIDER: &str = "twelve-data";
 const DATABASE_URL: &str = "sqlite:tradejournal.db";
 const COLLECTION_STATE: &str = "__tradejournal_collection_state__";
 const ENCRYPTED_BACKUP_FORMAT: &str = "rationale-encrypted-backup";
@@ -25,6 +28,12 @@ const ARGON2_TIME_COST: u32 = 3;
 const ARGON2_PARALLELISM: u32 = 1;
 const SALT_LENGTH: usize = 16;
 const NONCE_LENGTH: usize = 12;
+const AUTOMATIC_BACKUP_PREFIX: &str = "tradejournal-auto-";
+const AUTOMATIC_BACKUP_SUFFIX: &str = ".json";
+const AUTOMATIC_BACKUP_INTERVAL_SECONDS: u64 = 24 * 60 * 60;
+const AUTOMATIC_BACKUP_FUTURE_TOLERANCE_SECONDS: u64 = 5 * 60;
+const AUTOMATIC_BACKUP_RETENTION: usize = 7;
+static AUTOMATIC_BACKUP_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -292,7 +301,12 @@ async fn save_collections_atomically(
 
 #[tauri::command]
 fn save_api_key(provider: String, value: String) -> Result<(), String> {
-    let entry = keyring::Entry::new(SERVICE, &provider).map_err(|e| e.to_string())?;
+    validate_quote_provider(&provider)?;
+    if value.len() > 512 {
+        return Err("INVALID_API_KEY".into());
+    }
+    let entry = keyring::Entry::new(SERVICE, QUOTE_PROVIDER)
+        .map_err(|_| "KEYCHAIN_UNAVAILABLE".to_string())?;
     if value.is_empty() {
         entry
             .delete_credential()
@@ -300,20 +314,42 @@ fn save_api_key(provider: String, value: String) -> Result<(), String> {
                 keyring::Error::NoEntry => Ok(()),
                 other => Err(other),
             })
-            .map_err(|e| e.to_string())
+            .map_err(|_| "KEYCHAIN_WRITE_FAILED".to_string())
     } else {
-        entry.set_password(&value).map_err(|e| e.to_string())
+        entry
+            .set_password(&value)
+            .map_err(|_| "KEYCHAIN_WRITE_FAILED".to_string())
     }
 }
 
 #[tauri::command]
 fn has_api_key(provider: String) -> Result<bool, String> {
-    let entry = keyring::Entry::new(SERVICE, &provider).map_err(|e| e.to_string())?;
+    validate_quote_provider(&provider)?;
+    let entry = keyring::Entry::new(SERVICE, QUOTE_PROVIDER)
+        .map_err(|_| "KEYCHAIN_UNAVAILABLE".to_string())?;
     match entry.get_password() {
         Ok(value) => Ok(!value.is_empty()),
         Err(keyring::Error::NoEntry) => Ok(false),
-        Err(e) => Err(e.to_string()),
+        Err(_) => Err("KEYCHAIN_READ_FAILED".into()),
     }
+}
+
+fn validate_quote_provider(provider: &str) -> Result<(), String> {
+    if provider == QUOTE_PROVIDER {
+        Ok(())
+    } else {
+        Err("UNSUPPORTED_API_PROVIDER".into())
+    }
+}
+
+fn validate_quote_request(symbol: &str, market: &str) -> Result<(), String> {
+    if symbol.trim().is_empty() || symbol.len() > 20 || symbol.chars().any(char::is_control) {
+        return Err("INVALID_QUOTE_SYMBOL".into());
+    }
+    if !matches!(market, "한국" | "미국" | "기타") {
+        return Err("INVALID_QUOTE_MARKET".into());
+    }
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -329,15 +365,17 @@ struct QuoteResult {
 
 #[tauri::command]
 async fn fetch_quote(symbol: String, market: String) -> Result<QuoteResult, String> {
-    let entry = keyring::Entry::new(SERVICE, "twelve-data").map_err(|e| e.to_string())?;
+    validate_quote_request(&symbol, &market)?;
+    let entry = keyring::Entry::new(SERVICE, QUOTE_PROVIDER)
+        .map_err(|_| "KEYCHAIN_UNAVAILABLE".to_string())?;
     let api_key = entry.get_password().map_err(|e| match e {
         keyring::Error::NoEntry => "API_KEY_MISSING".to_string(),
-        other => format!("KEYCHAIN_ERROR:{other}"),
+        _ => "KEYCHAIN_READ_FAILED".to_string(),
     })?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(12))
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|_| "HTTP_CLIENT_FAILED".to_string())?;
     let country = if market == "한국" {
         "South Korea"
     } else {
@@ -401,43 +439,153 @@ async fn fetch_quote(symbol: String, market: String) -> Result<QuoteResult, Stri
     })
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AutomaticBackupStatus {
+    path: Option<String>,
+    created_at_ms: Option<u64>,
+    backup_needed: bool,
+    created: bool,
+}
+
+struct AutomaticBackupFile {
+    path: PathBuf,
+    timestamp: u64,
+}
+
 #[tauri::command]
-fn write_automatic_backup(app: tauri::AppHandle, content: String) -> Result<String, String> {
-    let directory = app
+fn get_automatic_backup_status(app: tauri::AppHandle) -> Result<AutomaticBackupStatus, String> {
+    let directory = automatic_backup_directory(&app)?;
+    let now = unix_timestamp()?;
+    automatic_backup_status(&directory, now)
+}
+
+#[tauri::command]
+fn ensure_automatic_backup(
+    app: tauri::AppHandle,
+    content: String,
+) -> Result<AutomaticBackupStatus, String> {
+    let directory = automatic_backup_directory(&app)?;
+    ensure_automatic_backup_in_directory(&directory, &content, unix_timestamp()?)
+}
+
+fn automatic_backup_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(app
         .path()
         .app_data_dir()
-        .map_err(|error| error.to_string())?
-        .join("backups");
-    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    let timestamp = SystemTime::now()
+        .map_err(|_| "AUTOMATIC_BACKUP_PATH_FAILED".to_string())?
+        .join("backups"))
+}
+
+fn unix_timestamp() -> Result<u64, String> {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|error| error.to_string())?
-        .as_secs();
-    let filename = format!("tradejournal-auto-{timestamp}.json");
+        .map_err(|_| "SYSTEM_TIME_INVALID".to_string())
+        .map(|value| value.as_secs())
+}
+
+fn automatic_backup_status(directory: &Path, now: u64) -> Result<AutomaticBackupStatus, String> {
+    let files = automatic_backup_files(directory)?;
+    Ok(status_from_files(&files, now, false))
+}
+
+fn ensure_automatic_backup_in_directory(
+    directory: &Path,
+    content: &str,
+    now: u64,
+) -> Result<AutomaticBackupStatus, String> {
+    let _guard = AUTOMATIC_BACKUP_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "AUTOMATIC_BACKUP_LOCK_FAILED".to_string())?;
+    fs::create_dir_all(directory).map_err(|_| "AUTOMATIC_BACKUP_DIRECTORY_FAILED".to_string())?;
+    let mut files = automatic_backup_files(directory)?;
+    prune_automatic_backups(&mut files);
+    let current = status_from_files(&files, now, false);
+    if !current.backup_needed {
+        return Ok(current);
+    }
+
+    let filename = format!("{AUTOMATIC_BACKUP_PREFIX}{now}{AUTOMATIC_BACKUP_SUFFIX}");
     let path = directory.join(&filename);
     let temporary = directory.join(format!(".{filename}.tmp"));
-    fs::write(&temporary, content.as_bytes()).map_err(|error| error.to_string())?;
-    fs::rename(&temporary, &path).map_err(|error| error.to_string())?;
+    if fs::write(&temporary, content.as_bytes()).is_err() {
+        let _ = fs::remove_file(&temporary);
+        return Err("AUTOMATIC_BACKUP_WRITE_FAILED".into());
+    }
+    if fs::rename(&temporary, &path).is_err() {
+        let _ = fs::remove_file(&temporary);
+        return Err("AUTOMATIC_BACKUP_RENAME_FAILED".into());
+    }
+    files.push(AutomaticBackupFile {
+        path: path.clone(),
+        timestamp: now,
+    });
+    files.sort_by_key(|file| file.timestamp);
+    prune_automatic_backups(&mut files);
+    Ok(AutomaticBackupStatus {
+        path: Some(path.to_string_lossy().into_owned()),
+        created_at_ms: Some(now.saturating_mul(1_000)),
+        backup_needed: false,
+        created: true,
+    })
+}
 
-    let mut backups = fs::read_dir(&directory)
-        .map_err(|error| error.to_string())?
+fn automatic_backup_files(directory: &Path) -> Result<Vec<AutomaticBackupFile>, String> {
+    if !directory.exists() {
+        return Ok(Vec::new());
+    }
+    let mut files = fs::read_dir(directory)
+        .map_err(|_| "AUTOMATIC_BACKUP_STATUS_FAILED".to_string())?
         .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|entry| {
-            entry
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| {
-                    name.starts_with("tradejournal-auto-") && name.ends_with(".json")
-                })
+        .filter_map(|entry| {
+            let file_type = entry.file_type().ok()?;
+            if !file_type.is_file() {
+                return None;
+            }
+            let name = entry.file_name();
+            let name = name.to_str()?;
+            let timestamp = name
+                .strip_prefix(AUTOMATIC_BACKUP_PREFIX)?
+                .strip_suffix(AUTOMATIC_BACKUP_SUFFIX)?
+                .parse()
+                .ok()?;
+            Some(AutomaticBackupFile {
+                path: entry.path(),
+                timestamp,
+            })
         })
         .collect::<Vec<_>>();
-    backups.sort();
-    let remove_count = backups.len().saturating_sub(7);
-    for old in backups.into_iter().take(remove_count) {
-        fs::remove_file(old).map_err(|error| error.to_string())?;
+    files.sort_by_key(|file| file.timestamp);
+    Ok(files)
+}
+
+fn status_from_files(
+    files: &[AutomaticBackupFile],
+    now: u64,
+    created: bool,
+) -> AutomaticBackupStatus {
+    let latest = files.iter().rev().find(|file| {
+        file.timestamp <= now.saturating_add(AUTOMATIC_BACKUP_FUTURE_TOLERANCE_SECONDS)
+    });
+    let backup_needed = latest.is_none_or(|file| {
+        file.timestamp > now
+            || now.saturating_sub(file.timestamp) >= AUTOMATIC_BACKUP_INTERVAL_SECONDS
+    });
+    AutomaticBackupStatus {
+        path: latest.map(|file| file.path.to_string_lossy().into_owned()),
+        created_at_ms: latest.map(|file| file.timestamp.saturating_mul(1_000)),
+        backup_needed,
+        created,
     }
-    Ok(path.to_string_lossy().into_owned())
+}
+
+fn prune_automatic_backups(files: &mut Vec<AutomaticBackupFile>) {
+    files.sort_by_key(|file| file.timestamp);
+    let remove_count = files.len().saturating_sub(AUTOMATIC_BACKUP_RETENTION);
+    for old in files.drain(..remove_count) {
+        let _ = fs::remove_file(old.path);
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -469,7 +617,8 @@ pub fn run() {
             has_api_key,
             fetch_quote,
             save_collections_atomically,
-            write_automatic_backup,
+            get_automatic_backup_status,
+            ensure_automatic_backup,
             encrypt_backup,
             decrypt_backup,
             quarantine_corrupt_records
@@ -481,6 +630,10 @@ pub fn run() {
 #[cfg(test)]
 mod encrypted_backup_tests {
     use super::*;
+    use std::sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Barrier,
+    };
 
     const PASSWORD: &str = "correct horse battery staple";
     const BACKUP: &str = r#"{"version":4,"stocks":[{"name":"삼성전자"}],"plans":[],"trades":[],"memo":"장기 투자 메모","amount":1200000}"#;
@@ -548,5 +701,151 @@ mod encrypted_backup_tests {
             decrypt_backup(serde_json::to_string(&parsed).unwrap(), PASSWORD.into()),
             Err("UNSUPPORTED_ENCRYPTED_BACKUP_VERSION".into())
         );
+    }
+
+    #[test]
+    fn ipc_quote_inputs_are_restricted_to_supported_values() {
+        assert_eq!(
+            validate_quote_provider("other"),
+            Err("UNSUPPORTED_API_PROVIDER".into())
+        );
+        assert_eq!(
+            validate_quote_request("", "한국"),
+            Err("INVALID_QUOTE_SYMBOL".into())
+        );
+        assert_eq!(
+            validate_quote_request("A\nB", "미국"),
+            Err("INVALID_QUOTE_SYMBOL".into())
+        );
+        assert_eq!(
+            validate_quote_request("TSLA", "unknown"),
+            Err("INVALID_QUOTE_MARKET".into())
+        );
+        assert!(validate_quote_provider(QUOTE_PROVIDER).is_ok());
+        assert!(validate_quote_request("005930", "한국").is_ok());
+        assert!(validate_quote_request("BRK.B", "미국").is_ok());
+    }
+
+    fn temporary_backup_directory(label: &str) -> PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let path = std::env::temp_dir().join(format!(
+            "rationale-{label}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = fs::remove_dir_all(&path);
+        path
+    }
+
+    fn create_backup_file(directory: &Path, timestamp: u64) {
+        fs::create_dir_all(directory).unwrap();
+        fs::write(
+            directory.join(format!(
+                "{AUTOMATIC_BACKUP_PREFIX}{timestamp}{AUTOMATIC_BACKUP_SUFFIX}"
+            )),
+            b"{}",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn automatic_backup_creates_and_reports_first_file() {
+        let directory = temporary_backup_directory("first");
+        let result = ensure_automatic_backup_in_directory(&directory, "backup", 10_000).unwrap();
+        assert!(result.created);
+        assert_eq!(result.created_at_ms, Some(10_000_000));
+        assert_eq!(
+            automatic_backup_status(&directory, 10_000).unwrap().path,
+            result.path
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn automatic_backup_reuses_recent_file_and_replaces_old_file() {
+        let directory = temporary_backup_directory("age");
+        create_backup_file(&directory, 100_000);
+        let recent = ensure_automatic_backup_in_directory(&directory, "new", 100_100).unwrap();
+        assert!(!recent.created);
+        let old = ensure_automatic_backup_in_directory(
+            &directory,
+            "new",
+            100_000 + AUTOMATIC_BACKUP_INTERVAL_SECONDS,
+        )
+        .unwrap();
+        assert!(old.created);
+        assert_eq!(
+            old.created_at_ms,
+            Some((100_000 + AUTOMATIC_BACKUP_INTERVAL_SECONDS) * 1_000)
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn future_timestamp_beyond_clock_skew_does_not_block_backup() {
+        let directory = temporary_backup_directory("future");
+        create_backup_file(
+            &directory,
+            20_000 + AUTOMATIC_BACKUP_FUTURE_TOLERANCE_SECONDS + 1,
+        );
+        let result = ensure_automatic_backup_in_directory(&directory, "current", 20_000).unwrap();
+        assert!(result.created);
+        assert_eq!(result.created_at_ms, Some(20_000_000));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn failed_write_never_becomes_successful_backup() {
+        let directory = temporary_backup_directory("failure");
+        fs::write(&directory, b"not a directory").unwrap();
+        assert_eq!(
+            ensure_automatic_backup_in_directory(&directory, "backup", 30_000),
+            Err("AUTOMATIC_BACKUP_DIRECTORY_FAILED".into())
+        );
+        fs::remove_file(directory).unwrap();
+    }
+
+    #[test]
+    fn concurrent_automatic_backup_calls_create_at_most_one_file() {
+        let directory = temporary_backup_directory("concurrent");
+        let barrier = Arc::new(Barrier::new(2));
+        let handles = (0..2)
+            .map(|_| {
+                let directory = directory.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    ensure_automatic_backup_in_directory(&directory, "backup", 40_000).unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        let results = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(results.iter().filter(|result| result.created).count(), 1);
+        assert_eq!(automatic_backup_files(&directory).unwrap().len(), 1);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn retention_keeps_seven_normal_files_and_ignores_temporary_files() {
+        let directory = temporary_backup_directory("retention");
+        for timestamp in 50_000..50_008 {
+            create_backup_file(&directory, timestamp);
+        }
+        fs::write(
+            directory.join(".tradejournal-auto-99999.json.tmp"),
+            b"partial",
+        )
+        .unwrap();
+        let result = ensure_automatic_backup_in_directory(&directory, "unused", 50_008).unwrap();
+        assert!(!result.created);
+        assert_eq!(
+            automatic_backup_files(&directory).unwrap().len(),
+            AUTOMATIC_BACKUP_RETENTION
+        );
+        assert!(directory.join(".tradejournal-auto-99999.json.tmp").exists());
+        fs::remove_dir_all(directory).unwrap();
     }
 }

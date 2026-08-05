@@ -12,7 +12,7 @@ import { isTauriApp, loadCollection } from "@/lib/local-repository";
 import { localDateValue } from "@/lib/local-date";
 import { useCurrencyPreference, useExchangeRates } from "@/lib/use-exchange-rates";
 import { validateBackupPayload, type ValidatedBackup } from "./backup";
-import { lastAutomaticBackupKey, lastAutomaticBackupPathKey } from "./automatic-backup";
+import { automaticBackupStatusEvent, type AutomaticBackupStatus } from "./automatic-backup";
 import { backupCounts, createBackupPayload, restoreBackup, restoreSnapshotCollection, type RestoreSnapshot } from "./backup-service";
 import { decryptBackupPayload, encryptedBackupErrorMessage, encryptedBackupExtension, encryptBackupPayload, minimumBackupPasswordLength, parseSelectedBackup, validateNewBackupPassword } from "./encrypted-backup";
 
@@ -23,7 +23,7 @@ export function SettingsPageClient() {
   const [message, setMessage] = useState("");
   const [pendingRestore, setPendingRestore] = useState<ValidatedBackup | null>(null);
   const [restoreAvailable, setRestoreAvailable] = useState(false);
-  const [automaticBackupAt, setAutomaticBackupAt] = useState("");
+  const [automaticBackupAt, setAutomaticBackupAt] = useState<number | null>(null);
   const [automaticBackupPath, setAutomaticBackupPath] = useState("");
   const [showEncryptedExport, setShowEncryptedExport] = useState(false);
   const [exportPassword, setExportPassword] = useState("");
@@ -35,13 +35,14 @@ export function SettingsPageClient() {
   useEffect(() => {
     if (isTauriApp()) void invoke<boolean>("has_api_key", { provider: "twelve-data" }).then(setHasKey);
     void loadCollection<RestoreSnapshot>(restoreSnapshotCollection, []).then((items) => setRestoreAvailable(items.length > 0));
-    const refreshBackupStatus = () => {
-      setAutomaticBackupAt(localStorage.getItem(lastAutomaticBackupKey) ?? "");
-      setAutomaticBackupPath(localStorage.getItem(lastAutomaticBackupPathKey) ?? "");
+    const applyBackupStatus = (status: AutomaticBackupStatus) => {
+      setAutomaticBackupAt(status.createdAtMs);
+      setAutomaticBackupPath(status.path ?? "");
     };
-    refreshBackupStatus();
-    window.addEventListener("tradejournal:automatic-backup", refreshBackupStatus);
-    return () => window.removeEventListener("tradejournal:automatic-backup", refreshBackupStatus);
+    const refreshBackupStatus = (event: Event) => applyBackupStatus((event as CustomEvent<AutomaticBackupStatus>).detail);
+    if (isTauriApp()) void invoke<AutomaticBackupStatus>("get_automatic_backup_status").then(applyBackupStatus).catch(() => setMessage("자동 백업 상태를 확인하지 못했습니다."));
+    window.addEventListener(automaticBackupStatusEvent, refreshBackupStatus);
+    return () => window.removeEventListener(automaticBackupStatusEvent, refreshBackupStatus);
   }, []);
 
   async function exportBackup() {
@@ -211,7 +212,7 @@ function restoreLabel(value: string) {
   return ({ stocks: "종목", plans: "매수 계획", trades: "매매", observations: "관찰 기록", reviews: "회고", notes: "Note" } as Record<string, string>)[value] ?? value;
 }
 
-function formatBackupDate(value: string, locale: Locale) {
+function formatBackupDate(value: string | number, locale: Locale) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(date);
 }

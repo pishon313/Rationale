@@ -34,8 +34,8 @@
 요구 사항: Node.js 22 이상, Rust stable, Xcode Command Line Tools
 
 ```bash
-npm install
-npm run app:dev
+pnpm install --frozen-lockfile
+pnpm app:dev
 ```
 
 처음 설치한 Rust가 터미널에서 인식되지 않으면 터미널을 다시 열거나 다음을 실행합니다.
@@ -47,7 +47,7 @@ source "$HOME/.cargo/env"
 ## 설치용 Mac 앱 빌드
 
 ```bash
-npm run app:build
+pnpm app:build
 ```
 
 결과물은 다음 위치에 생성됩니다.
@@ -62,7 +62,7 @@ src-tauri/target/release/bundle/dmg/*.dmg
 ## 브라우저 미리보기
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
 브라우저 미리보기 데이터와 Mac 앱의 SQLite 데이터는 서로 다른 저장소입니다. 실제 기록은 Mac 앱에서 입력하는 것을 권장합니다.
@@ -70,12 +70,14 @@ npm run dev
 ## 품질 검사
 
 ```bash
-npm run lint
-npm run typecheck
-npm test
-npm run build
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
+
+GitHub Actions CI는 `main` push와 pull request에서 고정된 pnpm 의존성으로 프런트엔드 검사·빌드·E2E 테스트를 실행하고, macOS에서 Rust 포맷·컴파일·테스트를 확인합니다.
 
 ## 백업
 
