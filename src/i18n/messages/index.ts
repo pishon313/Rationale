@@ -2,10 +2,11 @@ import type { Locale, MessageCatalog } from "../types";
 import { appMessages } from "./app";
 import { commonMessages } from "./common";
 import { journalMessages } from "./journal";
+import { securityMessages } from "./security";
 import { stockMessages } from "./stocks";
 import { tradeMessages } from "./trades";
 
-const catalogs: MessageCatalog[] = [commonMessages, appMessages, stockMessages, tradeMessages, journalMessages];
+const catalogs: MessageCatalog[] = [commonMessages, appMessages, stockMessages, tradeMessages, journalMessages, securityMessages];
 
 export function translate(locale: Locale, key: string) {
   if (locale === "ko") return key;

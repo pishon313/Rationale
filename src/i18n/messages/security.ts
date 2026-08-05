@@ -1,0 +1,33 @@
+import type { MessageCatalog } from "../types";
+
+const en = {
+  "모든 투자 기록과 Note, 언어 설정을 하나의 파일로 저장합니다. Mac 교체 전에 백업하세요.": "Save all investment records, notes, and language settings in one file. Back up before changing Macs.",
+  "백업 파일 보안": "Backup file security",
+  "일반 JSON과 자동 백업은 암호화되지 않으며 거래 내역, 계좌명, 메모와 감정 기록을 포함할 수 있습니다. 이메일·메신저·공유 폴더에 올릴 때 주의하세요.": "Plain JSON and automatic backups are not encrypted and may contain trades, account names, notes, and emotion records. Take care when sharing them by email, messaging, or shared folders.",
+  "계좌번호, 비밀번호, 인증정보는 메모에 입력하지 말고 Mac의 FileVault를 사용하는 것을 권장합니다.": "Do not enter account numbers, passwords, or credentials in notes. We recommend using FileVault on your Mac.",
+  "Mac 앱은 하루 한 번 암호화되지 않은 JSON 자동 백업을 만들고 최근 7개를 보관합니다.": "The Mac app creates one unencrypted JSON automatic backup per day and keeps the latest seven.",
+  "민감한 기록을 외부에 보관할 때는 수동 암호화 백업을 사용하세요.": "Use a manual encrypted backup when storing sensitive records externally.",
+  "일반 백업 저장": "Save plain backup", "암호화 백업 저장": "Save encrypted backup",
+  "일반 백업 파일을 저장했습니다.": "Plain backup saved.", "암호화 백업 파일을 저장했습니다.": "Encrypted backup saved.",
+  "백업 파일을 읽지 못했습니다.": "Could not read the backup file.", "백업 파일을 저장하지 못했습니다.": "Could not save the backup file.",
+  "올바른 Rationale 백업 파일이 아니거나 데이터 형식이 손상되었습니다.": "This is not a valid Rationale backup, or its data format is damaged.",
+  "암호화 백업은 Mac 앱에서 사용할 수 있습니다. 브라우저 미리보기에서는 일반 JSON 백업을 사용하세요.": "Encrypted backups are available in the Mac app. Use plain JSON backups in the browser preview.",
+  "투자 기록은 서버에 업로드되지 않습니다. 로컬 SQLite 파일에는 앱 자체 암호화가 적용되지 않으므로 macOS 사용자 계정과 FileVault로 Mac을 보호하세요. 공용 Mac이나 여러 사람이 공유하는 계정에서는 사용에 주의하고 민감한 인증정보를 메모에 저장하지 마세요.": "Investment records are not uploaded to a server. The local SQLite file is not encrypted by the app, so protect your Mac with your macOS account and FileVault. Take care on shared Macs or accounts, and never store sensitive credentials in notes.",
+  "주가 갱신 시 티커만 Twelve Data로, 환율 갱신 시 통화 코드만 Frankfurter로 전송됩니다. 다른 Mac과 자동 동기화되지 않으므로 정기적으로 백업하세요.": "Price updates send only tickers to Twelve Data, and exchange-rate updates send only currency codes to Frankfurter. Macs do not sync automatically, so back up regularly.",
+  "백업 비밀번호는 10자 이상이어야 합니다.": "The backup password must be at least 10 characters.", "비밀번호 확인이 일치하지 않습니다.": "Password confirmation does not match.",
+  "백업을 암호화하지 못했습니다.": "Could not encrypt the backup.", "복호화는 성공했지만 백업 데이터 형식이 손상되었습니다.": "Decryption succeeded, but the backup data format is damaged.",
+  "지원하지 않는 암호화 백업 버전입니다.": "This encrypted backup version is not supported.",
+  "백업을 복호화할 수 없습니다. 비밀번호가 잘못되었거나 파일이 손상되었을 수 있습니다.": "Could not decrypt the backup. The password may be incorrect or the file may be damaged.",
+  "올바른 Rationale 암호화 백업 파일이 아닙니다.": "This is not a valid Rationale encrypted backup.", "암호화 백업을 처리하지 못했습니다.": "Could not process the encrypted backup.",
+  "암호화 백업 비밀번호": "Encrypted backup password", "백업 비밀번호 입력": "Enter backup password", "비밀번호": "Password", "비밀번호 확인": "Confirm password",
+  "10자 이상의 비밀번호를 입력하세요. 비밀번호를 잊으면 백업을 복원할 수 없습니다.": "Enter a password of at least 10 characters. A forgotten password cannot be recovered.",
+  "암호화 백업을 복원할 때 사용한 비밀번호를 입력하세요.": "Enter the password used for this encrypted backup.", "암호화하여 저장": "Encrypt and save", "복호화": "Decrypt",
+};
+
+export const securityMessages: MessageCatalog = {
+  ja: en,
+  en,
+  fr: en,
+  it: en,
+  es: en,
+};
