@@ -8,12 +8,12 @@ import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { currencies } from "@/domain/currency";
 import { useI18n } from "@/i18n/i18n-provider";
 import { languageNames, locales, type Locale } from "@/i18n/types";
-import { isTauriApp, loadCollection, saveCollectionsAtomically } from "@/lib/local-repository";
+import { isTauriApp, loadCollection } from "@/lib/local-repository";
 import { localDateValue } from "@/lib/local-date";
 import { useCurrencyPreference, useExchangeRates } from "@/lib/use-exchange-rates";
 import { validateBackupPayload, type ValidatedBackup } from "./backup";
 import { lastAutomaticBackupKey, lastAutomaticBackupPathKey } from "./automatic-backup";
-import { backupCounts, backupWrites, createBackupPayload, restoreSnapshotCollection, snapshotWrite, type RestoreSnapshot } from "./backup-service";
+import { backupCounts, createBackupPayload, restoreBackup, restoreSnapshotCollection, type RestoreSnapshot } from "./backup-service";
 
 export function SettingsPageClient() {
   const { locale, setLocale, t } = useI18n();
@@ -69,7 +69,7 @@ export function SettingsPageClient() {
     if (!pendingRestore) return;
     try {
       const current = await createBackupPayload(locale);
-      await saveCollectionsAtomically([snapshotWrite(current), ...backupWrites(pendingRestore)]);
+      await restoreBackup(current, pendingRestore);
       setRestoreAvailable(true);
       setPendingRestore(null);
       setMessage(t("복원했습니다. 화면을 새로고침해 주세요."));
@@ -85,7 +85,7 @@ export function SettingsPageClient() {
       if (!snapshot) return;
       const previous = validateBackupPayload(JSON.parse(snapshot.content));
       const current = await createBackupPayload(locale);
-      await saveCollectionsAtomically([snapshotWrite(current), ...backupWrites(previous)]);
+      await restoreBackup(current, previous);
       setMessage(t("마지막 복원을 되돌렸습니다."));
       window.setTimeout(() => window.location.reload(), 600);
     } catch {

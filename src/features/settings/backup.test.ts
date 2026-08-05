@@ -1,12 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fallbackCurrencyPreference } from "@/domain/currency";
+import { emptyDashboardNote } from "@/features/dashboard/dashboard-note";
 import { sampleObservations } from "@/features/observations/sample-data";
 import { samplePlans } from "@/features/plans/sample-data";
 import { sampleReviews } from "@/features/reviews/sample-data";
 import { sampleRules } from "@/features/rules/sample-data";
 import { sampleStocks } from "@/features/stocks/sample-data";
 import { sampleTrades } from "@/features/trades/sample-data";
+import { fallbackLanguagePreference } from "@/i18n/i18n-provider";
 import { validateBackupPayload } from "./backup";
-import { backupCounts, backupWrites, snapshotWrite, type BackupV4 } from "./backup-service";
+import { backupCounts, backupWrites, restoreBackup, snapshotWrite, type BackupV4 } from "./backup-service";
+
+const repositoryMocks = vi.hoisted(() => ({ saveCollectionsAtomically: vi.fn() }));
+vi.mock("@/lib/local-repository", () => ({ loadCollection: vi.fn(), saveCollectionsAtomically: repositoryMocks.saveCollectionsAtomically }));
 
 const valid = {
   version: 1,
@@ -15,6 +21,20 @@ const valid = {
   plans: samplePlans,
   trades: sampleTrades,
 };
+
+const note = { id: "n1", title: "Memo", content: "Text", createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", deletedAt: null };
+const dashboardNote = { id: "dashboard-note", content: "Next week", updatedAt: "2026-08-01T00:00:00.000Z" };
+const earningsEvent = { id: "e1", name: "NVIDIA", ticker: "NVDA", date: "2026-08-20", updatedAt: "2026-08-01T00:00:00.000Z", deletedAt: null };
+
+function version4(overrides: Record<string, unknown> = {}) {
+  return { ...valid, version: 4, observations: sampleObservations, reviews: sampleReviews, rules: sampleRules, notes: [note], language: "en", dashboardNotes: [dashboardNote], earningsEvents: [earningsEvent], displayCurrency: "USD", ...overrides };
+}
+
+function writesByCollection(backup: ReturnType<typeof validateBackupPayload>) {
+  return new Map(backupWrites(backup).map((write) => [write.collection, write.values]));
+}
+
+beforeEach(() => repositoryMocks.saveCollectionsAtomically.mockReset());
 
 describe("validateBackupPayload", () => {
   it("accepts a valid legacy backup", () => {
@@ -32,7 +52,7 @@ describe("validateBackupPayload", () => {
   });
 
   it("accepts notes and language in a version 4 backup", () => {
-    const backup = { ...valid, version: 4, observations: sampleObservations, reviews: sampleReviews, rules: sampleRules, notes: [{ id: "n1", title: "Memo", content: "Text", createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", deletedAt: null }], language: "en", dashboardNotes: [{ id: "dashboard-note", content: "Next week", updatedAt: "2026-08-01T00:00:00.000Z" }], earningsEvents: [{ id: "e1", name: "NVIDIA", ticker: "NVDA", date: "2026-08-20", updatedAt: "2026-08-01T00:00:00.000Z", deletedAt: null }], displayCurrency: "USD" };
+    const backup = version4();
     const parsed = validateBackupPayload(backup);
     expect(parsed.version).toBe(4);
     if (parsed.version === 4) {
@@ -82,10 +102,78 @@ describe("validateBackupPayload", () => {
     expect(backupCounts(parsed)).toMatchObject({ stocks: sampleStocks.length, trades: sampleTrades.length, notes: 0 });
   });
 
+  it("fully replaces version 1 missing collections with empty or default values", () => {
+    const parsed = validateBackupPayload(valid);
+    const writes = backupWrites(parsed);
+    const byCollection = writesByCollection(parsed);
+
+    expect(writes.map((write) => write.collection)).toEqual(["stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences"]);
+    expect(byCollection.get("stocks")).toEqual(sampleStocks);
+    expect(byCollection.get("plans")).toEqual(samplePlans);
+    expect(byCollection.get("trades")).toHaveLength(sampleTrades.length);
+    for (const collection of ["observations", "reviews", "rules", "notes", "earnings-events"]) expect(byCollection.get(collection)).toEqual([]);
+    expect(byCollection.get("language-preferences")).toEqual([fallbackLanguagePreference]);
+    expect(byCollection.get("dashboard-notes")).toEqual([emptyDashboardNote]);
+    expect(byCollection.get("preferences")).toEqual([fallbackCurrencyPreference]);
+  });
+
+  it.each([2, 3])("restores version %s extended data and resets newer fields", (version) => {
+    const parsed = validateBackupPayload({ ...valid, version, observations: sampleObservations, reviews: sampleReviews, rules: sampleRules });
+    const byCollection = writesByCollection(parsed);
+
+    expect(byCollection.size).toBe(11);
+    expect(byCollection.get("observations")).toEqual(sampleObservations);
+    expect(byCollection.get("reviews")).toEqual(sampleReviews);
+    expect(byCollection.get("rules")).toEqual(sampleRules);
+    expect(byCollection.get("notes")).toEqual([]);
+    expect(byCollection.get("earnings-events")).toEqual([]);
+    expect(byCollection.get("language-preferences")).toEqual([fallbackLanguagePreference]);
+    expect(byCollection.get("dashboard-notes")).toEqual([emptyDashboardNote]);
+    expect(byCollection.get("preferences")).toEqual([fallbackCurrencyPreference]);
+  });
+
+  it("restores all version 4 values", () => {
+    const parsed = validateBackupPayload(version4());
+    const byCollection = writesByCollection(parsed);
+
+    expect(byCollection.size).toBe(11);
+    expect(byCollection.get("notes")).toEqual([note]);
+    expect(byCollection.get("language-preferences")).toEqual([expect.objectContaining({ id: "language", locale: "en" })]);
+    expect(byCollection.get("dashboard-notes")).toEqual([dashboardNote]);
+    expect(byCollection.get("earnings-events")).toEqual([earningsEvent]);
+    expect(byCollection.get("preferences")).toEqual([expect.objectContaining({ id: "currency", displayCurrency: "USD" })]);
+  });
+
+  it("resets optional version 4 fields when an early backup omits them", () => {
+    const parsed = validateBackupPayload(version4({ dashboardNotes: undefined, earningsEvents: undefined, displayCurrency: undefined }));
+    const byCollection = writesByCollection(parsed);
+
+    expect(byCollection.size).toBe(11);
+    expect(byCollection.get("dashboard-notes")).toEqual([emptyDashboardNote]);
+    expect(byCollection.get("earnings-events")).toEqual([]);
+    expect(byCollection.get("preferences")).toEqual([fallbackCurrencyPreference]);
+  });
+
   it("stores the current backup as an undo snapshot before restore", () => {
-    const backup = { ...valid, version: 4, observations: sampleObservations, reviews: sampleReviews, rules: sampleRules, notes: [], language: "ko", dashboardNotes: [], earningsEvents: [], displayCurrency: "KRW" } as BackupV4;
+    const backup = version4() as BackupV4;
     const write = snapshotWrite(backup);
     expect(write.collection).toBe("restore-snapshots");
-    expect(JSON.parse(String((write.values[0] as unknown as { content: string }).content))).toMatchObject({ version: 4, stocks: sampleStocks });
+    const saved = JSON.parse(String((write.values[0] as unknown as { content: string }).content));
+    expect(saved).toMatchObject({ version: 4, stocks: sampleStocks, notes: [note], language: "en", dashboardNotes: [dashboardNote], earningsEvents: [earningsEvent], displayCurrency: "USD" });
+    const undoWrites = backupWrites(validateBackupPayload(saved));
+    expect(undoWrites.map((item) => item.collection)).toHaveLength(11);
+    expect(undoWrites.some((item) => item.collection === "restore-snapshots")).toBe(false);
+  });
+
+  it("saves the undo snapshot and complete replacement in one atomic call", async () => {
+    repositoryMocks.saveCollectionsAtomically.mockResolvedValue(undefined);
+    const current = version4() as BackupV4;
+    const legacy = validateBackupPayload(valid);
+
+    await restoreBackup(current, legacy);
+
+    expect(repositoryMocks.saveCollectionsAtomically).toHaveBeenCalledTimes(1);
+    const writes = repositoryMocks.saveCollectionsAtomically.mock.calls[0]?.[0];
+    expect(writes.map((write: { collection: string }) => write.collection)).toEqual(["restore-snapshots", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences"]);
   });
 });

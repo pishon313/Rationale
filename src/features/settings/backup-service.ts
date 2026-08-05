@@ -1,5 +1,6 @@
 import { fallbackCurrencyPreference, type CurrencyPreference } from "@/domain/currency";
 import { normalizeTrade } from "@/domain/trading-ledger";
+import { emptyDashboardNote } from "@/features/dashboard/dashboard-note";
 import type { Note } from "@/features/notes/types";
 import type { Observation } from "@/features/observations/types";
 import type { BuyPlan } from "@/features/plans/types";
@@ -9,7 +10,7 @@ import type { Stock } from "@/features/stocks/types";
 import type { Trade } from "@/features/trades/types";
 import { fallbackLanguagePreference, type LanguagePreference } from "@/i18n/i18n-provider";
 import type { Locale } from "@/i18n/types";
-import { loadCollection, type CollectionWrite } from "@/lib/local-repository";
+import { loadCollection, saveCollectionsAtomically, type CollectionWrite } from "@/lib/local-repository";
 import type { DashboardNoteBackup, EarningsEventBackup, ValidatedBackup } from "./backup";
 
 export type BackupV4 = {
@@ -41,7 +42,7 @@ export async function createBackupPayload(localeOverride?: Locale): Promise<Back
     loadCollection<InvestmentRule>("rules", []),
     loadCollection<Note>("notes", []),
     loadCollection<LanguagePreference>("language-preferences", [fallbackLanguagePreference]),
-    loadCollection<DashboardNoteBackup>("dashboard-notes", [{ id: "dashboard-note", content: "", updatedAt: "" }]),
+    loadCollection<DashboardNoteBackup>("dashboard-notes", [emptyDashboardNote]),
     loadCollection<EarningsEventBackup>("earnings-events", []),
     loadCollection<CurrencyPreference>("preferences", [fallbackCurrencyPreference]),
   ]);
@@ -63,23 +64,25 @@ export async function createBackupPayload(localeOverride?: Locale): Promise<Back
 }
 
 export function backupWrites(parsed: ValidatedBackup): CollectionWrite[] {
+  const extended = parsed.version === 1 ? null : parsed;
+  const current = parsed.version === 4 ? parsed : null;
   return [
     { collection: "stocks", values: parsed.stocks },
     { collection: "plans", values: parsed.plans },
     { collection: "trades", values: parsed.trades.map(normalizeTrade) },
-    ...(parsed.version === 1 ? [] : [
-      { collection: "observations", values: parsed.observations },
-      { collection: "reviews", values: parsed.reviews },
-      { collection: "rules", values: parsed.rules },
-    ]),
-    ...(parsed.version === 4 ? [
-      { collection: "notes", values: parsed.notes },
-      { collection: "language-preferences", values: [{ id: "language", locale: parsed.language, updatedAt: new Date().toISOString() }] as LanguagePreference[] },
-      ...(parsed.dashboardNotes === undefined ? [] : [{ collection: "dashboard-notes", values: parsed.dashboardNotes }]),
-      ...(parsed.earningsEvents === undefined ? [] : [{ collection: "earnings-events", values: parsed.earningsEvents }]),
-      ...(parsed.displayCurrency === undefined ? [] : [{ collection: "preferences", values: [{ id: "currency", displayCurrency: parsed.displayCurrency, updatedAt: new Date().toISOString() }] as CurrencyPreference[] }]),
-    ] : []),
+    { collection: "observations", values: extended?.observations ?? [] },
+    { collection: "reviews", values: extended?.reviews ?? [] },
+    { collection: "rules", values: extended?.rules ?? [] },
+    { collection: "notes", values: current?.notes ?? [] },
+    { collection: "language-preferences", values: current ? [{ ...fallbackLanguagePreference, locale: current.language, updatedAt: new Date().toISOString() }] as LanguagePreference[] : [fallbackLanguagePreference] },
+    { collection: "dashboard-notes", values: current?.dashboardNotes ?? [emptyDashboardNote] },
+    { collection: "earnings-events", values: current?.earningsEvents ?? [] },
+    { collection: "preferences", values: current?.displayCurrency !== undefined ? [{ ...fallbackCurrencyPreference, displayCurrency: current.displayCurrency, updatedAt: new Date().toISOString() }] as CurrencyPreference[] : [fallbackCurrencyPreference] },
   ];
+}
+
+export async function restoreBackup(current: BackupV4, backup: ValidatedBackup) {
+  await saveCollectionsAtomically([snapshotWrite(current), ...backupWrites(backup)]);
 }
 
 export function snapshotWrite(backup: BackupV4): CollectionWrite {

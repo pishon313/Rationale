@@ -16,6 +16,7 @@ import { buildTradingLedger, cashBalanceKrw } from "@/domain/trading-ledger";
 import { migrateTrades, projectStocksFromTrades } from "@/features/trades/migrate-trades";
 import { useCurrencyPreference, useExchangeRates } from "@/lib/use-exchange-rates";
 import { useI18n } from "@/i18n/i18n-provider";
+import { emptyDashboardNote, type DashboardNote } from "./dashboard-note";
 
 const VIEW_KEY = "tradejournal.dashboard.asset-view";
 const VIEW_EVENT = "tradejournal:asset-view";
@@ -52,9 +53,6 @@ export function DashboardPageClient() {
 
   return <><div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm text-[var(--muted)]">{t("개인용 로컬 투자 기록")}</p><h1 className="mt-1 text-2xl font-semibold tracking-tight">{t("오늘의 판단을 기록해 보세요.")}</h1></div><div className="flex flex-wrap items-center gap-2"><label className="flex h-10 items-center gap-2 rounded-lg border bg-[var(--surface)] px-3 text-sm"><span className="text-[var(--muted)]">{t("표시 통화")}</span><select aria-label={t("대시보드 표시 통화")} value={displayCurrency} onChange={(event) => void currencyPreference.setDisplayCurrency(event.target.value as Currency)} className="bg-transparent font-medium outline-none">{currencies.map((currency) => <option key={currency}>{currency}</option>)}</select></label><Link href="/observations" className="flex h-10 items-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-medium text-white"><Plus size={17} />{t("새 관찰 기록")}</Link></div></div>{ledgerWarningCount > 0 && <Link href="/trades" className="mt-4 flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"><AlertTriangle size={18} className="shrink-0" /><span><b>{t("원장 확인이 필요한 기록 {count}건", { count: formatNumber(ledgerWarningCount) })}</b><span className="mt-1 block">{t("현재 요약에는 계산할 수 없는 기록이 제외됐습니다. 매매 원장에서 확인해 주세요.")}</span></span></Link>}<section aria-label={t("포트폴리오 요약")} className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{metrics.map(([label, value, note]) => <article key={label} className="rounded-xl border bg-[var(--surface)] p-5"><div className="flex items-center justify-between"><p className="text-sm text-[var(--muted)]">{label}</p><ArrowUpRight size={17} className="text-[var(--accent)]" /></div><p className="mt-4 text-2xl font-semibold tabular-nums">{value}</p><p className="mt-1 text-xs text-[var(--muted)]">{note}</p></article>)}</section><div className="mt-4 grid gap-4 lg:grid-cols-3"><AssetAllocation holdings={holdings} total={marketValue} /><ScheduleCard title={t("다가오는 검토일")} icon={<CalendarDays size={19} />} stocks={reviewsDue} dateKey="nextReviewDate" empty={t("예정된 검토일이 없습니다.")} /><EarningsScheduleCard stocks={stocks.items} /></div><section className="mt-4 grid gap-3 sm:grid-cols-3"><Quick href="/plans" icon={<ClipboardCheck size={18} />} label={t("진행 중 계획")} value={t("{count}개", { count: formatNumber(activePlans.length) })} /><Quick href="/observations" icon={<Eye size={18} />} label={t("관찰 기록")} value={t("{count}개", { count: formatNumber(observations.items.length) })} /><Quick href="/reviews" icon={<ArrowUpRight size={18} />} label={t("회고")} value={t("{count}개", { count: formatNumber(reviews.items.length) })} /></section><DashboardMemo /></>;
 }
-
-type DashboardNote = { id: string; content: string; updatedAt: string };
-const emptyDashboardNote: DashboardNote = { id: "dashboard-note", content: "", updatedAt: "" };
 
 function DashboardMemo() {
   const { t } = useI18n();
