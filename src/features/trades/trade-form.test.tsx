@@ -18,12 +18,21 @@ vi.mock("@/i18n/i18n-provider", () => ({
 }));
 
 describe("TradeForm", () => {
-  it("실제 전달된 종목과 계획을 선택지로 표시한다", () => {
+  it("실제 전달된 종목은 표시하고 계획 연결 항목은 숨긴다", () => {
     const stock = { ...sampleStocks[0], id: "user-stock", name: "사용자 종목", ticker: "USER" };
     const plan = { ...samplePlans[0], id: "user-plan", stockId: stock.id, stockName: stock.name, ticker: stock.ticker, title: "사용자 계획" };
     render(<TradeForm stocks={[stock]} plans={[plan]} rules={sampleRules} ledger={buildTradingLedger([])} onCancel={vi.fn()} onSave={vi.fn()} />);
     expect(screen.getByRole("option", { name: "사용자 종목 (USER)" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "사용자 계획" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("연결된 매매 계획")).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "사용자 계획" })).not.toBeInTheDocument();
+  });
+
+  it("기존 계획 연결은 폼에서 숨겨도 수정 저장 시 보존한다", () => {
+    const onSave = vi.fn();
+    const trade = { ...sampleTrades[1], quantity: 1, price: 100 };
+    render(<TradeForm trade={trade} stocks={sampleStocks} plans={samplePlans} rules={sampleRules} ledger={buildTradingLedger([])} onCancel={vi.fn()} onSave={onSave} />);
+    fireEvent.click(screen.getByRole("button", { name: "변경 저장" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ planId: trade.planId }));
   });
 
   it("입금 유형에서는 현금 금액 필드를 표시한다", () => {
