@@ -173,6 +173,7 @@ describe("validateBackupPayload", () => {
     await restoreBackup(current, legacy);
 
     expect(repositoryMocks.saveCollectionsAtomically).toHaveBeenCalledTimes(1);
+    expect(repositoryMocks.saveCollectionsAtomically).toHaveBeenCalledWith(expect.any(Array), { resolveCorruption: true });
     const writes = repositoryMocks.saveCollectionsAtomically.mock.calls[0]?.[0];
     expect(writes.map((write: { collection: string }) => write.collection)).toEqual(["restore-snapshots", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences"]);
   });

@@ -1,13 +1,30 @@
+import { validateStoredCollection, validateStoredRecord, type CollectionValidationErrorType } from "./collection-validation";
+
 type Identifiable = { id: string; updatedAt?: string };
 export type CollectionWrite = { collection: string; values: readonly Identifiable[] };
 export type PersistenceSnapshot = { pendingWrites: number; error: string | null; canRetry: boolean; lastSavedAt: string | null };
+export type CorruptionSource = "localStorage" | "sqlite";
+export type CorruptionErrorType = "JSON_PARSE_ERROR" | CollectionValidationErrorType;
+export type CorruptedCollection = {
+  collection: string;
+  source: CorruptionSource;
+  detectedAt: string;
+  affectedRecordCount: number;
+  validRecordCount: number;
+  quarantineIds: string[];
+  errorType: CorruptionErrorType;
+  invalidIndexes: number[];
+};
+export type CorruptionSnapshot = { collections: CorruptedCollection[] };
 type VersionedWrite = CollectionWrite & { generation: number };
 type FailedWrite = VersionedWrite & { error: string; failureOrder: number };
 
 const COLLECTION_STATE = "__tradejournal_collection_state__";
 const browserKey = (collection: string) => `tradejournal.${collection}.v1`;
 const listeners = new Set<() => void>();
+const corruptionListeners = new Set<() => void>();
 let persistenceSnapshot: PersistenceSnapshot = { pendingWrites: 0, error: null, canRetry: false, lastSavedAt: null };
+let corruptionSnapshot: CorruptionSnapshot = { collections: [] };
 let writeQueue: Promise<void> = Promise.resolve();
 const collectionGenerations = new Map<string, number>();
 const failedWrites = new Map<string, FailedWrite>();
@@ -20,6 +37,15 @@ export function subscribePersistence(listener: () => void) {
 
 export function getPersistenceSnapshot() {
   return persistenceSnapshot;
+}
+
+export function subscribeCorruption(listener: () => void) {
+  corruptionListeners.add(listener);
+  return () => corruptionListeners.delete(listener);
+}
+
+export function getCorruptionSnapshot() {
+  return corruptionSnapshot;
 }
 
 export function clearPersistenceError() {
@@ -56,11 +82,52 @@ export async function loadCollection<T extends Identifiable>(collection: string,
   try {
     if (!isTauriApp()) {
       const saved = localStorage.getItem(browserKey(collection));
-      return saved !== null ? JSON.parse(saved) as T[] : fallback;
+      if (saved === null) return fallback;
+      let parsed: unknown;
+      try { parsed = JSON.parse(saved); }
+      catch {
+        const quarantineId = quarantineBrowser(collection, saved, "JSON_PARSE_ERROR");
+        registerCorruption({ collection, source: "localStorage", affectedRecordCount: 1, validRecordCount: 0, quarantineIds: [quarantineId], errorType: "JSON_PARSE_ERROR", invalidIndexes: [] });
+        return fallback;
+      }
+      const validation = validateStoredCollection(collection, parsed);
+      if (!validation.valid) {
+        const quarantineId = quarantineBrowser(collection, saved, validation.errorType, validation.index);
+        registerCorruption({ collection, source: "localStorage", affectedRecordCount: 1, validRecordCount: 0, quarantineIds: [quarantineId], errorType: validation.errorType, invalidIndexes: validation.index === undefined ? [] : [validation.index] });
+        return fallback;
+      }
+      return parsed as T[];
     }
     const db = await database();
-    const rows = await db.select<Array<{ data: string }>>("SELECT data FROM app_records WHERE collection = $1 ORDER BY updated_at DESC", [collection]);
-    if (rows.length) return rows.map((row) => JSON.parse(row.data) as T);
+    const rows = await db.select<Array<{ id: string; data: string; updated_at: string }>>("SELECT id, data, updated_at FROM app_records WHERE collection = $1 ORDER BY updated_at DESC", [collection]);
+    if (rows.length) {
+      const valid: T[] = [];
+      const corrupt: SqliteQuarantineInput[] = [];
+      const invalidIndexes: number[] = [];
+      let summaryType: CorruptionErrorType = "INVALID_RECORD";
+      for (const [index, row] of rows.entries()) {
+        let parsed: unknown;
+        let errorType: CorruptionErrorType = "INVALID_RECORD";
+        try { parsed = JSON.parse(row.data); }
+        catch { errorType = "JSON_PARSE_ERROR"; }
+        try {
+          if (errorType === "JSON_PARSE_ERROR") throw new Error("parse");
+          validateStoredRecord(collection, parsed, index);
+          if ((parsed as Identifiable).id !== row.id) throw new Error("record id mismatch");
+          valid.push(parsed as T);
+          continue;
+        } catch {
+          summaryType = errorType;
+          invalidIndexes.push(index);
+          corrupt.push({ quarantineId: quarantineIdentifier("sqlite", collection, row.id, row.data), collection, recordId: row.id, rawData: row.data, originalUpdatedAt: row.updated_at, detectedAt: new Date().toISOString(), errorType, itemIndex: index });
+        }
+      }
+      if (corrupt.length) {
+        await quarantineSqlite(corrupt);
+        registerCorruption({ collection, source: "sqlite", affectedRecordCount: corrupt.length, validRecordCount: valid.length, quarantineIds: corrupt.map((item) => item.quarantineId), errorType: summaryType, invalidIndexes });
+      }
+      return valid;
+    }
     const state = await db.select<Array<{ id: string }>>("SELECT id FROM app_records WHERE collection = $1 AND id = $2 LIMIT 1", [COLLECTION_STATE, collection]);
     if (state.length) return [];
     await saveCollection(collection, fallback);
@@ -75,8 +142,14 @@ export async function saveCollection<T extends Identifiable>(collection: string,
   await saveCollectionsAtomically([{ collection, values }]);
 }
 
-export function saveCollectionsAtomically(writes: readonly CollectionWrite[]) {
+export function saveCollectionsAtomically(writes: readonly CollectionWrite[], options: { resolveCorruption?: boolean } = {}) {
   assertUniqueCollections(writes);
+  const blocked = writes.map((write) => write.collection).filter(hasUnresolvedCorruption);
+  if (blocked.length && !options.resolveCorruption) {
+    const error = new Error(`손상된 데이터의 복구 방법을 선택하기 전에는 저장할 수 없습니다: ${blocked.join(", ")}`);
+    updatePersistence({ error: error.message, canRetry: false });
+    return Promise.reject(error);
+  }
   const prepared = versionWrites(cloneWrites(writes));
   updatePersistence({ pendingWrites: persistenceSnapshot.pendingWrites + 1 });
   const task = writeQueue.catch(() => undefined).then(() => performSave(prepared));
@@ -85,12 +158,43 @@ export function saveCollectionsAtomically(writes: readonly CollectionWrite[]) {
     () => {
       updatePersistence({ lastSavedAt: new Date().toISOString() });
       clearFailuresCoveredBy(prepared);
+      if (options.resolveCorruption) resolveCorruption(prepared.map((write) => write.collection));
     },
     (error) => {
       recordFailure(prepared, error);
       throw error;
     },
   ).finally(() => updatePersistence({ pendingWrites: Math.max(0, persistenceSnapshot.pendingWrites - 1) }));
+}
+
+export async function resetCorruptedCollection(collection: string) {
+  if (!hasUnresolvedCorruption(collection)) return;
+  await saveCollectionsAtomically([{ collection, values: [] }], { resolveCorruption: true });
+}
+
+export async function resetCorruptedCollections(collections: readonly string[]) {
+  const unresolved = [...new Set(collections)].filter(hasUnresolvedCorruption);
+  if (!unresolved.length) return;
+  await saveCollectionsAtomically(unresolved.map((collection) => ({ collection, values: [] })), { resolveCorruption: true });
+}
+
+export function resolveCorruption(collections: readonly string[]) {
+  const names = new Set(collections);
+  const next = corruptionSnapshot.collections.filter((item) => !names.has(item.collection));
+  if (next.length !== corruptionSnapshot.collections.length) updateCorruption({ collections: next });
+}
+
+export async function exportQuarantinedData() {
+  if (!isTauriApp()) {
+    const entries = Object.keys(localStorage)
+      .filter((key) => key.startsWith("tradejournal.corrupt."))
+      .map((key) => JSON.parse(localStorage.getItem(key) ?? "null"))
+      .filter(Boolean);
+    return JSON.stringify({ format: "rationale-corrupt-data", exportedAt: new Date().toISOString(), entries }, null, 2);
+  }
+  const db = await database();
+  const entries = await db.select<Array<Record<string, unknown>>>("SELECT quarantine_id, collection, record_id, raw_data, original_updated_at, detected_at, error_type, item_index FROM corrupt_records ORDER BY detected_at DESC");
+  return JSON.stringify({ format: "rationale-corrupt-data", exportedAt: new Date().toISOString(), entries }, null, 2);
 }
 
 async function performSave(writes: readonly CollectionWrite[]) {
@@ -170,6 +274,51 @@ function syncFailureSnapshot() {
 function updatePersistence(next: Partial<PersistenceSnapshot>) {
   persistenceSnapshot = { ...persistenceSnapshot, ...next };
   listeners.forEach((listener) => listener());
+}
+
+function updateCorruption(next: CorruptionSnapshot) {
+  corruptionSnapshot = next;
+  corruptionListeners.forEach((listener) => listener());
+}
+
+function hasUnresolvedCorruption(collection: string) {
+  return corruptionSnapshot.collections.some((item) => item.collection === collection);
+}
+
+function registerCorruption(item: Omit<CorruptedCollection, "detectedAt">) {
+  const next = corruptionSnapshot.collections.filter((current) => !(current.collection === item.collection && current.source === item.source));
+  next.push({ ...item, detectedAt: new Date().toISOString() });
+  updateCorruption({ collections: next });
+}
+
+type BrowserQuarantine = { quarantineId: string; collection: string; detectedAt: string; originalKey: string; rawData: string; errorType: CorruptionErrorType; itemIndex?: number };
+type SqliteQuarantineInput = { quarantineId: string; collection: string; recordId: string; rawData: string; originalUpdatedAt: string; detectedAt: string; errorType: CorruptionErrorType; itemIndex: number };
+
+function quarantineBrowser(collection: string, rawData: string, errorType: CorruptionErrorType, itemIndex?: number) {
+  const quarantineId = quarantineIdentifier("localStorage", collection, "", rawData);
+  const key = `tradejournal.corrupt.${collection}.${quarantineId}`;
+  if (localStorage.getItem(key) === null) {
+    const entry: BrowserQuarantine = { quarantineId, collection, detectedAt: new Date().toISOString(), originalKey: browserKey(collection), rawData, errorType, itemIndex };
+    localStorage.setItem(key, JSON.stringify(entry));
+  }
+  return quarantineId;
+}
+
+async function quarantineSqlite(entries: SqliteQuarantineInput[]) {
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("quarantine_corrupt_records", { entries });
+}
+
+function quarantineIdentifier(source: CorruptionSource, collection: string, recordId: string, rawData: string) {
+  const input = `${source}\u0000${collection}\u0000${recordId}\u0000${rawData}`;
+  let first = 2166136261;
+  let second = 0x9e3779b9;
+  for (let index = 0; index < input.length; index += 1) {
+    const code = input.charCodeAt(index);
+    first = Math.imul(first ^ code, 16777619);
+    second = Math.imul(second ^ code, 2246822519);
+  }
+  return `${(first >>> 0).toString(16).padStart(8, "0")}${(second >>> 0).toString(16).padStart(8, "0")}${input.length.toString(16)}`;
 }
 
 function persistenceErrorMessage(error: unknown, fallback: string) {

@@ -10,7 +10,7 @@ import type { Stock } from "@/features/stocks/types";
 import type { Trade } from "@/features/trades/types";
 import { fallbackLanguagePreference, type LanguagePreference } from "@/i18n/i18n-provider";
 import type { Locale } from "@/i18n/types";
-import { loadCollection, saveCollectionsAtomically, type CollectionWrite } from "@/lib/local-repository";
+import { getCorruptionSnapshot, loadCollection, saveCollectionsAtomically, type CollectionWrite } from "@/lib/local-repository";
 import type { DashboardNoteBackup, EarningsEventBackup, ValidatedBackup } from "./backup";
 
 export type BackupV4 = {
@@ -32,7 +32,7 @@ export type BackupV4 = {
 export type RestoreSnapshot = { id: "latest"; content: string; createdAt: string; updatedAt: string };
 export const restoreSnapshotCollection = "restore-snapshots";
 
-export async function createBackupPayload(localeOverride?: Locale): Promise<BackupV4> {
+export async function createBackupPayload(localeOverride?: Locale, options: { allowCorrupted?: boolean } = {}): Promise<BackupV4> {
   const [stocks, plans, trades, observations, reviews, rules, notes, languages, dashboardNotes, earningsEvents, preferences] = await Promise.all([
     loadCollection<Stock>("stocks", []),
     loadCollection<BuyPlan>("plans", []),
@@ -46,6 +46,10 @@ export async function createBackupPayload(localeOverride?: Locale): Promise<Back
     loadCollection<EarningsEventBackup>("earnings-events", []),
     loadCollection<CurrencyPreference>("preferences", [fallbackCurrencyPreference]),
   ]);
+  const backupCollections = new Set(["stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences"]);
+  if (!options.allowCorrupted && getCorruptionSnapshot().collections.some((item) => backupCollections.has(item.collection))) {
+    throw new Error("손상된 컬렉션을 복구하기 전에는 불완전한 백업을 만들 수 없습니다.");
+  }
   return {
     version: 4,
     exportedAt: new Date().toISOString(),
@@ -82,7 +86,7 @@ export function backupWrites(parsed: ValidatedBackup): CollectionWrite[] {
 }
 
 export async function restoreBackup(current: BackupV4, backup: ValidatedBackup) {
-  await saveCollectionsAtomically([snapshotWrite(current), ...backupWrites(backup)]);
+  await saveCollectionsAtomically([snapshotWrite(current), ...backupWrites(backup)], { resolveCorruption: true });
 }
 
 export function snapshotWrite(backup: BackupV4): CollectionWrite {

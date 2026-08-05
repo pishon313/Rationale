@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { clearPersistenceError, getPersistenceSnapshot, loadCollection, retryLastSave, saveCollection, saveCollectionsAtomically } from "./local-repository";
+import { sampleStocks } from "@/features/stocks/sample-data";
+import type { Stock } from "@/features/stocks/types";
+import { clearPersistenceError, getCorruptionSnapshot, getPersistenceSnapshot, loadCollection, resetCorruptedCollection, resolveCorruption, retryLastSave, saveCollection, saveCollectionsAtomically } from "./local-repository";
 
 const sqlMocks = vi.hoisted(() => ({ load: vi.fn(), invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-sql", () => ({ default: { load: sqlMocks.load } }));
@@ -8,6 +10,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: sqlMocks.invoke }));
 describe("browser local repository", () => {
   beforeEach(() => {
     clearPersistenceError();
+    resolveCorruption(getCorruptionSnapshot().collections.map((item) => item.collection));
     localStorage.clear();
     vi.restoreAllMocks();
     sqlMocks.load.mockReset();
@@ -21,6 +24,90 @@ describe("browser local repository", () => {
 
     await saveCollection("saved-empty", []);
     await expect(loadCollection("saved-empty", fallback)).resolves.toEqual([]);
+  });
+
+  it("quarantines malformed JSON without replacing the active value", async () => {
+    const raw = '[{"id":"stock-1",';
+    localStorage.setItem("tradejournal.stocks.v1", raw);
+
+    await expect(loadCollection<Stock>("stocks", [])).resolves.toEqual([]);
+
+    expect(localStorage.getItem("tradejournal.stocks.v1")).toBe(raw);
+    const quarantineKey = Object.keys(localStorage).find((key) => key.startsWith("tradejournal.corrupt.stocks."));
+    expect(quarantineKey).toBeTruthy();
+    expect(JSON.parse(localStorage.getItem(quarantineKey!) ?? "null")).toMatchObject({ rawData: raw, errorType: "JSON_PARSE_ERROR", collection: "stocks" });
+    expect(getCorruptionSnapshot().collections).toEqual([expect.objectContaining({ collection: "stocks", source: "localStorage", errorType: "JSON_PARSE_ERROR" })]);
+    await expect(saveCollection("stocks", [])).rejects.toThrow("복구 방법을 선택");
+    expect(localStorage.getItem("tradejournal.stocks.v1")).toBe(raw);
+  });
+
+  it("quarantines a valid JSON value that is not an array", async () => {
+    localStorage.setItem("tradejournal.stocks.v1", JSON.stringify({ id: "stock-1" }));
+    await expect(loadCollection<Stock>("stocks", [])).resolves.toEqual([]);
+    expect(getCorruptionSnapshot().collections[0]).toMatchObject({ errorType: "INVALID_COLLECTION_SHAPE" });
+  });
+
+  it("quarantines the whole browser collection and records the invalid item index", async () => {
+    const raw = JSON.stringify([sampleStocks[0], { ...sampleStocks[1], id: "", name: 123 }]);
+    localStorage.setItem("tradejournal.stocks.v1", raw);
+    await expect(loadCollection<Stock>("stocks", [])).resolves.toEqual([]);
+    expect(getCorruptionSnapshot().collections[0]).toMatchObject({ errorType: "INVALID_RECORD", invalidIndexes: [1] });
+    expect(localStorage.getItem("tradejournal.stocks.v1")).toBe(raw);
+  });
+
+  it("does not duplicate quarantine entries when the same corruption is loaded repeatedly", async () => {
+    localStorage.setItem("tradejournal.stocks.v1", "[");
+    await loadCollection<Stock>("stocks", []);
+    await loadCollection<Stock>("stocks", []);
+    expect(Object.keys(localStorage).filter((key) => key.startsWith("tradejournal.corrupt.stocks."))).toHaveLength(1);
+    expect(getCorruptionSnapshot().collections).toHaveLength(1);
+  });
+
+  it("resets only the confirmed collection while preserving its quarantine", async () => {
+    localStorage.setItem("tradejournal.stocks.v1", "[");
+    await loadCollection<Stock>("stocks", []);
+    const quarantineKey = Object.keys(localStorage).find((key) => key.startsWith("tradejournal.corrupt.stocks."));
+
+    await resetCorruptedCollection("stocks");
+
+    expect(localStorage.getItem("tradejournal.stocks.v1")).toBe("[]");
+    expect(localStorage.getItem(quarantineKey!)).not.toBeNull();
+    expect(getCorruptionSnapshot().collections).toEqual([]);
+  });
+
+  it("keeps corruption unresolved when a confirmed reset cannot be saved", async () => {
+    localStorage.setItem("tradejournal.stocks.v1", "[");
+    await loadCollection<Stock>("stocks", []);
+    const originalSetItem = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+      if (key === "tradejournal.stocks.v1" && value === "[]") throw new Error("disk full");
+      return originalSetItem.call(this, key, value);
+    });
+
+    await expect(resetCorruptedCollection("stocks")).rejects.toThrow("disk full");
+
+    expect(localStorage.getItem("tradejournal.stocks.v1")).toBe("[");
+    expect(getCorruptionSnapshot().collections).toHaveLength(1);
+  });
+
+  it("allows an explicit recovery replacement and keeps the quarantine copy", async () => {
+    localStorage.setItem("tradejournal.stocks.v1", "[");
+    await loadCollection<Stock>("stocks", []);
+    const quarantineKey = Object.keys(localStorage).find((key) => key.startsWith("tradejournal.corrupt.stocks."));
+
+    await saveCollectionsAtomically([{ collection: "stocks", values: sampleStocks }], { resolveCorruption: true });
+
+    expect(JSON.parse(localStorage.getItem("tradejournal.stocks.v1") ?? "null")).toEqual(sampleStocks);
+    expect(localStorage.getItem(quarantineKey!)).not.toBeNull();
+    expect(getCorruptionSnapshot().collections).toEqual([]);
+  });
+
+  it("allows unaffected collections to save while a damaged collection is blocked", async () => {
+    localStorage.setItem("tradejournal.stocks.v1", "[");
+    await loadCollection<Stock>("stocks", []);
+    await saveCollection("notes", [{ id: "note-1" }]);
+    await expect(saveCollection("stocks", [])).rejects.toThrow();
+    expect(JSON.parse(localStorage.getItem("tradejournal.notes.v1") ?? "null")).toEqual([{ id: "note-1" }]);
   });
 
   it("saves multiple collections together", async () => {
@@ -150,6 +237,7 @@ describe("browser local repository", () => {
 describe("Tauri local repository", () => {
   beforeEach(() => {
     clearPersistenceError();
+    resolveCorruption(getCorruptionSnapshot().collections.map((item) => item.collection));
     vi.restoreAllMocks();
     sqlMocks.load.mockReset();
     sqlMocks.invoke.mockReset();
@@ -166,6 +254,25 @@ describe("Tauri local repository", () => {
     await expect(loadCollection("trades", [{ id: "sample" }])).resolves.toEqual([]);
     expect(select).toHaveBeenCalledTimes(2);
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("keeps valid SQLite rows and quarantines malformed and invalid rows", async () => {
+    const rows = [
+      { id: sampleStocks[0].id, data: JSON.stringify(sampleStocks[0]), updated_at: sampleStocks[0].updatedAt },
+      { id: sampleStocks[1].id, data: JSON.stringify(sampleStocks[1]), updated_at: sampleStocks[1].updatedAt },
+      { id: "broken-json", data: '{"id":', updated_at: "2026-08-01T00:00:00.000Z" },
+      { id: "broken-shape", data: JSON.stringify({ id: "broken-shape", name: 123 }), updated_at: "2026-08-01T00:00:00.000Z" },
+    ];
+    sqlMocks.load.mockResolvedValue({ select: vi.fn().mockResolvedValue(rows), execute: vi.fn() });
+    sqlMocks.invoke.mockResolvedValue(undefined);
+
+    await expect(loadCollection<Stock>("stocks", [])).resolves.toEqual([sampleStocks[0], sampleStocks[1]]);
+
+    expect(sqlMocks.invoke).toHaveBeenCalledWith("quarantine_corrupt_records", { entries: [
+      expect.objectContaining({ recordId: "broken-json", rawData: '{"id":', errorType: "JSON_PARSE_ERROR" }),
+      expect.objectContaining({ recordId: "broken-shape", errorType: "INVALID_RECORD" }),
+    ] });
+    expect(getCorruptionSnapshot().collections[0]).toMatchObject({ collection: "stocks", source: "sqlite", affectedRecordCount: 2, validRecordCount: 2, invalidIndexes: [2, 3] });
   });
 
   it("delegates a multi-collection save to the single-connection Rust command", async () => {

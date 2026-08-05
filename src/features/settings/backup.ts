@@ -325,3 +325,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isTimestamp(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 && Number.isFinite(Date.parse(value));
 }
+
+export function validateBackupCollectionRecord(collection: string, value: unknown, index: number): void {
+  if (!isRecord(value) || typeof value.id !== "string" || !value.id.trim()) {
+    throw new Error(`${collection} ${index + 1}번째 항목의 ID가 올바르지 않습니다.`);
+  }
+  switch (collection) {
+    case "stocks": validateStockRecord(value, index); break;
+    case "plans": validatePlanRecord(value, index); break;
+    case "trades": validateTradeRecord(value, index); break;
+    case "observations": validateObservationRecord(value, index); break;
+    case "reviews": validateReviewRecord(value, index); break;
+    case "rules": validateRuleRecord(value, index); break;
+    case "notes": validateNoteRecord(value, index); break;
+    case "dashboard-notes": validateDashboardNoteRecord(value, index); break;
+    case "earnings-events": validateEarningsEventRecord(value, index); break;
+  }
+}

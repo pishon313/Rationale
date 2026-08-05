@@ -148,7 +148,7 @@ export function SettingsPageClient() {
   async function confirmRestore() {
     if (!pendingRestore) return;
     try {
-      const current = await createBackupPayload(locale);
+      const current = await createBackupPayload(locale, { allowCorrupted: true });
       await restoreBackup(current, pendingRestore);
       setRestoreAvailable(true);
       setPendingRestore(null);
@@ -164,7 +164,7 @@ export function SettingsPageClient() {
       const snapshot = (await loadCollection<RestoreSnapshot>(restoreSnapshotCollection, []))[0];
       if (!snapshot) return;
       const previous = validateBackupPayload(JSON.parse(snapshot.content));
-      const current = await createBackupPayload(locale);
+      const current = await createBackupPayload(locale, { allowCorrupted: true });
       await restoreBackup(current, previous);
       setMessage(t("마지막 복원을 되돌렸습니다."));
       window.setTimeout(() => window.location.reload(), 600);

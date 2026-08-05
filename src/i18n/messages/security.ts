@@ -22,6 +22,14 @@ const en = {
   "암호화 백업 비밀번호": "Encrypted backup password", "백업 비밀번호 입력": "Enter backup password", "비밀번호": "Password", "비밀번호 확인": "Confirm password",
   "10자 이상의 비밀번호를 입력하세요. 비밀번호를 잊으면 백업을 복원할 수 없습니다.": "Enter a password of at least 10 characters. A forgotten password cannot be recovered.",
   "암호화 백업을 복원할 때 사용한 비밀번호를 입력하세요.": "Enter the password used for this encrypted backup.", "암호화하여 저장": "Encrypt and save", "복호화": "Decrypt",
+  "손상된 로컬 데이터가 발견됐습니다": "Damaged local data was found",
+  "원본은 별도 격리 영역에 보존했습니다. 복구 방법을 선택하기 전까지 영향을 받은 컬렉션의 저장이 제한됩니다.": "The original data is preserved in quarantine. Saving affected collections is restricted until you choose a recovery method.",
+  "영향 범위": "Affected data", "손상 항목": "Damaged items", "저장소": "Storage", "개": " items",
+  "백업에서 복원": "Restore from backup", "영향 받은 데이터만 비우기": "Clear affected data only", "격리 원본 내보내기": "Export quarantined originals",
+  "영향을 받은 컬렉션만 빈 상태로 초기화할까요? 격리된 원본은 삭제되지 않습니다.": "Reset only the affected collections to empty? Quarantined originals will not be deleted.",
+  "초기화하지 못했습니다. 손상 데이터 보호 상태를 유지합니다.": "Reset failed. Corruption protection remains active.",
+  "진단 파일에는 투자 기록과 메모가 포함될 수 있습니다. 안전한 위치에 저장할까요?": "The diagnostic file may contain investment records and notes. Save it in a secure location?",
+  "격리된 원본을 내보내지 못했습니다.": "Could not export quarantined originals.",
 };
 
 export const securityMessages: MessageCatalog = {

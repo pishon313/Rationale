@@ -163,6 +163,64 @@ struct AtomicCollectionWrite {
     records: Vec<AtomicRecordWrite>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CorruptRecordEntry {
+    quarantine_id: String,
+    collection: String,
+    record_id: String,
+    raw_data: String,
+    original_updated_at: String,
+    detected_at: String,
+    error_type: String,
+    item_index: i64,
+}
+
+#[tauri::command]
+async fn quarantine_corrupt_records(
+    db_instances: State<'_, DbInstances>,
+    entries: Vec<CorruptRecordEntry>,
+) -> Result<(), String> {
+    let instances = db_instances.0.read().await;
+    let pool = match instances.get(DATABASE_URL) {
+        Some(DbPool::Sqlite(pool)) => pool.clone(),
+        _ => return Err("LOCAL_DATABASE_NOT_LOADED".into()),
+    };
+    drop(instances);
+    let mut transaction = pool
+        .begin()
+        .await
+        .map_err(|_| "QUARANTINE_FAILED".to_string())?;
+    for entry in entries {
+        if entry.quarantine_id.trim().is_empty()
+            || entry.collection.trim().is_empty()
+            || entry.record_id.trim().is_empty()
+            || !matches!(
+                entry.error_type.as_str(),
+                "JSON_PARSE_ERROR" | "INVALID_RECORD"
+            )
+        {
+            return Err("INVALID_QUARANTINE_ENTRY".into());
+        }
+        sqlx::query("INSERT OR IGNORE INTO corrupt_records (quarantine_id, collection, record_id, raw_data, original_updated_at, detected_at, error_type, item_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+            .bind(entry.quarantine_id)
+            .bind(entry.collection)
+            .bind(entry.record_id)
+            .bind(entry.raw_data)
+            .bind(entry.original_updated_at)
+            .bind(entry.detected_at)
+            .bind(entry.error_type)
+            .bind(entry.item_index)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|_| "QUARANTINE_FAILED".to_string())?;
+    }
+    transaction
+        .commit()
+        .await
+        .map_err(|_| "QUARANTINE_FAILED".to_string())
+}
+
 #[tauri::command(rename_all = "camelCase")]
 async fn save_collections_atomically(
     db_instances: State<'_, DbInstances>,
@@ -384,12 +442,20 @@ fn write_automatic_backup(app: tauri::AppHandle, content: String) -> Result<Stri
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let migrations = vec![Migration {
-        version: 1,
-        description: "create_local_records",
-        sql: "CREATE TABLE IF NOT EXISTS app_records (collection TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (collection, id)); CREATE INDEX IF NOT EXISTS app_records_collection_idx ON app_records(collection);",
-        kind: MigrationKind::Up,
-    }];
+    let migrations = vec![
+        Migration {
+            version: 1,
+            description: "create_local_records",
+            sql: "CREATE TABLE IF NOT EXISTS app_records (collection TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (collection, id)); CREATE INDEX IF NOT EXISTS app_records_collection_idx ON app_records(collection);",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 2,
+            description: "create_corrupt_records_quarantine",
+            sql: "CREATE TABLE IF NOT EXISTS corrupt_records (quarantine_id TEXT PRIMARY KEY NOT NULL, collection TEXT NOT NULL, record_id TEXT NOT NULL, raw_data TEXT NOT NULL, original_updated_at TEXT NOT NULL, detected_at TEXT NOT NULL, error_type TEXT NOT NULL, item_index INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS corrupt_records_collection_idx ON corrupt_records(collection);",
+            kind: MigrationKind::Up,
+        },
+    ];
     tauri::Builder::default()
         .plugin(
             tauri_plugin_sql::Builder::default()
@@ -405,7 +471,8 @@ pub fn run() {
             save_collections_atomically,
             write_automatic_backup,
             encrypt_backup,
-            decrypt_backup
+            decrypt_backup,
+            quarantine_corrupt_records
         ])
         .run(tauri::generate_context!())
         .expect("TradeJournal 실행 중 오류가 발생했습니다");
