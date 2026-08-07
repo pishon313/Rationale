@@ -25,7 +25,7 @@ export function DocumentTitle() {
 
   useEffect(() => {
     if (!ready) return;
-    const nextTitle = title ? `${t(title)} · TradeJournal` : "TradeJournal";
+    const nextTitle = title ? `${t(title)} · Rationale` : "Rationale";
     const update = () => { document.title = nextTitle; };
     update();
     // Next.js may stream static metadata after hydration. Keep the title tied

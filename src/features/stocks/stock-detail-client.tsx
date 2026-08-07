@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, CalendarClock, CalendarDays, Edit3, Lightbulb, MessageSquareText, Plus, Target, TrendingUp } from "lucide-react";
+import { ArrowLeft, CalendarClock, CalendarDays, Edit3, Lightbulb, MessageSquareText, Plus, Target, TrendingUp, WalletCards } from "lucide-react";
 import { useState } from "react";
 import { ObservationForm } from "@/features/observations/observations-page-client";
 import type { Observation } from "@/features/observations/types";
 import { ReviewForm } from "@/features/reviews/reviews-page-client";
 import type { Review } from "@/features/reviews/types";
+import type { Trade } from "@/features/trades/types";
+import { buildTradingLedger, tradeAmount } from "@/domain/trading-ledger";
 import { useI18n } from "@/i18n/i18n-provider";
 import { useLocalCollection } from "@/lib/use-local-collection";
 import { StockForm } from "./stock-form";
@@ -18,6 +20,7 @@ export function StockDetailClient({ stockId }: { stockId: string }) {
   const { stocks, ready, updateStock } = useStockStore();
   const observations = useLocalCollection<Observation>("observations", []);
   const reviews = useLocalCollection<Review>("reviews", []);
+  const trades = useLocalCollection<Trade>("trades", []);
   const [editing, setEditing] = useState(false);
   const [observing, setObserving] = useState(false);
   const [reviewing, setReviewing] = useState(false);
@@ -46,6 +49,9 @@ export function StockDetailClient({ stockId }: { stockId: string }) {
   ];
   const stockObservations = observations.items.filter((observation) => observation.stockId === stock.id).sort((a, b) => b.observedAt.localeCompare(a.observedAt));
   const stockReviews = reviews.items.filter((review) => review.stockId === stock.id).sort((a, b) => b.reviewedAt.localeCompare(a.reviewedAt));
+  const activeTrades = trades.allItems.filter((trade) => !trade.deletedAt);
+  const ledger = buildTradingLedger(activeTrades);
+  const stockTrades = activeTrades.filter((trade) => trade.stockId === stock.id).sort((a, b) => b.tradedAt.localeCompare(a.tradedAt));
 
   return <>
     <Link href="/stocks" className="inline-flex items-center gap-1.5 text-sm text-[var(--muted)]"><ArrowLeft size={16} />{t("종목 목록")}</Link>
@@ -58,6 +64,13 @@ export function StockDetailClient({ stockId }: { stockId: string }) {
       <div className="flex items-center gap-2"><Lightbulb size={19} className="text-[var(--accent)]" /><h2 className="font-semibold">{t("투자 아이디어")}</h2></div>
       <p className="mt-4 whitespace-pre-wrap text-sm leading-7">{stock.thesisSummary || t("아직 작성된 투자 아이디어가 없습니다.")}</p>
       <div className="mt-6 grid gap-5 border-t pt-5 sm:grid-cols-2 lg:grid-cols-3"><Info icon={<TrendingUp size={17} />} label={t("현재 판단")} value={t(stock.currentView)} /><Info icon={<Target size={17} />} label={t("목표 가격")} value={stock.targetPrice ? price(stock.targetPrice) : t("미설정")} /><Info icon={<CalendarDays size={17} />} label={t("다음 검토일")} value={date(stock.nextReviewDate)} /><Info icon={<CalendarClock size={17} />} label={t("다음 실적 발표일")} value={date(stock.nextEarningsDate)} /><Info icon={<MessageSquareText size={17} />} label={t("판단 메모")} value={stock.currentViewMemo || t("메모 없음")} /></div>
+    </section>
+    <section className="mt-4 overflow-hidden rounded-xl border bg-[var(--surface)]">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4"><div className="flex items-center gap-2"><WalletCards size={18} className="text-[var(--accent)]" /><h2 className="font-semibold">{stock.name} · {t("매매 기록")}</h2><span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-xs text-[var(--muted)]">{formatNumber(stockTrades.length)}</span></div><Link href="/trades" className="rounded-md px-2 py-2 text-xs text-[var(--accent)]">{t("매매 원장")}</Link></div>
+      {stockTrades.length ? <>
+        <div className="hidden overflow-x-auto md:block"><table className="w-full min-w-[720px] text-left text-sm"><thead className="bg-[var(--surface-muted)] text-xs text-[var(--muted)]"><tr><th className="px-5 py-3 font-medium">{t("일시")}</th><th className="px-3 py-3 font-medium">{t("유형")}</th><th className="px-3 py-3 font-medium">{t("계좌")}</th><th className="px-3 py-3 text-right font-medium">{t("수량")}</th><th className="px-3 py-3 text-right font-medium">{t("가격/금액")}</th><th className="px-5 py-3 text-right font-medium">{t("실현손익")}</th></tr></thead><tbody>{stockTrades.map((trade) => <TradeHistoryRow key={trade.id} trade={trade} realizedProfit={ledger.calculations[trade.id]?.realizedProfit ?? 0} formatDate={formatDate} formatNumber={formatNumber} t={t} />)}</tbody></table></div>
+        <div className="divide-y md:hidden">{stockTrades.map((trade) => <TradeHistoryCard key={trade.id} trade={trade} realizedProfit={ledger.calculations[trade.id]?.realizedProfit ?? 0} formatDate={formatDate} formatNumber={formatNumber} t={t} />)}</div>
+      </> : <p className="px-5 py-10 text-center text-sm text-[var(--muted)]">{t("기록 없음")}</p>}
     </section>
     <section className="mt-4 rounded-xl border bg-[var(--surface)] p-5">
       <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">{t("이 종목의 관찰 기록")}</h2><div className="flex items-center gap-2"><button onClick={() => setObserving(true)} className="flex items-center gap-1.5 rounded-md bg-[var(--accent)] px-3 py-2 text-xs text-white"><Plus size={14} />{t("새 관찰 기록")}</button><Link href="/observations" className="rounded-md px-2 py-2 text-xs text-[var(--accent)]">{t("전체 관찰 보기")}</Link></div></div>
@@ -72,6 +85,29 @@ export function StockDetailClient({ stockId }: { stockId: string }) {
     {observing && <ObservationForm stocks={stocks} initialStockId={stock.id} onCancel={() => setObserving(false)} onSave={(observation) => { observations.add(observation); setObserving(false); }} />}
     {reviewing && <ReviewForm stocks={stocks} initialStockId={stock.id} cancel={() => setReviewing(false)} save={(review) => { reviews.add(review); setReviewing(false); }} />}
   </>;
+}
+
+type TradeHistoryProps = {
+  trade: Trade;
+  realizedProfit: number;
+  formatDate: ReturnType<typeof useI18n>["formatDate"];
+  formatNumber: ReturnType<typeof useI18n>["formatNumber"];
+  t: ReturnType<typeof useI18n>["t"];
+};
+
+function TradeHistoryRow({ trade, realizedProfit, formatDate, formatNumber, t }: TradeHistoryProps) {
+  const money = (value: number) => formatNumber(value, { style: "currency", currency: trade.currency, maximumFractionDigits: trade.currency === "KRW" || trade.currency === "JPY" ? 0 : 2 });
+  return <tr className="border-t first:border-t-0"><td className="whitespace-nowrap px-5 py-3 text-xs text-[var(--muted)]">{formatDate(trade.tradedAt, { year: "numeric", month: "short", day: "numeric" })}</td><td className="px-3 py-3"><TradeTypeBadge type={trade.tradeType} t={t} /></td><td className="px-3 py-3 text-[var(--muted)]">{trade.accountName}</td><td className="px-3 py-3 text-right tabular-nums">{trade.tradeType === "매수" || trade.tradeType === "매도" ? formatNumber(trade.quantity, { maximumFractionDigits: 8 }) : "—"}</td><td className="px-3 py-3 text-right tabular-nums">{money(tradeAmount(trade))}</td><td className={`px-5 py-3 text-right tabular-nums ${realizedProfit > 0 ? "text-[var(--color-success)]" : realizedProfit < 0 ? "text-[var(--color-danger)]" : "text-[var(--muted)]"}`}>{trade.tradeType === "매도" ? money(realizedProfit) : "—"}</td></tr>;
+}
+
+function TradeHistoryCard({ trade, realizedProfit, formatDate, formatNumber, t }: TradeHistoryProps) {
+  const money = (value: number) => formatNumber(value, { style: "currency", currency: trade.currency, maximumFractionDigits: trade.currency === "KRW" || trade.currency === "JPY" ? 0 : 2 });
+  return <article className="p-4"><div className="flex items-center justify-between gap-3"><TradeTypeBadge type={trade.tradeType} t={t} /><time className="text-xs text-[var(--muted)]">{formatDate(trade.tradedAt, { year: "numeric", month: "short", day: "numeric" })}</time></div><div className="mt-3 flex items-end justify-between gap-4"><div><p className="text-xs text-[var(--muted)]">{trade.accountName}</p><p className="mt-1 text-xs text-[var(--muted)]">{trade.tradeType === "매수" || trade.tradeType === "매도" ? `${formatNumber(trade.quantity, { maximumFractionDigits: 8 })} · ${money(trade.price)}` : t("가격/금액")}</p></div><div className="text-right"><p className="font-semibold tabular-nums">{money(tradeAmount(trade))}</p>{trade.tradeType === "매도" && <p className={`mt-1 text-xs tabular-nums ${realizedProfit >= 0 ? "text-[var(--color-success)]" : "text-[var(--color-danger)]"}`}>{t("실현손익")} {money(realizedProfit)}</p>}</div></div>{trade.memo && <p className="mt-3 line-clamp-2 text-xs text-[var(--muted)]">{trade.memo}</p>}</article>;
+}
+
+function TradeTypeBadge({ type, t }: { type: Trade["tradeType"]; t: ReturnType<typeof useI18n>["t"] }) {
+  const tone = type === "매수" || type === "입금" ? "bg-[var(--accent-soft)] text-[var(--accent)]" : type === "매도" || type === "출금" ? "bg-[var(--surface-muted)] text-[var(--color-lilac)]" : "bg-[var(--surface-muted)] text-[var(--muted)]";
+  return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${tone}`}>{t(type)}</span>;
 }
 
 function Info({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
