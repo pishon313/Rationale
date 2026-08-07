@@ -1,0 +1,82 @@
+/* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V4 */
+:root {
+  --color-paper: oklch(97.5% 0.012 170);
+  --color-paper-2: oklch(95% 0.018 170);
+  --color-paper-3: oklch(91.5% 0.024 172);
+  --color-surface: oklch(99% 0.008 170);
+  --color-ink: oklch(19% 0.025 245);
+  --color-ink-2: oklch(34% 0.025 235);
+  --color-muted: oklch(48% 0.025 220);
+  --color-rule: oklch(88% 0.018 175);
+  --color-rule-strong: oklch(78% 0.03 174);
+  --color-accent: oklch(55% 0.145 168);
+  --color-accent-hover: oklch(50% 0.15 168);
+  --color-accent-soft: oklch(92.5% 0.045 169);
+  --color-accent-ink: oklch(98% 0.008 170);
+  --color-focus: oklch(45% 0.17 166);
+  --color-lilac: oklch(67% 0.12 295);
+  --color-amber: oklch(72% 0.13 75);
+  --color-danger: oklch(56% 0.19 25);
+  --color-success: oklch(52% 0.13 155);
+
+  --font-display: var(--font-geist), ui-sans-serif, sans-serif;
+  --font-body: var(--font-geist), ui-sans-serif, sans-serif;
+  --font-wordmark: var(--font-bricolage), var(--font-geist), ui-sans-serif, sans-serif;
+
+  --space-3xs: 0.125rem;
+  --space-2xs: 0.25rem;
+  --space-xs: 0.5rem;
+  --space-sm: 0.75rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2.5rem;
+  --space-2xl: 4rem;
+  --space-3xl: 6rem;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-md: 1.125rem;
+  --text-lg: 1.375rem;
+  --text-xl: 1.75rem;
+  --text-2xl: 2.25rem;
+  --text-display: clamp(2rem, 3vw + 1rem, 3.5rem);
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro: 120ms;
+  --dur-short: 220ms;
+  --dur-long: 420ms;
+
+  --radius-control: 0.625rem;
+  --radius-card: 0.875rem;
+  --radius-panel: 1.125rem;
+  --radius-pill: 999px;
+  --rule-thin: 1px;
+  --shadow-whisper: 0 1px 2px oklch(19% 0.025 245 / 0.06);
+  --shadow-floating: 0 0.75rem 2rem oklch(19% 0.025 245 / 0.14);
+}
+
+.dark {
+  --color-paper: oklch(14.5% 0.022 230);
+  --color-paper-2: oklch(18% 0.025 225);
+  --color-paper-3: oklch(22% 0.028 220);
+  --color-surface: oklch(19.5% 0.024 225);
+  --color-ink: oklch(94% 0.014 170);
+  --color-ink-2: oklch(81% 0.02 175);
+  --color-muted: oklch(69% 0.024 190);
+  --color-rule: oklch(29% 0.027 218);
+  --color-rule-strong: oklch(40% 0.04 205);
+  --color-accent: oklch(76% 0.13 166);
+  --color-accent-hover: oklch(81% 0.12 166);
+  --color-accent-soft: oklch(25% 0.052 168);
+  --color-accent-ink: oklch(16% 0.025 225);
+  --color-focus: oklch(80% 0.15 166);
+  --color-lilac: oklch(75% 0.11 295);
+  --color-amber: oklch(79% 0.12 75);
+  --color-danger: oklch(72% 0.16 25);
+  --color-success: oklch(74% 0.12 155);
+  --shadow-whisper: 0 1px 2px oklch(5% 0.02 230 / 0.32);
+  --shadow-floating: 0 0.75rem 2rem oklch(5% 0.02 230 / 0.42);
+}

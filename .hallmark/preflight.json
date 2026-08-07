@@ -1,0 +1,8 @@
+{
+  "date": "2026-08-07",
+  "framework": "Next.js 16 / React 19 / Tailwind CSS 4",
+  "font": "Arial and Helvetica before redesign",
+  "palette": "legacy CSS variables with light and dark modes",
+  "motion": "motion-cut",
+  "spacing": "Tailwind default scale"
+}

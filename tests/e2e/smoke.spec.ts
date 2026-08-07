@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("대시보드 앱 셸을 표시한다", async ({ page }) => {
   await page.goto("/dashboard");
-  await expect(page.getByRole("heading", { level: 1 })).toContainText("오늘의 판단");
+  await expect(page.getByRole("heading", { level: 1 })).toContainText("오늘 판단할 일을 먼저 봅니다.");
   await expect(page.getByRole("navigation", { name: "주요 메뉴" })).toBeVisible();
 });
 
@@ -42,7 +42,7 @@ test("빈 종목 목록에서 새 종목을 등록하고 상세로 이동한다"
   await dialog.getByLabel("종목명").fill("테스트 종목");
   await dialog.getByRole("button", { name: "종목 추가" }).click();
   await page.getByRole("link", { name: /테스트 종목/ }).first().click();
-  await expect(page.getByRole("heading", { name: "테스트 종목" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "테스트 종목", exact: true })).toBeVisible();
 });
 
 test("매수 계획의 테이블과 칸반 보기를 전환한다", async ({ page }) => {
