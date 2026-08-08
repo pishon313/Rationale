@@ -15,6 +15,7 @@ import { StockForm } from "./stock-form";
 import { useStockStore } from "./use-stock-store";
 import { withComputed } from "./types";
 import type { InvestmentAccount } from "@/features/accounts/types";
+import type { StockAccountHolding } from "./stock-account-holdings";
 
 export function StockDetailClient({ stockId }: { stockId: string }) {
   const { t, formatDate, formatNumber } = useI18n();
@@ -69,7 +70,7 @@ export function StockDetailClient({ stockId }: { stockId: string }) {
     </section>
     <section className="mt-4 rounded-xl border bg-[var(--surface)] p-5">
       <div className="flex items-center gap-2"><WalletCards size={18} className="text-[var(--accent)]" /><h2 className="font-semibold">{t("보유 계좌")}</h2></div>
-      {holdings.length ? <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{holdings.map((holding) => <article key={holding.accountId} className="rounded-lg bg-[var(--surface-muted)] p-4"><p className="font-medium">{holding.accountName}</p><dl className="mt-3 grid grid-cols-2 gap-3 text-sm"><div><dt className="text-xs text-[var(--muted)]">{t("보유 수량")}</dt><dd className="mt-1 tabular-nums">{formatNumber(holding.quantity, { maximumFractionDigits: 8 })}</dd></div><div><dt className="text-xs text-[var(--muted)]">{t("평균단가")}</dt><dd className="mt-1 tabular-nums">{price(holding.averagePrice)}</dd></div></dl></article>)}</div> : <p className="mt-4 text-sm text-[var(--muted)]">{t("현재 보유 계좌가 없습니다.")}</p>}
+      {holdings.length ? <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{holdings.map((holding) => <article key={`${holding.accountId}:${holding.currency}`} className="rounded-lg bg-[var(--surface-muted)] p-4"><p className="font-medium">{holding.accountName}</p><dl className="mt-3 grid grid-cols-2 gap-3 text-sm"><div><dt className="text-xs text-[var(--muted)]">{t("보유 수량")}</dt><dd className="mt-1 tabular-nums">{formatNumber(holding.quantity, { maximumFractionDigits: 8 })}</dd></div><div><dt className="text-xs text-[var(--muted)]">{t("평균단가")}</dt><dd className="mt-1 tabular-nums">{formatHoldingAveragePrice(holding, formatNumber)}</dd></div></dl></article>)}</div> : <p className="mt-4 text-sm text-[var(--muted)]">{t("현재 보유 계좌가 없습니다.")}</p>}
     </section>
     <section className="mt-4 overflow-hidden rounded-xl border bg-[var(--surface)]">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4"><div className="flex items-center gap-2"><WalletCards size={18} className="text-[var(--accent)]" /><h2 className="font-semibold">{stock.name} · {t("매매 기록")}</h2><span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-xs text-[var(--muted)]">{formatNumber(stockTrades.length)}</span></div><Link href="/trades" className="rounded-md px-2 py-2 text-xs text-[var(--accent)]">{t("매매 원장")}</Link></div>
@@ -114,6 +115,11 @@ function TradeHistoryCard({ trade, accountName, realizedProfit, formatDate, form
 
 export function currentTradeAccountName(trade: Trade, accountsById: Map<string, InvestmentAccount>) {
   return (trade.accountId ? accountsById.get(trade.accountId)?.name : undefined) ?? trade.accountName;
+}
+
+export function formatHoldingAveragePrice(holding: Pick<StockAccountHolding, "averagePrice" | "currency">, formatNumber: ReturnType<typeof useI18n>["formatNumber"]) {
+  const fractionDigits = holding.currency === "KRW" || holding.currency === "JPY" ? 0 : 2;
+  return formatNumber(holding.averagePrice, { style: "currency", currency: holding.currency, minimumFractionDigits: fractionDigits, maximumFractionDigits: fractionDigits });
 }
 
 function TradeTypeBadge({ type, t }: { type: Trade["tradeType"]; t: ReturnType<typeof useI18n>["t"] }) {

@@ -33,7 +33,7 @@ export function StockTable({ stocks, accountHoldingsByStockId, onEdit, onDelete 
       { accessorKey: "name", header: t("종목"), cell: ({ row }) => <Link href={`/stocks/detail?id=${row.original.id}`} className="block min-w-36"><span className="font-medium hover:text-[var(--accent)]">{row.original.name}</span><span className="mt-0.5 block text-xs text-[var(--muted)]">{row.original.ticker} · {t(row.original.market)}</span></Link> },
       { accessorKey: "status", header: t("상태"), cell: ({ getValue }) => <span className="whitespace-nowrap rounded-full bg-[var(--accent-soft)] px-2.5 py-1 text-xs font-medium text-[var(--accent)]">{t(getValue<string>())}</span> },
       { id: "accountHoldings", header: t("보유 계좌"), cell: ({ row }) => {
-        const names = (accountHoldingsByStockId.get(row.original.id) ?? []).map((holding) => holding.accountName);
+        const names = stockHoldingAccountNames(accountHoldingsByStockId.get(row.original.id) ?? []);
         const fullNames = names.join(" · ");
         return <span title={fullNames || undefined} aria-label={names.length ? t("보유 계좌: {accounts}", { accounts: fullNames }) : t("현재 보유 계좌가 없습니다.")} className="block max-w-40 truncate">{formatStockAccountSummary(names, t)}</span>;
       } },
@@ -58,6 +58,12 @@ export function formatStockAccountSummary(names: string[], t: ReturnType<typeof 
   if (names.length === 0) return "—";
   if (names.length === 1) return names[0];
   return t("{name} 외 {count}", { name: names[0], count: names.length - 1 });
+}
+
+export function stockHoldingAccountNames(holdings: StockAccountHolding[]) {
+  const names = new Map<string, string>();
+  for (const holding of holdings) if (!names.has(holding.accountId)) names.set(holding.accountId, holding.accountName);
+  return [...names.values()];
 }
 
 function Numeric({ children, strong }: { children: React.ReactNode; strong?: boolean }) { return <span className={`block text-right tabular-nums ${strong ? "font-medium" : ""}`}>{children}</span>; }
