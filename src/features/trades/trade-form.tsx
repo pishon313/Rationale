@@ -138,6 +138,10 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, openi
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (saving) return;
+    if (trade?.cashFlowKind === "transfer") {
+      setLocalError("계좌 간 이체는 이체 전용 화면에서 수정해 주세요.");
+      return;
+    }
     setLocalError("");
     if (!selectedAccount) {
       setLocalError("계좌를 추가하거나 선택해 주세요.");

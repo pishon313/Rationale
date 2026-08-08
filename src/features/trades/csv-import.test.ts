@@ -36,6 +36,29 @@ describe("CSV import", () => {
     expect(result.trades).toHaveLength(0); expect(result.errors[0].message).toContain("등록되지 않은 계좌");
   });
 
+  it("동일한 이름의 계좌를 첫 번째 항목으로 자동 선택하지 않는다", () => {
+    const duplicate = { ...accounts[0], id: "account-2", isDefault: false };
+    const parsed = parseCsv("거래일,종목코드,구분,수량,가격,계좌명\n2026-08-01,005930,매수,1,70000,기본 계좌");
+    const result = convertCsvRows(parsed, detectCsvMapping(parsed.headers), stocks, [], { accounts: [...accounts, duplicate] });
+    expect(result.trades).toHaveLength(0);
+    expect(result.errors[0].message).toContain("동일한 이름의 계좌가 여러 개");
+  });
+
+  it("고유한 CSV 계좌명을 정확한 accountId로 연결한다", () => {
+    const parsed = parseCsv("거래일,종목코드,구분,수량,가격,계좌명\n2026-08-01,005930,매수,1,70000,기본 계좌");
+    const result = convertCsvRows(parsed, detectCsvMapping(parsed.headers), stocks, [], { accounts });
+    expect(result.errors).toHaveLength(0);
+    expect(result.trades[0]).toMatchObject({ accountId: "account-1", accountName: "기본 계좌" });
+  });
+
+  it("계좌 열이 없을 때 보관된 target account를 거부한다", () => {
+    const archived = [{ ...accounts[0], archivedAt: "2026-08-02T00:00:00.000Z" }];
+    const parsed = parseCsv("거래일,종목코드,구분,수량,가격\n2026-08-01,005930,매수,1,70000");
+    const result = convertCsvRows(parsed, detectCsvMapping(parsed.headers), stocks, [], { accounts: archived, targetAccountId: "account-1" });
+    expect(result.trades).toHaveLength(0);
+    expect(result.errors[0].message).toContain("대상 계좌를 선택");
+  });
+
   it("소수 쉼표와 미국·유럽식 천 단위 표기를 안전하게 숫자로 바꾼다", () => {
     const parsed = parseCsv([
       "거래일;종목코드;구분;수량;가격;수수료",

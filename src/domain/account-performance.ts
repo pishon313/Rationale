@@ -11,6 +11,8 @@ export type AccountPerformance = {
   marketValueKrw: number;
   totalAssetsKrw: number;
   netContributionsKrw: number;
+  reconciliationAdjustmentKrw: number;
+  performanceBasisKrw: number;
   totalProfitKrw: number;
   totalReturnPercent: number | null;
   xirrPercent: number | null;
@@ -49,18 +51,23 @@ function buildAccount(accountId: string, accountName: string, trades: Trade[], s
   }
   const totalAssetsKrw = cashKrw + marketValueKrw;
   const accountTrades = trades.filter((trade) => accountIdentity(trade) === accountId);
-  const flows = contributionFlows(accountTrades, false);
+  const flows = contributionFlows(accountTrades, false, false);
+  const xirrFlows = contributionFlows(accountTrades, false, true);
   const netContributionsKrw = normalizeZero(-flows.reduce((sum, flow) => sum + flow.amount, 0));
-  const totalProfitKrw = totalAssetsKrw - netContributionsKrw;
+  const reconciliationAdjustmentKrw = reconciliationAdjustment(accountTrades);
+  const performanceBasisKrw = netContributionsKrw + reconciliationAdjustmentKrw;
+  const totalProfitKrw = totalAssetsKrw - performanceBasisKrw;
   return {
     accountId, accountName,
     cashKrw,
     marketValueKrw,
     totalAssetsKrw,
     netContributionsKrw,
+    reconciliationAdjustmentKrw,
+    performanceBasisKrw,
     totalProfitKrw,
     totalReturnPercent: netContributionsKrw > 0 ? totalProfitKrw / netContributionsKrw * 100 : null,
-    xirrPercent: calculateXirr([...flows, { date: asOf, amount: totalAssetsKrw }]),
+    xirrPercent: flows.length ? calculateXirr([...xirrFlows, { date: asOf, amount: totalAssetsKrw }]) : null,
     unpricedPositionCount,
   };
 }
@@ -69,27 +76,33 @@ function aggregateAccounts(accounts: AccountPerformance[], trades: Trade[], ledg
   const cashKrw = sum(accounts.map((account) => account.cashKrw));
   const marketValueKrw = sum(accounts.map((account) => account.marketValueKrw));
   const totalAssetsKrw = cashKrw + marketValueKrw;
-  const flows = contributionFlows(trades.filter((trade) => !ledger.calculations[trade.id]?.error), true);
+  const eligibleTrades = trades.filter((trade) => !ledger.calculations[trade.id]?.error);
+  const flows = contributionFlows(eligibleTrades, true, false);
+  const xirrFlows = contributionFlows(eligibleTrades, true, true);
   const netContributionsKrw = normalizeZero(-sum(flows.map((flow) => flow.amount)));
-  const totalProfitKrw = totalAssetsKrw - netContributionsKrw;
+  const reconciliationAdjustmentKrw = reconciliationAdjustment(eligibleTrades);
+  const performanceBasisKrw = netContributionsKrw + reconciliationAdjustmentKrw;
+  const totalProfitKrw = totalAssetsKrw - performanceBasisKrw;
   return {
     cashKrw,
     marketValueKrw,
     totalAssetsKrw,
     netContributionsKrw,
+    reconciliationAdjustmentKrw,
+    performanceBasisKrw,
     totalProfitKrw,
     totalReturnPercent: netContributionsKrw > 0 ? totalProfitKrw / netContributionsKrw * 100 : null,
-    xirrPercent: calculateXirr([...flows, { date: asOf, amount: totalAssetsKrw }]),
+    xirrPercent: flows.length ? calculateXirr([...xirrFlows, { date: asOf, amount: totalAssetsKrw }]) : null,
     unpricedPositionCount: sum(accounts.map((account) => account.unpricedPositionCount)),
   };
 }
 
-function contributionFlows(trades: Trade[], aggregate: boolean): CashFlow[] {
+function contributionFlows(trades: Trade[], aggregate: boolean, includeReconciliation: boolean): CashFlow[] {
   return trades.flatMap((trade) => {
     const date = new Date(trade.tradedAt);
     if (!Number.isFinite(date.getTime())) return [];
     const kind = trade.cashFlowKind ?? (trade.isOpeningPosition ? "opening" : "external");
-    if (kind === "reconciliation" || aggregate && kind === "transfer") return [];
+    if (kind === "reconciliation" && !includeReconciliation || aggregate && kind === "transfer") return [];
     if (trade.tradeType === "입금") return [{ date, amount: -(trade.amount ?? 0) * trade.exchangeRate }];
     if (trade.tradeType === "출금") return [{ date, amount: (trade.amount ?? 0) * trade.exchangeRate }];
     if (trade.isOpeningPosition && trade.tradeType === "매수") {
@@ -97,6 +110,16 @@ function contributionFlows(trades: Trade[], aggregate: boolean): CashFlow[] {
     }
     return [];
   });
+}
+
+function reconciliationAdjustment(trades: Trade[]) {
+  return normalizeZero(trades.reduce((total, trade) => {
+    if (trade.cashFlowKind !== "reconciliation") return total;
+    const amountKrw = (trade.amount ?? 0) * trade.exchangeRate;
+    if (trade.tradeType === "입금") return total + amountKrw;
+    if (trade.tradeType === "출금") return total - amountKrw;
+    return total;
+  }, 0));
 }
 
 export function calculateXirr(flows: CashFlow[]): number | null {

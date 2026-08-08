@@ -8,6 +8,7 @@ import { currencies, investmentTypes, markets, stockStatuses, stockViews, type S
 import { tradeTypes, type Trade } from "@/features/trades/types";
 import { accountKinds } from "@/features/accounts/types";
 import type { InvestmentAccount } from "@/features/accounts/types";
+import { validateTransferPairs } from "@/features/accounts/account-transfer";
 import { isLocale, type Locale } from "@/i18n/types";
 
 export type DashboardNoteBackup = { id: string; content: string; updatedAt: string };
@@ -98,6 +99,7 @@ export function validateBackupPayload(value: unknown): ValidatedBackup {
       accounts.forEach(validateAccountRecord);
       if (!dashboardNotes || !earningsEvents || value.displayCurrency === undefined) throw new Error("Version 5 백업의 설정 데이터가 완전하지 않습니다.");
       validateAccountReferences(accounts, trades);
+      validateTransferPairs(trades as Trade[]);
       return {
         version: 5,
         ...core,

@@ -140,12 +140,17 @@ export function convertCsvRows(parsed: ParsedCsv, mapping: CsvMapping, stocks: S
       const exchangeRate = currency === "KRW" ? 1 : optionalNumber(value(row, mapping.exchangeRate)) || fallbackRatesToKrw[currency];
       const now = new Date().toISOString();
       const importedAccountName = value(row, mapping.accountName);
-      const account = accountOptions
-        ? (importedAccountName
-          ? accountOptions.accounts.find((item) => item.name.trim() === importedAccountName.trim())
-          : accountOptions.accounts.find((item) => item.id === accountOptions.targetAccountId))
-        : undefined;
-      if (accountOptions && !account) throw new Error(importedAccountName ? `등록되지 않은 계좌입니다: ${importedAccountName}` : "가져올 대상 계좌를 선택해 주세요.");
+      let account: InvestmentAccount | undefined;
+      if (accountOptions && importedAccountName) {
+        const matches = accountOptions.accounts.filter((item) => item.name.trim() === importedAccountName.trim());
+        if (matches.length > 1) throw new Error(`동일한 이름의 계좌가 여러 개 있습니다: ${importedAccountName}`);
+        if (!matches.length) throw new Error(`등록되지 않은 계좌입니다: ${importedAccountName}`);
+        if (matches[0].archivedAt) throw new Error(`보관된 계좌로는 가져올 수 없습니다: ${importedAccountName}`);
+        account = matches[0];
+      } else if (accountOptions) {
+        account = accountOptions.accounts.find((item) => item.id === accountOptions.targetAccountId && !item.archivedAt);
+        if (!account) throw new Error("가져올 대상 계좌를 선택해 주세요.");
+      }
       const accountName = account?.name ?? (importedAccountName || "파일 가져오기");
       const trade: Trade = { id: csvId(row, index), stockId: stock.id, stockName: stock.name, planId: null, tradeType, tradedAt, quantity, price, currency, exchangeRate, fee: optionalNumber(value(row, mapping.fee)), tax: optionalNumber(value(row, mapping.tax)), accountId: account?.id, accountName, memo: "증권사 거래 내역 가져오기", emotion: "평온", emotionIntensity: 1, confidenceScore: 3, ruleComplianceScore: 3, ruleViolations: [], createdAt: now, updatedAt: now, deletedAt: null };
       const key = fingerprint(trade);

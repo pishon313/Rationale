@@ -95,6 +95,15 @@ describe("TradeForm", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("매도 수량이 보유 수량을 초과합니다.");
   });
 
+  it("일반 매매 폼에서 이체 기록 수정을 차단한다", () => {
+    const onSave = vi.fn();
+    const trade = { ...sampleTrades[0], stockId: null, stockName: "", tradeType: "출금" as const, quantity: 0, price: 0, amount: 100, cashFlowKind: "transfer" as const, transferId: "pair" };
+    render(<TradeForm trade={trade} stocks={sampleStocks} plans={samplePlans} rules={sampleRules} ledger={buildTradingLedger([])} onCancel={vi.fn()} onSave={onSave} />);
+    fireEvent.click(screen.getByRole("button", { name: "변경 저장" }));
+    expect(onSave).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("이체 전용 화면");
+  });
+
   it("저장이 끝날 때까지 제출 버튼을 잠가 중복 저장을 막는다", async () => {
     let finishSave = () => {};
     const onSave = vi.fn(() => new Promise<void>((resolve) => { finishSave = resolve; }));

@@ -23,18 +23,24 @@ export function AccountsPageClient() {
   const rates = useExchangeRates(); const { displayCurrency } = useCurrencyPreference();
   const [editing, setEditing] = useState<InvestmentAccount | "new" | null>(null);
   const [mergeSource, setMergeSource] = useState("");
+  const [message, setMessage] = useState("");
   const ledger = useMemo(() => buildTradingLedger(trades, accounts), [accounts, trades]);
   const performance = useMemo(() => buildLongTermPerformance(trades, stocks, ledger, rates.snapshot.ratesToKrw, new Date(), accounts), [accounts, ledger, rates.snapshot.ratesToKrw, stocks, trades]);
   const money = (value: number) => formatCurrency(fromKrw(value, displayCurrency, rates.snapshot.ratesToKrw), displayCurrency, localeTag);
 
   async function save(account: InvestmentAccount) { await replaceAsync(withSingleDefault(accounts, account)); setEditing(null); }
-  async function archive(id: string) { if (window.confirm(t("이 계좌를 보관할까요? 과거 기록과 분석은 유지됩니다."))) await replaceAsync(archiveAccount(accounts, id)); }
+  async function archive(id: string) {
+    if (!window.confirm(t("이 계좌를 보관할까요? 과거 기록과 분석은 유지됩니다."))) return;
+    try { await replaceAsync(archiveAccount(accounts, id, ledger)); setMessage(""); }
+    catch (error) { setMessage(error instanceof Error ? error.message : "계좌를 보관할 수 없습니다."); }
+  }
   async function merge(target: string) {
     if (!window.confirm(t("선택한 계좌의 모든 거래를 대상 계좌로 이동할까요?"))) return;
     await mergeAccounts(accounts, trades, mergeSource, target); window.location.reload();
   }
   return <>
     <div className="flex items-end justify-between gap-3"><div><p className="text-sm text-[var(--muted)]">{t("계좌 identity와 metadata 관리")}</p><h1 className="mt-1 text-2xl font-semibold">{t("계좌")}</h1></div><button onClick={() => setEditing("new")} className="flex items-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm text-white"><Plus size={17}/>{t("계좌 추가")}</button></div>
+    {message && <div role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-200">{t(message)}</div>}
     <div className="mt-6 grid gap-4 lg:grid-cols-2">{accounts.map((account) => { const item = performance.accounts.find((value) => value.accountId === account.id); return <article key={account.id} className="rounded-xl border bg-[var(--surface)] p-5"><div className="flex justify-between gap-3"><div><Link className="text-lg font-semibold hover:text-[var(--accent)]" href={`/accounts/detail?id=${encodeURIComponent(account.id)}`}>{account.name}</Link><p className="mt-1 text-xs text-[var(--muted)]">{account.institution || t("기관 미입력")} · {t(account.kind)}{account.subtype ? ` · ${account.subtype}` : ""}{account.isDefault ? ` · ${t("기본 계좌")}` : ""}{account.archivedAt ? ` · ${t("보관됨")}` : ""}</p></div><div className="flex gap-2"><button aria-label={t("수정")} onClick={() => setEditing(account)}><Pencil size={16}/></button>{!account.archivedAt && <button aria-label={t("보관")} onClick={() => void archive(account.id)}><Archive size={16}/></button>}</div></div><dl className="mt-5 grid grid-cols-2 gap-3 text-sm"><Metric label={t("총자산")} value={money(item?.totalAssetsKrw ?? 0)}/><Metric label={t("현금")} value={money(item?.cashKrw ?? 0)}/><Metric label={t("총손익")} value={money(item?.totalProfitKrw ?? 0)}/><Metric label={t("수익률")} value={item?.totalReturnPercent == null ? "—" : formatNumber(item.totalReturnPercent / 100, {style:"percent", maximumFractionDigits:1})}/></dl>{!account.archivedAt && accounts.filter((candidate) => !candidate.archivedAt && candidate.id !== account.id).length > 0 && <div className="mt-4 flex gap-2"><button className="text-xs text-[var(--muted)] underline" onClick={() => setMergeSource(account.id)}>{t("다른 계좌로 병합")}</button>{mergeSource === account.id && <select aria-label={t("병합 대상 계좌")} defaultValue="" onChange={(event) => event.target.value && void merge(event.target.value)} className="h-8 rounded border bg-[var(--surface)] px-2 text-xs"><option value="">{t("대상 선택")}</option>{accounts.filter((candidate) => !candidate.archivedAt && candidate.id !== account.id).map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}</select>}</div>}</article>})}{ready && !accounts.length && <p className="rounded-xl border p-8 text-center text-sm text-[var(--muted)]">{t("계좌를 추가해 주세요. 0원 계좌도 만들 수 있습니다.")}</p>}</div>
     {editing && <AccountForm account={editing === "new" ? undefined : editing} hasDefault={accounts.some((a) => !a.archivedAt && a.isDefault)} onCancel={() => setEditing(null)} onSave={save}/>} </>;
 }

@@ -10,6 +10,7 @@ import { sampleTrades } from "@/features/trades/sample-data";
 import { fallbackLanguagePreference } from "@/i18n/i18n-provider";
 import { validateBackupPayload } from "./backup";
 import { migrateLegacyAccounts } from "@/features/accounts/migrate-accounts";
+import { buildAccountTransfer } from "@/features/accounts/account-transfer";
 import { backupCounts, backupWrites, restoreBackup, snapshotWrite, type BackupV5 } from "./backup-service";
 
 const repositoryMocks = vi.hoisted(() => ({ saveCollectionsAtomically: vi.fn() }));
@@ -87,6 +88,17 @@ describe("validateBackupPayload", () => {
   it("rejects a version 5 trade that references an unknown account", () => {
     const backup = version5();
     expect(() => validateBackupPayload({ ...backup, trades: backup.trades.map((trade, index) => index === 0 ? { ...trade, accountId: "missing" } : trade) })).toThrow("존재하지 않는 계좌");
+  });
+
+  it("rejects broken transfer pairs in version 5 backups", () => {
+    const backup = version5();
+    const second = { ...backup.accounts[0], id: "second-account", name: "Second", isDefault: false };
+    const accounts = [...backup.accounts, second];
+    const pair = buildAccountTransfer(accounts, { sourceAccountId: accounts[0].id, targetAccountId: second.id, amount: 100, currency: "KRW", tradedAt: valid.exportedAt, memo: "" }, valid.exportedAt, "transfer-test");
+    expect(() => validateBackupPayload({ ...backup, accounts, trades: [...backup.trades, pair[0]] })).toThrow("두 건");
+    expect(() => validateBackupPayload({ ...backup, accounts, trades: [...backup.trades, pair[0], { ...pair[1], amount: 101 }] })).toThrow("일치");
+    expect(() => validateBackupPayload({ ...backup, accounts, trades: [...backup.trades, pair[0], { ...pair[1], currency: "USD", exchangeRate: 1400 }] })).toThrow("일치");
+    expect(validateBackupPayload({ ...backup, accounts, trades: [...backup.trades, ...pair] }).version).toBe(5);
   });
 
   it("rejects duplicate record IDs before restore", () => {
