@@ -8,21 +8,21 @@ import type { Observation } from "@/features/observations/types";
 import { ReviewForm } from "@/features/reviews/reviews-page-client";
 import type { Review } from "@/features/reviews/types";
 import type { Trade } from "@/features/trades/types";
-import { buildTradingLedger, tradeAmount } from "@/domain/trading-ledger";
+import { tradeAmount } from "@/domain/trading-ledger";
 import { useI18n } from "@/i18n/i18n-provider";
 import { useLocalCollection } from "@/lib/use-local-collection";
 import { StockForm } from "./stock-form";
 import { useStockStore } from "./use-stock-store";
 import { withComputed } from "./types";
 import type { InvestmentAccount } from "@/features/accounts/types";
+import type { StockAccountHolding } from "./stock-account-holdings";
 
 export function StockDetailClient({ stockId }: { stockId: string }) {
   const { t, formatDate, formatNumber } = useI18n();
-  const { stocks, ready, updateStock } = useStockStore();
+  const { stocks, accounts, ledger, accountHoldingsByStockId, ready, updateStock } = useStockStore();
   const observations = useLocalCollection<Observation>("observations", []);
   const reviews = useLocalCollection<Review>("reviews", []);
   const trades = useLocalCollection<Trade>("trades", []);
-  const accounts = useLocalCollection<InvestmentAccount>("accounts", []);
   const [editing, setEditing] = useState(false);
   const [observing, setObserving] = useState(false);
   const [reviewing, setReviewing] = useState(false);
@@ -52,8 +52,9 @@ export function StockDetailClient({ stockId }: { stockId: string }) {
   const stockObservations = observations.items.filter((observation) => observation.stockId === stock.id).sort((a, b) => b.observedAt.localeCompare(a.observedAt));
   const stockReviews = reviews.items.filter((review) => review.stockId === stock.id).sort((a, b) => b.reviewedAt.localeCompare(a.reviewedAt));
   const activeTrades = trades.allItems.filter((trade) => !trade.deletedAt);
-  const ledger = buildTradingLedger(activeTrades, accounts.items);
   const stockTrades = activeTrades.filter((trade) => trade.stockId === stock.id).sort((a, b) => b.tradedAt.localeCompare(a.tradedAt));
+  const holdings = accountHoldingsByStockId.get(stock.id) ?? [];
+  const accountsById = new Map(accounts.map((account) => [account.id, account]));
 
   return <>
     <Link href="/stocks" className="inline-flex items-center gap-1.5 text-sm text-[var(--muted)]"><ArrowLeft size={16} />{t("종목 목록")}</Link>
@@ -67,11 +68,15 @@ export function StockDetailClient({ stockId }: { stockId: string }) {
       <p className="mt-4 whitespace-pre-wrap text-sm leading-7">{stock.thesisSummary || t("아직 작성된 투자 아이디어가 없습니다.")}</p>
       <div className="mt-6 grid gap-5 border-t pt-5 sm:grid-cols-2 lg:grid-cols-3"><Info icon={<TrendingUp size={17} />} label={t("현재 판단")} value={t(stock.currentView)} /><Info icon={<Target size={17} />} label={t("목표 가격")} value={stock.targetPrice ? price(stock.targetPrice) : t("미설정")} /><Info icon={<CalendarDays size={17} />} label={t("다음 검토일")} value={date(stock.nextReviewDate)} /><Info icon={<CalendarClock size={17} />} label={t("다음 실적 발표일")} value={date(stock.nextEarningsDate)} /><Info icon={<MessageSquareText size={17} />} label={t("판단 메모")} value={stock.currentViewMemo || t("메모 없음")} /></div>
     </section>
+    <section className="mt-4 rounded-xl border bg-[var(--surface)] p-5">
+      <div className="flex items-center gap-2"><WalletCards size={18} className="text-[var(--accent)]" /><h2 className="font-semibold">{t("보유 계좌")}</h2></div>
+      {holdings.length ? <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{holdings.map((holding) => <article key={`${holding.accountId}:${holding.currency}`} className="rounded-lg bg-[var(--surface-muted)] p-4"><p className="font-medium">{holding.accountName}</p><dl className="mt-3 grid grid-cols-2 gap-3 text-sm"><div><dt className="text-xs text-[var(--muted)]">{t("보유 수량")}</dt><dd className="mt-1 tabular-nums">{formatNumber(holding.quantity, { maximumFractionDigits: 8 })}</dd></div><div><dt className="text-xs text-[var(--muted)]">{t("평균단가")}</dt><dd className="mt-1 tabular-nums">{formatHoldingAveragePrice(holding, formatNumber)}</dd></div></dl></article>)}</div> : <p className="mt-4 text-sm text-[var(--muted)]">{t("현재 보유 계좌가 없습니다.")}</p>}
+    </section>
     <section className="mt-4 overflow-hidden rounded-xl border bg-[var(--surface)]">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4"><div className="flex items-center gap-2"><WalletCards size={18} className="text-[var(--accent)]" /><h2 className="font-semibold">{stock.name} · {t("매매 기록")}</h2><span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-xs text-[var(--muted)]">{formatNumber(stockTrades.length)}</span></div><Link href="/trades" className="rounded-md px-2 py-2 text-xs text-[var(--accent)]">{t("매매 원장")}</Link></div>
       {stockTrades.length ? <>
-        <div className="hidden overflow-x-auto md:block"><table className="w-full min-w-[720px] text-left text-sm"><thead className="bg-[var(--surface-muted)] text-xs text-[var(--muted)]"><tr><th className="px-5 py-3 font-medium">{t("일시")}</th><th className="px-3 py-3 font-medium">{t("유형")}</th><th className="px-3 py-3 font-medium">{t("계좌")}</th><th className="px-3 py-3 text-right font-medium">{t("수량")}</th><th className="px-3 py-3 text-right font-medium">{t("가격/금액")}</th><th className="px-5 py-3 text-right font-medium">{t("실현손익")}</th></tr></thead><tbody>{stockTrades.map((trade) => <TradeHistoryRow key={trade.id} trade={trade} realizedProfit={ledger.calculations[trade.id]?.realizedProfit ?? 0} formatDate={formatDate} formatNumber={formatNumber} t={t} />)}</tbody></table></div>
-        <div className="divide-y md:hidden">{stockTrades.map((trade) => <TradeHistoryCard key={trade.id} trade={trade} realizedProfit={ledger.calculations[trade.id]?.realizedProfit ?? 0} formatDate={formatDate} formatNumber={formatNumber} t={t} />)}</div>
+        <div className="hidden overflow-x-auto md:block"><table className="w-full min-w-[720px] text-left text-sm"><thead className="bg-[var(--surface-muted)] text-xs text-[var(--muted)]"><tr><th className="px-5 py-3 font-medium">{t("일시")}</th><th className="px-3 py-3 font-medium">{t("유형")}</th><th className="px-3 py-3 font-medium">{t("계좌")}</th><th className="px-3 py-3 text-right font-medium">{t("수량")}</th><th className="px-3 py-3 text-right font-medium">{t("가격/금액")}</th><th className="px-5 py-3 text-right font-medium">{t("실현손익")}</th></tr></thead><tbody>{stockTrades.map((trade) => <TradeHistoryRow key={trade.id} trade={trade} accountName={currentTradeAccountName(trade, accountsById)} realizedProfit={ledger.calculations[trade.id]?.realizedProfit ?? 0} formatDate={formatDate} formatNumber={formatNumber} t={t} />)}</tbody></table></div>
+        <div className="divide-y md:hidden">{stockTrades.map((trade) => <TradeHistoryCard key={trade.id} trade={trade} accountName={currentTradeAccountName(trade, accountsById)} realizedProfit={ledger.calculations[trade.id]?.realizedProfit ?? 0} formatDate={formatDate} formatNumber={formatNumber} t={t} />)}</div>
       </> : <p className="px-5 py-10 text-center text-sm text-[var(--muted)]">{t("기록 없음")}</p>}
     </section>
     <section className="mt-4 rounded-xl border bg-[var(--surface)] p-5">
@@ -83,7 +88,7 @@ export function StockDetailClient({ stockId }: { stockId: string }) {
       <div className="mt-3 space-y-2">{stockReviews.slice(0, 5).map((review) => <article key={review.id} className="rounded-lg bg-[var(--surface-muted)] p-3"><div className="flex justify-between gap-3 text-sm"><b>{t(review.evaluation)}</b><span className="shrink-0 text-xs text-[var(--muted)]">{date(review.reviewedAt)}</span></div><p className="mt-2 line-clamp-2 text-sm text-[var(--muted)]">{review.lessons || review.result || t("작성된 요약이 없습니다.")}</p></article>)}{!stockReviews.length && <p className="py-5 text-center text-sm text-[var(--muted)]">{t("아직 이 종목에 연결된 회고가 없습니다.")}</p>}</div>
     </section>
     <section className="mt-4 rounded-xl border bg-[var(--surface)] p-5"><h2 className="font-semibold">{t("태그")}</h2><div className="mt-3 flex flex-wrap gap-2">{stock.tags.length ? stock.tags.map((tag) => <span key={tag} className="rounded-md bg-[var(--surface-muted)] px-2.5 py-1 text-xs">#{tag}</span>) : <span className="text-sm text-[var(--muted)]">{t("태그 없음")}</span>}</div></section>
-    {editing && <StockForm stock={stock} onCancel={() => setEditing(false)} onSave={(next) => { updateStock(next); setEditing(false); }} />}
+    {editing && <StockForm stock={stock} holdings={holdings} onCancel={() => setEditing(false)} onSave={(next) => { updateStock(next); setEditing(false); }} />}
     {observing && <ObservationForm stocks={stocks} initialStockId={stock.id} onCancel={() => setObserving(false)} onSave={(observation) => { observations.add(observation); setObserving(false); }} />}
     {reviewing && <ReviewForm stocks={stocks} initialStockId={stock.id} cancel={() => setReviewing(false)} save={(review) => { reviews.add(review); setReviewing(false); }} />}
   </>;
@@ -91,20 +96,30 @@ export function StockDetailClient({ stockId }: { stockId: string }) {
 
 type TradeHistoryProps = {
   trade: Trade;
+  accountName: string;
   realizedProfit: number;
   formatDate: ReturnType<typeof useI18n>["formatDate"];
   formatNumber: ReturnType<typeof useI18n>["formatNumber"];
   t: ReturnType<typeof useI18n>["t"];
 };
 
-function TradeHistoryRow({ trade, realizedProfit, formatDate, formatNumber, t }: TradeHistoryProps) {
+function TradeHistoryRow({ trade, accountName, realizedProfit, formatDate, formatNumber, t }: TradeHistoryProps) {
   const money = (value: number) => formatNumber(value, { style: "currency", currency: trade.currency, maximumFractionDigits: trade.currency === "KRW" || trade.currency === "JPY" ? 0 : 2 });
-  return <tr className="border-t first:border-t-0"><td className="whitespace-nowrap px-5 py-3 text-xs text-[var(--muted)]">{formatDate(trade.tradedAt, { year: "numeric", month: "short", day: "numeric" })}</td><td className="px-3 py-3"><TradeTypeBadge type={trade.tradeType} t={t} /></td><td className="px-3 py-3 text-[var(--muted)]">{trade.accountName}</td><td className="px-3 py-3 text-right tabular-nums">{trade.tradeType === "매수" || trade.tradeType === "매도" ? formatNumber(trade.quantity, { maximumFractionDigits: 8 }) : "—"}</td><td className="px-3 py-3 text-right tabular-nums">{money(tradeAmount(trade))}</td><td className={`px-5 py-3 text-right tabular-nums ${realizedProfit > 0 ? "text-[var(--color-success)]" : realizedProfit < 0 ? "text-[var(--color-danger)]" : "text-[var(--muted)]"}`}>{trade.tradeType === "매도" ? money(realizedProfit) : "—"}</td></tr>;
+  return <tr className="border-t first:border-t-0"><td className="whitespace-nowrap px-5 py-3 text-xs text-[var(--muted)]">{formatDate(trade.tradedAt, { year: "numeric", month: "short", day: "numeric" })}</td><td className="px-3 py-3"><TradeTypeBadge type={trade.tradeType} t={t} /></td><td className="px-3 py-3 text-[var(--muted)]">{accountName}</td><td className="px-3 py-3 text-right tabular-nums">{trade.tradeType === "매수" || trade.tradeType === "매도" ? formatNumber(trade.quantity, { maximumFractionDigits: 8 }) : "—"}</td><td className="px-3 py-3 text-right tabular-nums">{money(tradeAmount(trade))}</td><td className={`px-5 py-3 text-right tabular-nums ${realizedProfit > 0 ? "text-[var(--color-success)]" : realizedProfit < 0 ? "text-[var(--color-danger)]" : "text-[var(--muted)]"}`}>{trade.tradeType === "매도" ? money(realizedProfit) : "—"}</td></tr>;
 }
 
-function TradeHistoryCard({ trade, realizedProfit, formatDate, formatNumber, t }: TradeHistoryProps) {
+function TradeHistoryCard({ trade, accountName, realizedProfit, formatDate, formatNumber, t }: TradeHistoryProps) {
   const money = (value: number) => formatNumber(value, { style: "currency", currency: trade.currency, maximumFractionDigits: trade.currency === "KRW" || trade.currency === "JPY" ? 0 : 2 });
-  return <article className="p-4"><div className="flex items-center justify-between gap-3"><TradeTypeBadge type={trade.tradeType} t={t} /><time className="text-xs text-[var(--muted)]">{formatDate(trade.tradedAt, { year: "numeric", month: "short", day: "numeric" })}</time></div><div className="mt-3 flex items-end justify-between gap-4"><div><p className="text-xs text-[var(--muted)]">{trade.accountName}</p><p className="mt-1 text-xs text-[var(--muted)]">{trade.tradeType === "매수" || trade.tradeType === "매도" ? `${formatNumber(trade.quantity, { maximumFractionDigits: 8 })} · ${money(trade.price)}` : t("가격/금액")}</p></div><div className="text-right"><p className="font-semibold tabular-nums">{money(tradeAmount(trade))}</p>{trade.tradeType === "매도" && <p className={`mt-1 text-xs tabular-nums ${realizedProfit >= 0 ? "text-[var(--color-success)]" : "text-[var(--color-danger)]"}`}>{t("실현손익")} {money(realizedProfit)}</p>}</div></div>{trade.memo && <p className="mt-3 line-clamp-2 text-xs text-[var(--muted)]">{trade.memo}</p>}</article>;
+  return <article className="p-4"><div className="flex items-center justify-between gap-3"><TradeTypeBadge type={trade.tradeType} t={t} /><time className="text-xs text-[var(--muted)]">{formatDate(trade.tradedAt, { year: "numeric", month: "short", day: "numeric" })}</time></div><div className="mt-3 flex items-end justify-between gap-4"><div><p className="text-xs text-[var(--muted)]">{accountName}</p><p className="mt-1 text-xs text-[var(--muted)]">{trade.tradeType === "매수" || trade.tradeType === "매도" ? `${formatNumber(trade.quantity, { maximumFractionDigits: 8 })} · ${money(trade.price)}` : t("가격/금액")}</p></div><div className="text-right"><p className="font-semibold tabular-nums">{money(tradeAmount(trade))}</p>{trade.tradeType === "매도" && <p className={`mt-1 text-xs tabular-nums ${realizedProfit >= 0 ? "text-[var(--color-success)]" : "text-[var(--color-danger)]"}`}>{t("실현손익")} {money(realizedProfit)}</p>}</div></div>{trade.memo && <p className="mt-3 line-clamp-2 text-xs text-[var(--muted)]">{trade.memo}</p>}</article>;
+}
+
+export function currentTradeAccountName(trade: Trade, accountsById: Map<string, InvestmentAccount>) {
+  return (trade.accountId ? accountsById.get(trade.accountId)?.name : undefined) ?? trade.accountName;
+}
+
+export function formatHoldingAveragePrice(holding: Pick<StockAccountHolding, "averagePrice" | "currency">, formatNumber: ReturnType<typeof useI18n>["formatNumber"]) {
+  const fractionDigits = holding.currency === "KRW" || holding.currency === "JPY" ? 0 : 2;
+  return formatNumber(holding.averagePrice, { style: "currency", currency: holding.currency, minimumFractionDigits: fractionDigits, maximumFractionDigits: fractionDigits });
 }
 
 function TradeTypeBadge({ type, t }: { type: Trade["tradeType"]; t: ReturnType<typeof useI18n>["t"] }) {

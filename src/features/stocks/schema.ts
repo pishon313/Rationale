@@ -19,7 +19,6 @@ export const stockFormSchema = z.object({
   targetPrice: optionalNumber,
   averagePrice: z.coerce.number().nonnegative("0 이상의 값을 입력해 주세요."),
   quantity: z.coerce.number().nonnegative("0 이상의 값을 입력해 주세요."),
-  accountName: z.string().trim().min(1, "계좌명을 입력해 주세요.").max(100, "계좌명은 100자 이내로 입력해 주세요.").default("기본 계좌"),
   thesisSummary: z.string().trim().max(500),
   currentView: z.enum(stockViews),
   currentViewMemo: z.string().trim().max(1000),
