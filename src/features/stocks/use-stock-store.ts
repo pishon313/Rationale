@@ -15,9 +15,10 @@ export function useStockStore() {
   const projectedStocks = projectStocksFromTrades(stocks, trades);
   const openStockIds = new Set(buildTradingLedger(migrateTrades(stocks, trades).trades).positions.filter((position) => position.quantity > 0).map((position) => position.stockId));
   const visibleStocks = projectedStocks.filter((stock) => !stock.deletedAt || stock.quantity > 0 || openStockIds.has(stock.id));
+  const accountNames = [...new Set(migrateTrades(stocks, trades).trades.map((trade) => trade.accountName?.trim()).filter((name): name is string => Boolean(name)))];
 
   return {
-    stocks: visibleStocks, ready: stockStore.ready && tradeStore.ready,
+    stocks: visibleStocks, accountNames, ready: stockStore.ready && tradeStore.ready,
     addStock: stockStore.add,
     updateStock: stockStore.update,
     deleteStock: (id: string) => {

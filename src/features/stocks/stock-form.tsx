@@ -2,35 +2,36 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { WalletCards, X } from "lucide-react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { useI18n } from "@/i18n/i18n-provider";
+import { canonicalTradeAccount, displayTradeSystemText } from "@/features/trades/trade-i18n";
 import { currencies, investmentTypes, markets, stockStatuses, stockViews, type Stock } from "./types";
 import { stockFormSchema, type StockFormValues } from "./schema";
 
-type Props = { stock?: Stock; onCancel: () => void; onSave: (stock: Stock) => void };
+type Props = { stock?: Stock; accountNames?: string[]; onCancel: () => void; onSave: (stock: Stock) => void };
 
 const fieldClass = "mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3 text-sm";
 
-export function StockForm({ stock, onCancel, onSave }: Props) {
+export function StockForm({ stock, accountNames = [], onCancel, onSave }: Props) {
   const { t } = useI18n();
   const ledgerManaged = Boolean(stock?.ledgerInitializedAt);
   const errorText = (message: string | undefined, fallback: string) => {
     if (!message) return undefined;
     return /[가-힣]/.test(message) ? t(message) : t(fallback);
   };
-  const { register, handleSubmit, formState: { errors, isSubmitting }, watch, setValue } = useForm<StockFormValues>({
+  const { control, register, handleSubmit, formState: { errors, isSubmitting }, watch, setValue } = useForm<StockFormValues>({
     resolver: zodResolver(stockFormSchema),
     defaultValues: stock ? {
       ticker: stock.ticker, name: stock.name, market: stock.market, currency: stock.currency,
       assetType: stock.assetType, sector: stock.sector, status: stock.status, investmentType: stock.investmentType,
       currentPrice: stock.currentPrice, targetPrice: stock.targetPrice, averagePrice: stock.averagePrice,
-      quantity: stock.quantity, thesisSummary: stock.thesisSummary, currentView: stock.currentView,
+      quantity: stock.quantity, accountName: stock.openingAccountName ?? "기본 계좌", thesisSummary: stock.thesisSummary, currentView: stock.currentView,
       currentViewMemo: stock.currentViewMemo, nextReviewDate: stock.nextReviewDate, reviewNote: stock.reviewNote ?? "",
       nextEarningsDate: stock.nextEarningsDate ?? null, tagsText: stock.tags.join(", "),
     } : {
       ticker: "", name: "", market: "한국", currency: "KRW", assetType: "주식", sector: "",
       status: "관찰", investmentType: "관찰 전용", currentPrice: 0, targetPrice: null,
-      averagePrice: 0, quantity: 0, thesisSummary: "", currentView: "판단 보류", currentViewMemo: "",
+      averagePrice: 0, quantity: 0, accountName: "기본 계좌", thesisSummary: "", currentView: "판단 보류", currentViewMemo: "",
       nextReviewDate: null, reviewNote: "", nextEarningsDate: null, tagsText: "",
     },
   });
@@ -48,7 +49,8 @@ export function StockForm({ stock, onCancel, onSave }: Props) {
     onSave({ id: stock?.id ?? crypto.randomUUID(), ticker: parsed.ticker, name: parsed.name, market: parsed.market,
       currency: ledgerManaged ? stock!.currency : parsed.currency, assetType: parsed.assetType, sector: parsed.sector, status: parsed.status,
       investmentType: parsed.investmentType, currentPrice: parsed.currentPrice, targetPrice: parsed.targetPrice,
-      averagePrice: ledgerManaged ? stock!.averagePrice : parsed.averagePrice, quantity: ledgerManaged ? stock!.quantity : parsed.quantity, thesisSummary: parsed.thesisSummary,
+      averagePrice: ledgerManaged ? stock!.averagePrice : parsed.averagePrice, quantity: ledgerManaged ? stock!.quantity : parsed.quantity,
+      openingAccountName: stock?.openingAccountName ?? canonicalTradeAccount(parsed.accountName, t), thesisSummary: parsed.thesisSummary,
       currentView: parsed.currentView, currentViewMemo: parsed.currentViewMemo,
       nextReviewDate: parsed.nextReviewDate || null, reviewNote: parsed.reviewNote,
       nextEarningsDate: parsed.nextEarningsDate || null,
@@ -70,6 +72,7 @@ export function StockForm({ stock, onCancel, onSave }: Props) {
     <Field label={t("목표 가격")} error={errorText(errors.targetPrice?.message, "0 이상의 값을 입력해 주세요.")}><input type="number" step="any" className={fieldClass} {...register("targetPrice")} /></Field>
     <Field label={t("평균단가")} error={errorText(errors.averagePrice?.message, "0 이상의 값을 입력해 주세요.")}><input readOnly={ledgerManaged} type="number" step="any" className={`${fieldClass} read-only:cursor-not-allowed read-only:opacity-60`} {...register("averagePrice")} /></Field>
     <Field label={t("보유 수량")} error={errorText(errors.quantity?.message, "0 이상의 값을 입력해 주세요.")}><input readOnly={ledgerManaged} type="number" step="any" className={`${fieldClass} read-only:cursor-not-allowed read-only:opacity-60`} {...register("quantity")} /></Field>
+    {!stock && <Field label={t("계좌")} error={errorText(errors.accountName?.message, "계좌명을 입력해 주세요.")}><Controller name="accountName" control={control} render={({ field }) => <><input required list="stock-account-names" className={fieldClass} name={field.name} ref={field.ref} onBlur={field.onBlur} value={displayTradeSystemText(field.value ?? "기본 계좌", t)} onChange={(event) => field.onChange(canonicalTradeAccount(event.target.value, t))} /><datalist id="stock-account-names">{[...new Set(["기본 계좌", ...accountNames])].map((name) => <option key={name} value={displayTradeSystemText(name, t)} />)}</datalist></>} /></Field>}
     {ledgerManaged && <div className="sm:col-span-2 rounded-lg bg-[var(--surface-muted)] p-3 text-xs leading-5 text-[var(--muted)]"><p>{t("통화·평균단가·보유 수량은 매매 원장에서 자동 계산됩니다. 값을 바꾸려면 해당 매매 기록을 수정해 주세요.")}</p>{stock?.quantity === 0 && <a href={`/trades?openingStockId=${encodeURIComponent(stock.id)}`} className="mt-3 inline-flex items-center gap-2 rounded-lg border bg-[var(--surface)] px-3 py-2 text-sm font-medium text-[var(--foreground)]"><WalletCards size={16} />{t("기초 포지션 등록")}</a>}</div>}
     <Field label={t("현재 판단")}><select className={fieldClass} {...register("currentView")}>{stockViews.map((v) => <option key={v} value={v}>{t(v)}</option>)}</select></Field>
     <Field label={t("다음 검토일")}><input type="date" className={fieldClass} {...register("nextReviewDate")} /></Field>

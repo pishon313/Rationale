@@ -40,6 +40,7 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, openi
   const exchangeRates = useExchangeRates();
   const firstStock = stocks[0];
   const openingPosition = trade?.isOpeningPosition === true || createOpeningPosition;
+  const openingStock = stocks.find((item) => item.id === initialStockId);
   const [type, setType] = useState<Trade["tradeType"]>(openingPosition ? "매수" : trade?.tradeType ?? initialType);
   const [stockId, setStockId] = useState(trade?.stockId ?? initialStockId ?? firstStock?.id ?? "");
   const [planId, setPlanId] = useState(trade?.planId ?? "");
@@ -52,7 +53,7 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, openi
   const [rateNote, setRateNote] = useState<RateNote>(trade ? { key: "저장된 거래 환율" } : { key: "기준환율 확인 중" });
   const [fee, setFee] = useState(trade?.fee ?? 0);
   const [tax, setTax] = useState(trade?.tax ?? 0);
-  const [accountName, setAccountName] = useState(trade?.accountName ?? "기본 계좌");
+  const [accountName, setAccountName] = useState(trade?.accountName ?? (openingPosition ? openingStock?.openingAccountName : undefined) ?? "기본 계좌");
   const [memo, setMemo] = useState(trade?.memo ?? "");
   const [emotion, setEmotion] = useState(trade?.emotion ?? "평온");
   const [emotionIntensity, setEmotionIntensity] = useState(trade?.emotionIntensity ?? 2);
@@ -68,8 +69,8 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, openi
   const deviation = plan?.targetPrice ? planPriceDeviation(plan.targetPrice, price) : null;
   const warnings = type === "매수" ? evaluateTradeRules(rules, { amount: quantity * price, planId: planId || null }) : [];
   const accounts = useMemo(
-    () => [...new Set(["기본 계좌", ...ledger.cashBalances.map((item) => item.accountName), ...ledger.positions.map((item) => item.accountName)])],
-    [ledger],
+    () => [...new Set(["기본 계좌", accountName, ...ledger.cashBalances.map((item) => item.accountName), ...ledger.positions.map((item) => item.accountName)])],
+    [accountName, ledger],
   );
   const available = ledger.positions
     .filter((item) => item.stockId === stockId && item.accountName === accountName && item.currency === currency)

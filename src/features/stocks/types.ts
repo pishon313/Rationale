@@ -23,6 +23,7 @@ export type Stock = {
   targetPrice: number | null;
   averagePrice: number;
   quantity: number;
+  openingAccountName?: string;
   thesisSummary: string;
   currentView: (typeof stockViews)[number];
   currentViewMemo: string;

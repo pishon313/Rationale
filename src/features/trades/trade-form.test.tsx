@@ -68,11 +68,12 @@ describe("TradeForm", () => {
 
   it("기초 포지션 등록 시 종목을 미리 선택하고 현금 흐름 없는 시작 거래를 만든다", () => {
     const onSave = vi.fn();
-    const stock = sampleStocks[1];
-    render(<TradeForm openingPosition initialStockId={stock.id} stocks={sampleStocks} plans={samplePlans} rules={sampleRules} ledger={buildTradingLedger([])} onCancel={vi.fn()} onSave={onSave} />);
+    const stock = { ...sampleStocks[1], openingAccountName: "ISA 계좌" };
+    render(<TradeForm openingPosition initialStockId={stock.id} stocks={[...sampleStocks.filter((item) => item.id !== stock.id), stock]} plans={samplePlans} rules={sampleRules} ledger={buildTradingLedger([])} onCancel={vi.fn()} onSave={onSave} />);
 
     expect(screen.getByRole("heading", { name: "기초 포지션 등록" })).toBeInTheDocument();
     expect(screen.getByLabelText("종목")).toHaveValue(stock.id);
+    expect(screen.getByLabelText("계좌")).toHaveValue("ISA 계좌");
     expect(screen.getByLabelText("평균단가")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("수량"), { target: { value: "12" } });
     fireEvent.change(screen.getByLabelText("평균단가"), { target: { value: "45000" } });

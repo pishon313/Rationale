@@ -6,11 +6,12 @@ import { migrateTrades, projectStocksFromTrades } from "./migrate-trades";
 
 describe("migrateTrades", () => {
   it("거래 내역이 없는 기존 보유 종목을 현금 영향 없는 시작 포지션으로 이관한다", () => {
-    const stock = { ...sampleStocks[0], id: "legacy", quantity: 3, averagePrice: 100 };
+    const stock = { ...sampleStocks[0], id: "legacy", quantity: 3, averagePrice: 100, openingAccountName: "ISA 계좌" };
     const result = migrateTrades([stock], []);
     expect(result.addedOpeningPositions).toBe(1);
     expect(result.trades[0].isOpeningPosition).toBe(true);
     expect(result.trades[0].quantity).toBe(3);
+    expect(result.trades[0].accountName).toBe("ISA 계좌");
   });
 
   it("보유 수량이 0인 기존 관찰 종목은 시작 거래 없이 원장 관리로 전환한다", () => {

@@ -29,7 +29,7 @@ export function migrateTrades(stocks: Stock[], input: Trade[]): TradeMigration {
           id, stockId: stock.id, stockName: stock.name, planId: null,
           tradeType: "매수", tradedAt: createdAt, quantity: stock.quantity, price: stock.averagePrice,
           currency: stock.currency, exchangeRate: fallbackRatesToKrw[stock.currency], fee: 0, tax: 0,
-          accountName: "기본 계좌", memo: "기존 보유 포지션 자동 이관", emotion: "평온", emotionIntensity: 1,
+          accountName: stock.openingAccountName?.trim() || "기본 계좌", memo: "기존 보유 포지션 자동 이관", emotion: "평온", emotionIntensity: 1,
           confidenceScore: 3, ruleComplianceScore: 3, isOpeningPosition: true,
           createdAt, updatedAt: createdAt, deletedAt: null,
         });

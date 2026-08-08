@@ -34,6 +34,22 @@ describe("StockForm", () => {
 
     await waitFor(() => expect(onSave).toHaveBeenCalled());
     expect(onSave.mock.calls[0][0].ledgerInitializedAt).toEqual(expect.any(String));
+    expect(onSave.mock.calls[0][0].openingAccountName).toBe("기본 계좌");
+  });
+
+  it("새 종목의 기초 포지션 계좌를 기존 목록에서 선택하거나 새로 입력한다", async () => {
+    const onSave = vi.fn();
+    render(<StockForm accountNames={["연금 계좌"]} onCancel={vi.fn()} onSave={onSave} />);
+    const account = screen.getByLabelText("계좌");
+    expect(account).toHaveValue("기본 계좌");
+    expect(account).toHaveAttribute("list", "stock-account-names");
+
+    fireEvent.change(screen.getByLabelText("티커"), { target: { value: "NEW" } });
+    fireEvent.change(screen.getByLabelText("종목명"), { target: { value: "새 종목" } });
+    fireEvent.change(account, { target: { value: "ISA 계좌" } });
+    fireEvent.click(screen.getByRole("button", { name: "종목 추가" }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ openingAccountName: "ISA 계좌" })));
   });
 
   it("원장 관리 중이지만 수량이 0인 종목은 기초 포지션을 등록할 수 있다", () => {

@@ -272,13 +272,19 @@ thead { letter-spacing: 0.015em; }
 .ledger-warning span { min-width: 0; }
 .ledger-warning small { display: block; margin-block-start: var(--space-2xs); color: var(--color-muted); }
 
-.portfolio-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-xs); margin-block-start: var(--space-lg); }
-.portfolio-metrics article { display: flex; min-width: 0; min-height: 7.5rem; flex-direction: column; justify-content: space-between; padding: var(--space-md); border: var(--rule-thin) solid var(--color-rule); border-radius: var(--radius-card); background: var(--color-surface); }
-.portfolio-metrics article > p { color: var(--color-muted); font-size: var(--text-xs); }
-.portfolio-metrics article > strong { margin-block: var(--space-sm) var(--space-2xs); overflow-wrap: anywhere; font-size: clamp(1.15rem, 2.5vw, 1.6rem); font-variant-numeric: tabular-nums; letter-spacing: -0.025em; }
-.portfolio-metrics article > small { color: var(--color-muted); font-size: 0.6875rem; line-height: 1.4; }
-.portfolio-metrics .metric-primary { border-color: var(--color-rule-strong); background: var(--color-ink); color: var(--color-paper); }
-.portfolio-metrics .metric-primary > p, .portfolio-metrics .metric-primary > small { color: color-mix(in oklch, var(--color-paper) 72%, var(--color-ink)); }
+.portfolio-metrics { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-sm); margin-block-start: var(--space-lg); }
+.portfolio-metric-card { display: flex; min-width: 0; min-height: 16rem; flex-direction: column; padding: var(--space-lg); border: var(--rule-thin) solid var(--color-rule); border-radius: var(--radius-card); background: var(--color-surface); }
+.portfolio-metric-label { color: var(--color-muted); font-size: var(--text-sm); font-weight: 600; }
+.portfolio-metric-value { display: block; min-width: 0; margin-block-start: var(--space-sm); overflow: hidden; font-size: clamp(1.75rem, 5.5vw, 2.4rem); font-variant-numeric: tabular-nums; letter-spacing: -0.04em; line-height: 1.1; text-overflow: ellipsis; white-space: nowrap; }
+.portfolio-metric-return { margin-block-start: var(--space-xs); font-size: var(--text-md); font-variant-numeric: tabular-nums; font-weight: 700; }
+.portfolio-metric-details { display: grid; gap: var(--space-xs); margin-block-start: auto; padding-block-start: var(--space-lg); border-block-start: var(--rule-thin) solid var(--color-rule); }
+.portfolio-metric-details > div { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: var(--space-md); }
+.portfolio-metric-details dt { min-width: 0; color: var(--color-muted); font-size: var(--text-sm); }
+.portfolio-metric-details dd { min-width: 0; overflow: hidden; font-size: var(--text-sm); font-variant-numeric: tabular-nums; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.portfolio-metric-note { margin-block-start: var(--space-md); color: var(--color-muted); font-size: 0.6875rem; line-height: 1.4; }
+.portfolio-metric-details-push { margin-block-start: auto; }
+.portfolio-metrics .is-positive { color: var(--color-success); }
+.portfolio-metrics .is-negative { color: var(--color-danger); }
 .dashboard-quick { display: grid; gap: var(--space-sm); margin-block-start: var(--space-md); }
 .dashboard-quick a { min-width: 0; }
 .dashboard-quick a span, .dashboard-quick a b { white-space: nowrap; }
@@ -293,12 +299,13 @@ thead { letter-spacing: 0.015em; }
 }
 
 @media (min-width: 40rem) {
-  .portfolio-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-sm); }
-  .portfolio-metrics article { padding: var(--space-lg); }
+  .portfolio-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .portfolio-metric-card:last-child { grid-column: 1 / -1; }
 }
 
 @media (min-width: 75rem) {
-  .portfolio-metrics { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .portfolio-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .portfolio-metric-card:last-child { grid-column: auto; }
   .dashboard-quick { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
