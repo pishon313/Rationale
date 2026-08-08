@@ -8,11 +8,18 @@ import { investmentTypes, markets, stockStatuses, stockViews } from "@/features/
 import { emotions, tradeTypes } from "@/features/trades/types";
 import { canonicalTradeAccount, displayTradeSystemText, translateTradeText } from "@/features/trades/trade-i18n";
 import { translate } from "./messages";
+import { accountMessages } from "./messages/accounts";
 import { locales, type TranslatedLocale } from "./types";
 
 const translatedLocales = locales.filter((locale): locale is TranslatedLocale => locale !== "ko");
 
 describe("translations", () => {
+  it("keeps the account migration retry label translated in the account catalog", () => {
+    expect(Object.fromEntries(translatedLocales.map((locale) => [locale, accountMessages[locale]["다시 시도"]]))).toEqual({
+      ja: "再試行", en: "Try again", fr: "Réessayer", it: "Riprova", es: "Intentar de nuevo",
+    });
+  });
+
   it("translates every literal Korean UI key used by the app", () => {
     const keys = [...literalUiKeys(), ...indirectUiKeys];
     for (const locale of translatedLocales) {

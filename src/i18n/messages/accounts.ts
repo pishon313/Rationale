@@ -8,6 +8,7 @@ const rows = [
 ["기존 계좌 데이터를 준비하지 못했습니다.","既存の口座データを準備できませんでした。","We couldn't prepare your existing account data.","Impossible de préparer les données de vos comptes existants.","Non è stato possibile preparare i dati dei conti esistenti.","No se han podido preparar los datos de las cuentas existentes."],
 ["원본 데이터는 삭제되지 않았습니다. 다시 시도하거나 설정의 백업·복원 안내를 확인해 주세요.","元のデータは削除されていません。再試行するか、設定のバックアップと復元ガイドをご確認ください。","Your original data has not been deleted. Try again or review the backup and restore guidance in Settings.","Vos données d’origine n’ont pas été supprimées. Réessayez ou consultez les instructions de sauvegarde et de restauration dans les réglages.","I dati originali non sono stati eliminati. Riprova oppure consulta le indicazioni su backup e ripristino nelle Impostazioni.","Los datos originales no se han eliminado. Inténtalo de nuevo o consulta las indicaciones de copia y restauración en Ajustes."],
 ["설정/복구 안내","設定・復元ガイド","Settings and recovery guide","Réglages et récupération","Impostazioni e ripristino","Ajustes y recuperación"],
+["다시 시도","再試行","Try again","Réessayer","Riprova","Intentar de nuevo"],
 ] as const;
 export const accountMessages: MessageCatalog = { ja:{},en:{},fr:{},it:{},es:{} };
 const locales:TranslatedLocale[]=["ja","en","fr","it","es"];
