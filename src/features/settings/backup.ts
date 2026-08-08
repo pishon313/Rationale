@@ -6,6 +6,8 @@ import { reviewEvaluations, type Review } from "@/features/reviews/types";
 import { ruleTypes, severities, type InvestmentRule } from "@/features/rules/types";
 import { currencies, investmentTypes, markets, stockStatuses, stockViews, type Stock } from "@/features/stocks/types";
 import { tradeTypes, type Trade } from "@/features/trades/types";
+import { accountKinds } from "@/features/accounts/types";
+import type { InvestmentAccount } from "@/features/accounts/types";
 import { isLocale, type Locale } from "@/i18n/types";
 
 export type DashboardNoteBackup = { id: string; content: string; updatedAt: string };
@@ -36,9 +38,21 @@ export type ValidatedBackup =
       dashboardNotes?: DashboardNoteBackup[];
       earningsEvents?: EarningsEventBackup[];
       displayCurrency?: Currency;
+    })
+  | (CoreBackup & {
+      version: 5;
+      accounts: InvestmentAccount[];
+      observations: Observation[];
+      reviews: Review[];
+      rules: InvestmentRule[];
+      notes: Note[];
+      language: Locale;
+      dashboardNotes: DashboardNoteBackup[];
+      earningsEvents: EarningsEventBackup[];
+      displayCurrency: Currency;
     });
 
-const supportedVersions = new Set([1, 2, 3, 4]);
+const supportedVersions = new Set([1, 2, 3, 4, 5]);
 const supportedTradeTypes = new Set<string>(tradeTypes);
 const supportedCurrencies = new Set<string>(currencies);
 
@@ -70,7 +84,7 @@ export function validateBackupPayload(value: unknown): ValidatedBackup {
   observations.forEach(validateObservationRecord);
   reviews.forEach(validateReviewRecord);
   rules.forEach(validateRuleRecord);
-  if (value.version === 4) {
+  if (value.version === 4 || value.version === 5) {
     const notes = validateRecords(value.notes, "Note");
     notes.forEach(validateNoteRecord);
     if (!isLocale(value.language)) throw new Error("언어 설정이 올바르지 않습니다.");
@@ -79,6 +93,25 @@ export function validateBackupPayload(value: unknown): ValidatedBackup {
     const earningsEvents = value.earningsEvents === undefined ? undefined : validateRecords(value.earningsEvents, "실적 발표 일정");
     earningsEvents?.forEach(validateEarningsEventRecord);
     if (value.displayCurrency !== undefined) requireEnum(value.displayCurrency, currencies, "통화 설정", "표시 통화");
+    if (value.version === 5) {
+      const accounts = validateRecords(value.accounts, "계좌");
+      accounts.forEach(validateAccountRecord);
+      if (!dashboardNotes || !earningsEvents || value.displayCurrency === undefined) throw new Error("Version 5 백업의 설정 데이터가 완전하지 않습니다.");
+      validateAccountReferences(accounts, trades);
+      return {
+        version: 5,
+        ...core,
+        accounts: accounts as InvestmentAccount[],
+        observations: observations as Observation[],
+        reviews: reviews as Review[],
+        rules: rules as InvestmentRule[],
+        notes: notes as Note[],
+        language: value.language,
+        dashboardNotes: dashboardNotes as DashboardNoteBackup[],
+        earningsEvents: earningsEvents as EarningsEventBackup[],
+        displayCurrency: value.displayCurrency as Currency,
+      };
+    }
     return {
       version: 4,
       ...core,
@@ -99,6 +132,15 @@ export function validateBackupPayload(value: unknown): ValidatedBackup {
     reviews: reviews as Review[],
     rules: rules as InvestmentRule[],
   };
+}
+
+function validateAccountReferences(accounts: Array<Record<string, unknown>>, trades: Array<Record<string, unknown>>) {
+  const accountIds = new Set(accounts.map((account) => account.id as string));
+  for (const [index, trade] of trades.entries()) {
+    if (typeof trade.accountId !== "string" || !accountIds.has(trade.accountId)) {
+      throw new Error(`매매 원장 ${index + 1}번째 항목이 존재하지 않는 계좌를 참조합니다.`);
+    }
+  }
 }
 
 function validateDashboardNoteRecord(note: Record<string, unknown>, index: number) {
@@ -255,6 +297,9 @@ function validateTradeRecord(trade: Record<string, unknown>, index: number) {
   if (typeof trade.accountName !== "string" || !trade.accountName.trim()) {
     throw new Error(`${label}의 계좌명이 올바르지 않습니다.`);
   }
+  if (trade.accountId !== undefined && trade.accountId !== null && (typeof trade.accountId !== "string" || !trade.accountId.trim())) throw new Error(`${label}의 계좌 ID가 올바르지 않습니다.`);
+  if (trade.cashFlowKind !== undefined) requireEnum(trade.cashFlowKind, ["external", "transfer", "reconciliation", "opening"] as const, label, "현금 흐름 유형");
+  if (trade.transferId !== undefined && (typeof trade.transferId !== "string" || !trade.transferId.trim())) throw new Error(`${label}의 이체 ID가 올바르지 않습니다.`);
 
   const quantity = requiredNumber(trade.quantity, label, "수량");
   const price = requiredNumber(trade.price, label, "가격");
@@ -331,6 +376,7 @@ export function validateBackupCollectionRecord(collection: string, value: unknow
     throw new Error(`${collection} ${index + 1}번째 항목의 ID가 올바르지 않습니다.`);
   }
   switch (collection) {
+    case "accounts": validateAccountRecord(value, index); break;
     case "stocks": validateStockRecord(value, index); break;
     case "plans": validatePlanRecord(value, index); break;
     case "trades": validateTradeRecord(value, index); break;
@@ -341,4 +387,16 @@ export function validateBackupCollectionRecord(collection: string, value: unknow
     case "dashboard-notes": validateDashboardNoteRecord(value, index); break;
     case "earnings-events": validateEarningsEventRecord(value, index); break;
   }
+}
+
+function validateAccountRecord(account: Record<string, unknown>, index: number) {
+  const label = `계좌 ${index + 1}번째 항목`;
+  requireStrings(account, ["name", "institution", "kind", "subtype", "baseCurrency", "memo", "createdAt", "updatedAt"], label);
+  if (!(account.name as string).trim()) throw new Error(`${label}의 이름이 비어 있습니다.`);
+  requireEnum(account.kind, accountKinds, label, "유형");
+  requireEnum(account.baseCurrency, currencies, label, "기준 통화");
+  if (typeof account.isDefault !== "boolean") throw new Error(`${label}의 기본 계좌 값이 올바르지 않습니다.`);
+  requireNullableTimestamp(account.archivedAt, label, "보관 일시");
+  requireTimestamp(account.createdAt, label, "생성 일시");
+  requireTimestamp(account.updatedAt, label, "수정 일시");
 }

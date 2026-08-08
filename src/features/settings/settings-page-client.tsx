@@ -209,7 +209,7 @@ function RestorePreview({ backup, cancel, confirm }: { backup: ValidatedBackup; 
 }
 
 function restoreLabel(value: string) {
-  return ({ stocks: "종목", plans: "매수 계획", trades: "매매", observations: "관찰 기록", reviews: "회고", notes: "Note" } as Record<string, string>)[value] ?? value;
+  return ({ accounts: "계좌", stocks: "종목", plans: "매수 계획", trades: "매매", observations: "관찰 기록", reviews: "회고", notes: "Note" } as Record<string, string>)[value] ?? value;
 }
 
 function formatBackupDate(value: string | number, locale: Locale) {

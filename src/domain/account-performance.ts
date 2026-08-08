@@ -2,8 +2,10 @@ import type { RatesToKrw } from "./currency";
 import type { TradingLedger } from "./trading-ledger";
 import type { Stock } from "@/features/stocks/types";
 import type { Trade } from "@/features/trades/types";
+import { accountIdentity, type InvestmentAccount } from "@/features/accounts/types";
 
 export type AccountPerformance = {
+  accountId: string;
   accountName: string;
   cashKrw: number;
   marketValueKrw: number;
@@ -19,25 +21,25 @@ export type LongTermPerformance = AccountPerformance & { accounts: AccountPerfor
 
 type CashFlow = { date: Date; amount: number };
 
-export function buildLongTermPerformance(trades: Trade[], stocks: Stock[], ledger: TradingLedger, rates: RatesToKrw, asOf = new Date()): LongTermPerformance {
+export function buildLongTermPerformance(trades: Trade[], stocks: Stock[], ledger: TradingLedger, rates: RatesToKrw, asOf = new Date(), accountEntities: readonly InvestmentAccount[] = []): LongTermPerformance {
   const active = trades.filter((trade) => !trade.deletedAt && !ledger.calculations[trade.id]?.error);
   const stockById = new Map(stocks.filter((stock) => !stock.deletedAt).map((stock) => [stock.id, stock]));
-  const accountNames = new Set<string>();
-  active.forEach((trade) => accountNames.add(trade.accountName));
-  ledger.cashBalances.forEach((balance) => accountNames.add(balance.accountName));
-  ledger.positions.forEach((position) => accountNames.add(position.accountName));
-  const accounts = [...accountNames].sort().map((accountName) => buildAccount(accountName, active, stockById, ledger, rates, asOf));
+  const names = new Map(accountEntities.map((account) => [account.id, account.name]));
+  ledger.cashBalances.forEach((balance) => names.set(balance.accountId, balance.accountName));
+  ledger.positions.forEach((position) => names.set(position.accountId, position.accountName));
+  active.forEach((trade) => { const id = accountIdentity(trade); if (!names.has(id)) names.set(id, trade.accountName); });
+  const accounts = [...names].sort(([, a], [, b]) => a.localeCompare(b)).map(([accountId, accountName]) => buildAccount(accountId, accountName, active, stockById, ledger, rates, asOf));
   const aggregate = aggregateAccounts(accounts, active, ledger, asOf);
-  return { accountName: "전체 계좌", ...aggregate, accounts };
+  return { accountId: "all", accountName: "전체 계좌", ...aggregate, accounts };
 }
 
-function buildAccount(accountName: string, trades: Trade[], stocks: Map<string, Stock>, ledger: TradingLedger, rates: RatesToKrw, asOf: Date): AccountPerformance {
+function buildAccount(accountId: string, accountName: string, trades: Trade[], stocks: Map<string, Stock>, ledger: TradingLedger, rates: RatesToKrw, asOf: Date): AccountPerformance {
   const cashKrw = ledger.cashBalances
-    .filter((balance) => balance.accountName === accountName)
+    .filter((balance) => balance.accountId === accountId)
     .reduce((sum, balance) => sum + balance.balance * rates[balance.currency], 0);
   let marketValueKrw = 0;
   let unpricedPositionCount = 0;
-  for (const position of ledger.positions.filter((item) => item.accountName === accountName && item.quantity > 0)) {
+  for (const position of ledger.positions.filter((item) => item.accountId === accountId && item.quantity > 0)) {
     const price = stocks.get(position.stockId)?.currentPrice ?? 0;
     if (price > 0) marketValueKrw += position.quantity * price * rates[position.currency];
     else {
@@ -46,12 +48,12 @@ function buildAccount(accountName: string, trades: Trade[], stocks: Map<string, 
     }
   }
   const totalAssetsKrw = cashKrw + marketValueKrw;
-  const accountTrades = trades.filter((trade) => trade.accountName === accountName);
-  const flows = contributionFlows(accountTrades);
-  const netContributionsKrw = -flows.reduce((sum, flow) => sum + flow.amount, 0);
+  const accountTrades = trades.filter((trade) => accountIdentity(trade) === accountId);
+  const flows = contributionFlows(accountTrades, false);
+  const netContributionsKrw = normalizeZero(-flows.reduce((sum, flow) => sum + flow.amount, 0));
   const totalProfitKrw = totalAssetsKrw - netContributionsKrw;
   return {
-    accountName,
+    accountId, accountName,
     cashKrw,
     marketValueKrw,
     totalAssetsKrw,
@@ -63,12 +65,12 @@ function buildAccount(accountName: string, trades: Trade[], stocks: Map<string, 
   };
 }
 
-function aggregateAccounts(accounts: AccountPerformance[], trades: Trade[], ledger: TradingLedger, asOf: Date): Omit<AccountPerformance, "accountName"> {
+function aggregateAccounts(accounts: AccountPerformance[], trades: Trade[], ledger: TradingLedger, asOf: Date): Omit<AccountPerformance, "accountId" | "accountName"> {
   const cashKrw = sum(accounts.map((account) => account.cashKrw));
   const marketValueKrw = sum(accounts.map((account) => account.marketValueKrw));
   const totalAssetsKrw = cashKrw + marketValueKrw;
-  const flows = contributionFlows(trades.filter((trade) => !ledger.calculations[trade.id]?.error));
-  const netContributionsKrw = -sum(flows.map((flow) => flow.amount));
+  const flows = contributionFlows(trades.filter((trade) => !ledger.calculations[trade.id]?.error), true);
+  const netContributionsKrw = normalizeZero(-sum(flows.map((flow) => flow.amount)));
   const totalProfitKrw = totalAssetsKrw - netContributionsKrw;
   return {
     cashKrw,
@@ -82,10 +84,12 @@ function aggregateAccounts(accounts: AccountPerformance[], trades: Trade[], ledg
   };
 }
 
-function contributionFlows(trades: Trade[]): CashFlow[] {
+function contributionFlows(trades: Trade[], aggregate: boolean): CashFlow[] {
   return trades.flatMap((trade) => {
     const date = new Date(trade.tradedAt);
     if (!Number.isFinite(date.getTime())) return [];
+    const kind = trade.cashFlowKind ?? (trade.isOpeningPosition ? "opening" : "external");
+    if (kind === "reconciliation" || aggregate && kind === "transfer") return [];
     if (trade.tradeType === "입금") return [{ date, amount: -(trade.amount ?? 0) * trade.exchangeRate }];
     if (trade.tradeType === "출금") return [{ date, amount: (trade.amount ?? 0) * trade.exchangeRate }];
     if (trade.isOpeningPosition && trade.tradeType === "매수") {
@@ -117,3 +121,4 @@ export function calculateXirr(flows: CashFlow[]): number | null {
 }
 
 function sum(values: number[]) { return values.reduce((total, value) => total + value, 0); }
+function normalizeZero(value: number) { return Object.is(value, -0) ? 0 : value; }

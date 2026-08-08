@@ -1,6 +1,7 @@
 import type { Stock } from "@/features/stocks/types";
 import { fallbackRatesToKrw } from "@/domain/currency";
 import type { Trade } from "./types";
+import type { InvestmentAccount } from "@/features/accounts/types";
 
 export const csvFields = ["tradedAt", "time", "ticker", "stockName", "tradeType", "quantity", "price", "fee", "tax", "currency", "exchangeRate", "accountName"] as const;
 export type CsvField = (typeof csvFields)[number];
@@ -123,7 +124,7 @@ export function detectCsvMapping(headers: string[]): CsvMapping {
   return mapping;
 }
 
-export function convertCsvRows(parsed: ParsedCsv, mapping: CsvMapping, stocks: Stock[], existing: Trade[]): CsvImportResult {
+export function convertCsvRows(parsed: ParsedCsv, mapping: CsvMapping, stocks: Stock[], existing: Trade[], accountOptions?: { accounts: InvestmentAccount[]; targetAccountId?: string }): CsvImportResult {
   const trades: Trade[] = []; const errors: CsvImportResult["errors"] = []; let skippedDuplicates = 0;
   const fingerprints = new Set(existing.filter((trade) => !trade.deletedAt).map(fingerprint));
   parsed.rows.forEach((row, index) => {
@@ -138,7 +139,15 @@ export function convertCsvRows(parsed: ParsedCsv, mapping: CsvMapping, stocks: S
       const currency = parseCurrency(value(row, mapping.currency), stock.currency);
       const exchangeRate = currency === "KRW" ? 1 : optionalNumber(value(row, mapping.exchangeRate)) || fallbackRatesToKrw[currency];
       const now = new Date().toISOString();
-      const trade: Trade = { id: csvId(row, index), stockId: stock.id, stockName: stock.name, planId: null, tradeType, tradedAt, quantity, price, currency, exchangeRate, fee: optionalNumber(value(row, mapping.fee)), tax: optionalNumber(value(row, mapping.tax)), accountName: value(row, mapping.accountName) || "파일 가져오기", memo: "증권사 거래 내역 가져오기", emotion: "평온", emotionIntensity: 1, confidenceScore: 3, ruleComplianceScore: 3, ruleViolations: [], createdAt: now, updatedAt: now, deletedAt: null };
+      const importedAccountName = value(row, mapping.accountName);
+      const account = accountOptions
+        ? (importedAccountName
+          ? accountOptions.accounts.find((item) => item.name.trim() === importedAccountName.trim())
+          : accountOptions.accounts.find((item) => item.id === accountOptions.targetAccountId))
+        : undefined;
+      if (accountOptions && !account) throw new Error(importedAccountName ? `등록되지 않은 계좌입니다: ${importedAccountName}` : "가져올 대상 계좌를 선택해 주세요.");
+      const accountName = account?.name ?? (importedAccountName || "파일 가져오기");
+      const trade: Trade = { id: csvId(row, index), stockId: stock.id, stockName: stock.name, planId: null, tradeType, tradedAt, quantity, price, currency, exchangeRate, fee: optionalNumber(value(row, mapping.fee)), tax: optionalNumber(value(row, mapping.tax)), accountId: account?.id, accountName, memo: "증권사 거래 내역 가져오기", emotion: "평온", emotionIntensity: 1, confidenceScore: 3, ruleComplianceScore: 3, ruleViolations: [], createdAt: now, updatedAt: now, deletedAt: null };
       const key = fingerprint(trade);
       if (fingerprints.has(key)) { skippedDuplicates += 1; return; }
       fingerprints.add(key); trades.push(trade);

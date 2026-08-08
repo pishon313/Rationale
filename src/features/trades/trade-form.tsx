@@ -1,7 +1,7 @@
 "use client";
 
 import { X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { currencies, fallbackRatesToKrw, fetchHistoricalRateToKrw } from "@/domain/currency";
 import { planPriceDeviation } from "@/domain/portfolio";
 import { evaluateTradeRules } from "@/domain/rules";
@@ -12,8 +12,9 @@ import type { Stock } from "@/features/stocks/types";
 import { useI18n } from "@/i18n/i18n-provider";
 import { localDateTimeValue } from "@/lib/local-date";
 import { useExchangeRates } from "@/lib/use-exchange-rates";
-import { canonicalTradeAccount, displayTradeSystemText, translateTradeText } from "./trade-i18n";
+import { translateTradeText } from "./trade-i18n";
 import { emotions, tradeTypes, type Trade } from "./types";
+import type { InvestmentAccount } from "@/features/accounts/types";
 
 type Props = {
   trade?: Trade;
@@ -24,6 +25,7 @@ type Props = {
   plans: BuyPlan[];
   rules: InvestmentRule[];
   ledger: TradingLedger;
+  accounts?: InvestmentAccount[];
   formError?: string;
   onCancel: () => void;
   onSave: (trade: Trade) => Promise<void> | void;
@@ -35,7 +37,7 @@ const field = "mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3 text-
 // 계획 연결 데이터와 저장 로직은 유지하되, 당분간 원장 입력 UI에서는 숨깁니다.
 const showLinkedPlanField = false;
 
-export function TradeForm({ trade, initialType = "매수", initialStockId, openingPosition: createOpeningPosition = false, stocks, plans, rules, ledger, formError = "", onCancel, onSave }: Props) {
+export function TradeForm({ trade, initialType = "매수", initialStockId, openingPosition: createOpeningPosition = false, stocks, plans, rules, ledger, accounts, formError = "", onCancel, onSave }: Props) {
   const { t, formatDate, formatNumber } = useI18n();
   const exchangeRates = useExchangeRates();
   const firstStock = stocks[0];
@@ -53,7 +55,15 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, openi
   const [rateNote, setRateNote] = useState<RateNote>(trade ? { key: "저장된 거래 환율" } : { key: "기준환율 확인 중" });
   const [fee, setFee] = useState(trade?.fee ?? 0);
   const [tax, setTax] = useState(trade?.tax ?? 0);
-  const [accountName, setAccountName] = useState(trade?.accountName ?? (openingPosition ? openingStock?.openingAccountName : undefined) ?? "기본 계좌");
+  const legacyAccountName = trade?.accountName ?? openingStock?.openingAccountName ?? "기본 계좌";
+  const resolvedAccounts = accounts ?? [{ id: trade?.accountId ?? "legacy-form-account", name: legacyAccountName, institution: "", kind: "brokerage" as const, subtype: "", baseCurrency: trade?.currency ?? openingStock?.currency ?? "KRW", isDefault: true, archivedAt: null, memo: "", createdAt: trade?.createdAt ?? "1970-01-01T00:00:00.000Z", updatedAt: trade?.updatedAt ?? trade?.createdAt ?? "1970-01-01T00:00:00.000Z" }];
+  const activeAccounts = resolvedAccounts.filter((account) => !account.archivedAt);
+  const legacyMatch = resolvedAccounts.find((account) => account.name === legacyAccountName);
+  const initialAccount = resolvedAccounts.find((account) => account.id === trade?.accountId)
+    ?? legacyMatch
+    ?? activeAccounts.find((account) => account.isDefault)
+    ?? activeAccounts[0];
+  const [accountId, setAccountId] = useState(initialAccount?.id ?? "");
   const [memo, setMemo] = useState(trade?.memo ?? "");
   const [emotion, setEmotion] = useState(trade?.emotion ?? "평온");
   const [emotionIntensity, setEmotionIntensity] = useState(trade?.emotionIntensity ?? 2);
@@ -68,12 +78,10 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, openi
   const plan = plans.find((item) => item.id === planId);
   const deviation = plan?.targetPrice ? planPriceDeviation(plan.targetPrice, price) : null;
   const warnings = type === "매수" ? evaluateTradeRules(rules, { amount: quantity * price, planId: planId || null }) : [];
-  const accounts = useMemo(
-    () => [...new Set(["기본 계좌", accountName, ...ledger.cashBalances.map((item) => item.accountName), ...ledger.positions.map((item) => item.accountName)])],
-    [accountName, ledger],
-  );
+  const selectedAccount = resolvedAccounts.find((account) => account.id === accountId);
+  const selectableAccounts = resolvedAccounts.filter((account) => !account.archivedAt || account.id === trade?.accountId);
   const available = ledger.positions
-    .filter((item) => item.stockId === stockId && item.accountName === accountName && item.currency === currency)
+    .filter((item) => item.stockId === stockId && item.accountId === accountId && item.currency === currency)
     .reduce((sum, item) => sum + item.quantity, 0);
   const visibleError = localError || formError;
   const translatedError = visibleError ? translateTradeText(visibleError, t, formatNumber) : "";
@@ -131,8 +139,8 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, openi
     event.preventDefault();
     if (saving) return;
     setLocalError("");
-    if (!accountName.trim()) {
-      setLocalError("계좌명을 입력해 주세요.");
+    if (!selectedAccount) {
+      setLocalError("계좌를 추가하거나 선택해 주세요.");
       return;
     }
     if (type === "매수" && stock?.deletedAt && !trade) {
@@ -161,11 +169,13 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, openi
       price: isSecurity ? price : 0,
       amount: isSecurity ? undefined : amount,
       isOpeningPosition: openingPosition && type === "매수" ? true : undefined,
+      cashFlowKind: openingPosition ? "opening" : type === "입금" || type === "출금" ? (trade?.cashFlowKind ?? "external") : undefined,
       currency: savedCurrency,
       exchangeRate: savedCurrency === "KRW" ? 1 : exchangeRate,
       fee,
       tax,
-      accountName: accountName.trim(),
+      accountId: selectedAccount.id,
+      accountName: trade?.accountName ?? selectedAccount.name,
       memo,
       emotion: isSecurity ? emotion : "평온",
       emotionIntensity: isSecurity ? emotionIntensity : 1,
@@ -222,7 +232,7 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, openi
           </>}
           {!isSecurity && <Label text={type === "배당" ? t("세전 배당금") : t("{type} 금액", { type: t(type) })}><input required type="number" min="0" step="any" className={field} value={amount} onChange={(event) => setAmount(Number(event.target.value))} /></Label>}
           <Label text={t("거래 일시")}><input required type="datetime-local" className={field} value={tradedAt} onChange={(event) => setTradedAt(event.target.value)} /></Label>
-          <Label text={t("계좌")}><input required list="account-names" className={field} value={displayTradeSystemText(accountName, t)} onChange={(event) => setAccountName(canonicalTradeAccount(event.target.value, t))} /><datalist id="account-names">{accounts.map((item) => <option key={item} value={displayTradeSystemText(item, t)} />)}</datalist></Label>
+          <Label text={t("계좌")}><select required className={field} value={accountId} onChange={(event) => setAccountId(event.target.value)}><option value="">{t("계좌 추가 필요")}</option>{selectableAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}{account.institution ? ` · ${account.institution}` : ""}{account.archivedAt ? ` · ${t("보관됨")}` : ""}</option>)}</select></Label>
           {(!isSecurity || !stock) && <Label text={t("통화")}><select className={field} value={currency} onChange={(event) => { const next = event.target.value as Trade["currency"]; setCurrency(next); setExchangeRate(exchangeRates.snapshot.ratesToKrw[next]); }}>{currencies.map((item) => <option key={item}>{item}</option>)}</select></Label>}
           {currency !== "KRW" && <Label text={t("적용 환율")}><input aria-label={t("적용 환율")} required type="number" min="0" step="any" className={field} value={exchangeRate} onChange={(event) => { setExchangeRate(Number(event.target.value)); setRateNote({ key: "직접 입력한 환율" }); }} /><small className="mt-1 block text-[var(--muted)]">{t("1 {currency}당 KRW · {note}", { currency, note: localizedRateNote })}</small></Label>}
           <Label text={t("수수료")}><input type="number" min="0" step="any" className={field} value={fee} onChange={(event) => setFee(Number(event.target.value))} /></Label>

@@ -1,14 +1,14 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, BookOpen, ChevronUp, ClipboardCheck, Eye, FileText, Gauge, Lightbulb, ListChecks, MoreHorizontal, Settings, Tags, WalletCards } from "lucide-react";
+import { BarChart3, BookOpen, ChevronUp, ClipboardCheck, Eye, FileText, Gauge, Lightbulb, ListChecks, MoreHorizontal, Settings, Tags, WalletCards, Landmark } from "lucide-react";
 import { useI18n } from "@/i18n/i18n-provider";
 
 const nav = [
   ["대시보드", "/dashboard", Gauge], ["종목", "/stocks", Tags], ["매수 계획", "/plans", Lightbulb],
   ["관찰 기록", "/observations", Eye], ["회고", "/reviews", BookOpen],
   ["분석", "/analytics", BarChart3], ["투자 원칙", "/rules", ClipboardCheck], ["Note", "/notes", FileText], ["설정", "/settings", Settings],
-  ["매매", "/trades", WalletCards],
+  ["매매", "/trades", WalletCards], ["계좌", "/accounts", Landmark],
 ] as const;
 
 export function AppSidebar() {

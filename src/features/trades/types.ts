@@ -12,10 +12,13 @@ export type Trade = {
   price: number;
   amount?: number;
   isOpeningPosition?: boolean;
+  cashFlowKind?: "external" | "transfer" | "reconciliation" | "opening";
+  transferId?: string;
   currency: Currency;
   exchangeRate: number;
   fee: number;
   tax: number;
+  accountId?: string | null;
   accountName: string;
   memo: string;
   emotion: string;

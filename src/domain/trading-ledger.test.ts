@@ -1,10 +1,40 @@
 import { describe, expect, it } from "vitest";
 import { buildTradingLedger, cashBalanceKrw } from "./trading-ledger";
 import type { Trade } from "@/features/trades/types";
+import type { InvestmentAccount } from "@/features/accounts/types";
 
 const trade = (value: Partial<Trade> & Pick<Trade, "id" | "tradeType" | "tradedAt">): Trade => ({ stockId: "s1", stockName: "테스트", planId: null, quantity: 0, price: 0, currency: "KRW", exchangeRate: 1, fee: 0, tax: 0, accountName: "계좌 A", memo: "", emotion: "평온", emotionIntensity: 1, confidenceScore: 3, ruleComplianceScore: 3, createdAt: value.tradedAt, ...value });
+const account = (id: string, name: string): InvestmentAccount => ({ id, name, institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault: false, archivedAt: null, memo: "", createdAt: "2026-01-01", updatedAt: "2026-01-01" });
 
 describe("trading ledger", () => {
+  it("accountId가 같으면 legacy 이름이 달라도 같은 계좌로 계산한다", () => {
+    const ledger = buildTradingLedger([
+      trade({ id: "a", tradeType: "입금", tradedAt: "2026-01-01", stockId: null, amount: 100, accountId: "account-1", accountName: "옛 이름" }),
+      trade({ id: "b", tradeType: "입금", tradedAt: "2026-01-02", stockId: null, amount: 200, accountId: "account-1", accountName: "다른 스냅샷" }),
+    ], [account("account-1", "현재 이름")]);
+    expect(ledger.cashBalances).toEqual([expect.objectContaining({ accountId: "account-1", accountName: "현재 이름", balance: 300 })]);
+  });
+
+  it("동일한 accountName이어도 accountId가 다르면 별도 계좌다", () => {
+    const ledger = buildTradingLedger([
+      trade({ id: "a", tradeType: "입금", tradedAt: "2026-01-01", stockId: null, amount: 100, accountId: "account-1", accountName: "같은 이름" }),
+      trade({ id: "b", tradeType: "입금", tradedAt: "2026-01-02", stockId: null, amount: 200, accountId: "account-2", accountName: "같은 이름" }),
+    ]);
+    expect(ledger.cashBalances).toHaveLength(2);
+  });
+
+  it("Account 이름 변경은 cash와 position identity를 바꾸지 않는다", () => {
+    const trades = [trade({ id: "a", tradeType: "매수", tradedAt: "2026-01-01", quantity: 1, price: 100, accountId: "account-1", accountName: "옛 이름", isOpeningPosition: true })];
+    const before = buildTradingLedger(trades, [account("account-1", "옛 이름")]);
+    const after = buildTradingLedger(trades, [account("account-1", "새 이름")]);
+    expect(after.positions[0].key).toBe(before.positions[0].key);
+    expect(after.positions[0].accountName).toBe("새 이름");
+  });
+
+  it("accountId 없는 거래는 기존 이름 기반 결과를 유지한다", () => {
+    const ledger = buildTradingLedger([trade({ id: "a", tradeType: "입금", tradedAt: "2026-01-01", stockId: null, amount: 100, accountName: "Legacy" })]);
+    expect(ledger.cashBalances[0]).toEqual(expect.objectContaining({ accountId: "legacy:Legacy", accountName: "Legacy", balance: 100 }));
+  });
   it("분할매수와 일부 매도를 시간순으로 재계산한다", () => {
     const ledger = buildTradingLedger([
       trade({ id: "b2", tradeType: "매수", tradedAt: "2026-01-02", quantity: 10, price: 120 }),

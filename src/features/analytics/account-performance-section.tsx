@@ -9,12 +9,13 @@ import type { Trade } from "@/features/trades/types";
 import { displayTradeSystemText } from "@/features/trades/trade-i18n";
 import { useI18n } from "@/i18n/i18n-provider";
 import { useCurrencyPreference, useExchangeRates } from "@/lib/use-exchange-rates";
+import type { InvestmentAccount } from "@/features/accounts/types";
 
-export function AccountPerformanceSection({ trades, stocks, ledger }: { trades: Trade[]; stocks: Stock[]; ledger: TradingLedger }) {
+export function AccountPerformanceSection({ trades, stocks, accounts, ledger }: { trades: Trade[]; stocks: Stock[]; accounts: InvestmentAccount[]; ledger: TradingLedger }) {
   const { t, formatNumber, localeTag } = useI18n();
   const rates = useExchangeRates();
   const { displayCurrency } = useCurrencyPreference();
-  const data = buildLongTermPerformance(trades, stocks, ledger, rates.snapshot.ratesToKrw);
+  const data = buildLongTermPerformance(trades, stocks, ledger, rates.snapshot.ratesToKrw, new Date(), accounts);
   const money = (valueKrw: number) => formatCurrency(fromKrw(valueKrw, displayCurrency, rates.snapshot.ratesToKrw), displayCurrency, localeTag);
   const percent = (value: number | null) => value === null ? "—" : formatNumber(value / 100, { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1, signDisplay: "exceptZero" });
   const cards = [

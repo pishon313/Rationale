@@ -18,6 +18,7 @@ import { useCurrencyPreference, useExchangeRates } from "@/lib/use-exchange-rate
 import { useI18n } from "@/i18n/i18n-provider";
 import { emptyDashboardNote, type DashboardNote } from "./dashboard-note";
 import { PortfolioSummary } from "./portfolio-summary";
+import type { InvestmentAccount } from "@/features/accounts/types";
 
 const VIEW_KEY = "tradejournal.dashboard.asset-view";
 const VIEW_EVENT = "tradejournal:asset-view";
@@ -32,11 +33,12 @@ export function DashboardPageClient() {
   const stocks = useLocalCollection<Stock>("stocks", []);
   const plans = useLocalCollection<BuyPlan>("plans", []);
   const trades = useLocalCollection<Trade>("trades", []);
+  const accounts = useLocalCollection<InvestmentAccount>("accounts", []);
   const observations = useLocalCollection<Observation>("observations", []);
   const reviews = useLocalCollection<Review>("reviews", []);
   const migration = migrateTrades(stocks.allItems, trades.allItems);
   const migratedTrades = migration.trades;
-  const ledger = buildTradingLedger(migratedTrades);
+  const ledger = buildTradingLedger(migratedTrades, accounts.items);
   const holdings = projectStocksFromTrades(stocks.allItems, migratedTrades).filter((stock) => stock.quantity > 0).map(withComputed);
   const unresolvedStockIds = new Set(migration.unresolvedStockIds);
   const investedFromLedger = ledger.positions.filter((position) => position.quantity > 0 && !unresolvedStockIds.has(position.stockId)).reduce((sum, position) => sum + position.investedAmountKrw, 0);

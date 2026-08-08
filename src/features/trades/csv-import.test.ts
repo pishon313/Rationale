@@ -4,6 +4,7 @@ import * as XLSX from "@e965/xlsx";
 import { convertCsvRows, detectCsvMapping, parseCsv, parseExcelWorkbook, parseTradeFile } from "./csv-import";
 
 const stocks = [{ id: "s1", ticker: "005930", name: "삼성전자", currency: "KRW", deletedAt: null }] as Stock[];
+const accounts = [{ id: "account-1", name: "기본 계좌", institution: "", kind: "brokerage" as const, subtype: "", baseCurrency: "KRW" as const, isDefault: true, archivedAt: null, memo: "", createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" }];
 
 describe("CSV import", () => {
   it("쉼표와 따옴표를 포함한 CSV를 읽고 열을 자동 인식한다", () => {
@@ -21,6 +22,18 @@ describe("CSV import", () => {
     const result = convertCsvRows(parsed, mapping, stocks, [first]);
     expect(result.skippedDuplicates).toBe(1);
     expect(result.errors[0].row).toBe(3);
+  });
+
+  it("계좌 열이 없으면 선택한 target account를 적용한다", () => {
+    const parsed = parseCsv("거래일,종목코드,구분,수량,가격\n2026-08-01,005930,매수,1,70000");
+    const result = convertCsvRows(parsed, detectCsvMapping(parsed.headers), stocks, [], { accounts, targetAccountId: "account-1" });
+    expect(result.trades[0]).toMatchObject({ accountId: "account-1", accountName: "기본 계좌" });
+  });
+
+  it("등록되지 않은 CSV 계좌명을 자동 생성하지 않고 오류로 표시한다", () => {
+    const parsed = parseCsv("거래일,종목코드,구분,수량,가격,계좌명\n2026-08-01,005930,매수,1,70000,알 수 없는 계좌");
+    const result = convertCsvRows(parsed, detectCsvMapping(parsed.headers), stocks, [], { accounts });
+    expect(result.trades).toHaveLength(0); expect(result.errors[0].message).toContain("등록되지 않은 계좌");
   });
 
   it("소수 쉼표와 미국·유럽식 천 단위 표기를 안전하게 숫자로 바꾼다", () => {

@@ -9,7 +9,8 @@ import { sampleStocks } from "@/features/stocks/sample-data";
 import { sampleTrades } from "@/features/trades/sample-data";
 import { fallbackLanguagePreference } from "@/i18n/i18n-provider";
 import { validateBackupPayload } from "./backup";
-import { backupCounts, backupWrites, restoreBackup, snapshotWrite, type BackupV4 } from "./backup-service";
+import { migrateLegacyAccounts } from "@/features/accounts/migrate-accounts";
+import { backupCounts, backupWrites, restoreBackup, snapshotWrite, type BackupV5 } from "./backup-service";
 
 const repositoryMocks = vi.hoisted(() => ({ saveCollectionsAtomically: vi.fn() }));
 vi.mock("@/lib/local-repository", () => ({ loadCollection: vi.fn(), saveCollectionsAtomically: repositoryMocks.saveCollectionsAtomically }));
@@ -28,6 +29,11 @@ const earningsEvent = { id: "e1", name: "NVIDIA", ticker: "NVDA", date: "2026-08
 
 function version4(overrides: Record<string, unknown> = {}) {
   return { ...valid, version: 4, observations: sampleObservations, reviews: sampleReviews, rules: sampleRules, notes: [note], language: "en", dashboardNotes: [dashboardNote], earningsEvents: [earningsEvent], displayCurrency: "USD", ...overrides };
+}
+
+function version5(overrides: Record<string, unknown> = {}) {
+  const migrated = migrateLegacyAccounts([], sampleTrades, valid.exportedAt);
+  return { ...version4(), version: 5, accounts: migrated.accounts, trades: migrated.trades, ...overrides };
 }
 
 function writesByCollection(backup: ReturnType<typeof validateBackupPayload>) {
@@ -70,6 +76,19 @@ describe("validateBackupPayload", () => {
     if (parsed.version === 4) expect(parsed.dashboardNotes).toBeUndefined();
   });
 
+  it("accepts a version 5 backup and preserves account identity", () => {
+    const parsed = validateBackupPayload(version5());
+    expect(parsed.version).toBe(5);
+    if (parsed.version !== 5) throw new Error("expected version 5");
+    expect(parsed.accounts.length).toBeGreaterThan(0);
+    expect(parsed.trades.every((trade) => parsed.accounts.some((account) => account.id === trade.accountId))).toBe(true);
+  });
+
+  it("rejects a version 5 trade that references an unknown account", () => {
+    const backup = version5();
+    expect(() => validateBackupPayload({ ...backup, trades: backup.trades.map((trade, index) => index === 0 ? { ...trade, accountId: "missing" } : trade) })).toThrow("존재하지 않는 계좌");
+  });
+
   it("rejects duplicate record IDs before restore", () => {
     expect(() => validateBackupPayload({ ...valid, trades: [sampleTrades[0], sampleTrades[0]] })).toThrow("중복 ID");
   });
@@ -98,7 +117,7 @@ describe("validateBackupPayload", () => {
   it("prepares every version 4 collection for an atomic restore", () => {
     const parsed = validateBackupPayload({ ...valid, version: 4, observations: sampleObservations, reviews: sampleReviews, rules: sampleRules, notes: [], language: "ko", dashboardNotes: [], earningsEvents: [], displayCurrency: "KRW" });
     const names = backupWrites(parsed).map((write) => write.collection);
-    expect(names).toEqual(["stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences"]);
+    expect(names).toEqual(["accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences"]);
     expect(backupCounts(parsed)).toMatchObject({ stocks: sampleStocks.length, trades: sampleTrades.length, notes: 0 });
   });
 
@@ -107,10 +126,12 @@ describe("validateBackupPayload", () => {
     const writes = backupWrites(parsed);
     const byCollection = writesByCollection(parsed);
 
-    expect(writes.map((write) => write.collection)).toEqual(["stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences"]);
+    expect(writes.map((write) => write.collection)).toEqual(["accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences"]);
     expect(byCollection.get("stocks")).toEqual(sampleStocks);
     expect(byCollection.get("plans")).toEqual(samplePlans);
     expect(byCollection.get("trades")).toHaveLength(sampleTrades.length);
+    expect(byCollection.get("accounts")).not.toEqual([]);
+    expect((byCollection.get("trades") as readonly { id: string; accountId?: string }[]).every((trade) => Boolean(trade.accountId))).toBe(true);
     for (const collection of ["observations", "reviews", "rules", "notes", "earnings-events"]) expect(byCollection.get(collection)).toEqual([]);
     expect(byCollection.get("language-preferences")).toEqual([fallbackLanguagePreference]);
     expect(byCollection.get("dashboard-notes")).toEqual([emptyDashboardNote]);
@@ -121,7 +142,7 @@ describe("validateBackupPayload", () => {
     const parsed = validateBackupPayload({ ...valid, version, observations: sampleObservations, reviews: sampleReviews, rules: sampleRules });
     const byCollection = writesByCollection(parsed);
 
-    expect(byCollection.size).toBe(11);
+    expect(byCollection.size).toBe(12);
     expect(byCollection.get("observations")).toEqual(sampleObservations);
     expect(byCollection.get("reviews")).toEqual(sampleReviews);
     expect(byCollection.get("rules")).toEqual(sampleRules);
@@ -136,7 +157,7 @@ describe("validateBackupPayload", () => {
     const parsed = validateBackupPayload(version4());
     const byCollection = writesByCollection(parsed);
 
-    expect(byCollection.size).toBe(11);
+    expect(byCollection.size).toBe(12);
     expect(byCollection.get("notes")).toEqual([note]);
     expect(byCollection.get("language-preferences")).toEqual([expect.objectContaining({ id: "language", locale: "en" })]);
     expect(byCollection.get("dashboard-notes")).toEqual([dashboardNote]);
@@ -148,26 +169,27 @@ describe("validateBackupPayload", () => {
     const parsed = validateBackupPayload(version4({ dashboardNotes: undefined, earningsEvents: undefined, displayCurrency: undefined }));
     const byCollection = writesByCollection(parsed);
 
-    expect(byCollection.size).toBe(11);
+    expect(byCollection.size).toBe(12);
     expect(byCollection.get("dashboard-notes")).toEqual([emptyDashboardNote]);
     expect(byCollection.get("earnings-events")).toEqual([]);
     expect(byCollection.get("preferences")).toEqual([fallbackCurrencyPreference]);
   });
 
   it("stores the current backup as an undo snapshot before restore", () => {
-    const backup = version4() as BackupV4;
+    const backup = version5() as BackupV5;
     const write = snapshotWrite(backup);
     expect(write.collection).toBe("restore-snapshots");
     const saved = JSON.parse(String((write.values[0] as unknown as { content: string }).content));
-    expect(saved).toMatchObject({ version: 4, stocks: sampleStocks, notes: [note], language: "en", dashboardNotes: [dashboardNote], earningsEvents: [earningsEvent], displayCurrency: "USD" });
+    expect(saved).toMatchObject({ version: 5, accounts: backup.accounts, stocks: sampleStocks, notes: [note], language: "en", dashboardNotes: [dashboardNote], earningsEvents: [earningsEvent], displayCurrency: "USD" });
     const undoWrites = backupWrites(validateBackupPayload(saved));
-    expect(undoWrites.map((item) => item.collection)).toHaveLength(11);
+    expect(undoWrites.map((item) => item.collection)).toHaveLength(12);
+    expect(undoWrites.find((item) => item.collection === "accounts")?.values).toEqual(backup.accounts);
     expect(undoWrites.some((item) => item.collection === "restore-snapshots")).toBe(false);
   });
 
   it("saves the undo snapshot and complete replacement in one atomic call", async () => {
     repositoryMocks.saveCollectionsAtomically.mockResolvedValue(undefined);
-    const current = version4() as BackupV4;
+    const current = version5() as BackupV5;
     const legacy = validateBackupPayload(valid);
 
     await restoreBackup(current, legacy);
@@ -175,6 +197,6 @@ describe("validateBackupPayload", () => {
     expect(repositoryMocks.saveCollectionsAtomically).toHaveBeenCalledTimes(1);
     expect(repositoryMocks.saveCollectionsAtomically).toHaveBeenCalledWith(expect.any(Array), { resolveCorruption: true });
     const writes = repositoryMocks.saveCollectionsAtomically.mock.calls[0]?.[0];
-    expect(writes.map((write: { collection: string }) => write.collection)).toEqual(["restore-snapshots", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences"]);
+    expect(writes.map((write: { collection: string }) => write.collection)).toEqual(["restore-snapshots", "accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences"]);
   });
 });

@@ -14,6 +14,7 @@ import { useLocalCollection } from "@/lib/use-local-collection";
 import { StockForm } from "./stock-form";
 import { useStockStore } from "./use-stock-store";
 import { withComputed } from "./types";
+import type { InvestmentAccount } from "@/features/accounts/types";
 
 export function StockDetailClient({ stockId }: { stockId: string }) {
   const { t, formatDate, formatNumber } = useI18n();
@@ -21,6 +22,7 @@ export function StockDetailClient({ stockId }: { stockId: string }) {
   const observations = useLocalCollection<Observation>("observations", []);
   const reviews = useLocalCollection<Review>("reviews", []);
   const trades = useLocalCollection<Trade>("trades", []);
+  const accounts = useLocalCollection<InvestmentAccount>("accounts", []);
   const [editing, setEditing] = useState(false);
   const [observing, setObserving] = useState(false);
   const [reviewing, setReviewing] = useState(false);
@@ -50,7 +52,7 @@ export function StockDetailClient({ stockId }: { stockId: string }) {
   const stockObservations = observations.items.filter((observation) => observation.stockId === stock.id).sort((a, b) => b.observedAt.localeCompare(a.observedAt));
   const stockReviews = reviews.items.filter((review) => review.stockId === stock.id).sort((a, b) => b.reviewedAt.localeCompare(a.reviewedAt));
   const activeTrades = trades.allItems.filter((trade) => !trade.deletedAt);
-  const ledger = buildTradingLedger(activeTrades);
+  const ledger = buildTradingLedger(activeTrades, accounts.items);
   const stockTrades = activeTrades.filter((trade) => trade.stockId === stock.id).sort((a, b) => b.tradedAt.localeCompare(a.tradedAt));
 
   return <>

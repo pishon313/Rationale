@@ -5,7 +5,7 @@ import { isLocale } from "@/i18n/types";
 export type CollectionValidationErrorType = "INVALID_COLLECTION_SHAPE" | "INVALID_RECORD";
 export type CollectionValidationResult = { valid: true } | { valid: false; errorType: CollectionValidationErrorType; index?: number };
 
-const backupCollections = new Set(["stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "dashboard-notes", "earnings-events"]);
+const backupCollections = new Set(["accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "dashboard-notes", "earnings-events"]);
 
 export function validateStoredCollection(collection: string, value: unknown): CollectionValidationResult {
   if (!Array.isArray(value)) return { valid: false, errorType: "INVALID_COLLECTION_SHAPE" };

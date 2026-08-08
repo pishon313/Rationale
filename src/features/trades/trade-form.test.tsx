@@ -73,7 +73,7 @@ describe("TradeForm", () => {
 
     expect(screen.getByRole("heading", { name: "기초 포지션 등록" })).toBeInTheDocument();
     expect(screen.getByLabelText("종목")).toHaveValue(stock.id);
-    expect(screen.getByLabelText("계좌")).toHaveValue("ISA 계좌");
+    expect(screen.getByLabelText("계좌")).toHaveDisplayValue("ISA 계좌");
     expect(screen.getByLabelText("평균단가")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("수량"), { target: { value: "12" } });
     fireEvent.change(screen.getByLabelText("평균단가"), { target: { value: "45000" } });

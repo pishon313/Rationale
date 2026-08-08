@@ -7,22 +7,25 @@ import { useI18n } from "@/i18n/i18n-provider";
 import { convertCsvRows, csvFieldLabels, detectCsvMapping, parseTradeFile, type CsvField, type CsvMapping, type ParsedCsv } from "./csv-import";
 import { translateTradeText } from "./trade-i18n";
 import type { Trade } from "./types";
+import type { InvestmentAccount } from "@/features/accounts/types";
 
 const required: CsvField[] = ["tradedAt", "tradeType", "quantity", "price"];
 const optional: CsvField[] = ["time", "ticker", "stockName", "fee", "tax", "currency", "exchangeRate", "accountName"];
 
-export function CsvImportDialog({ stocks, existing, onCancel, onImport }: { stocks: Stock[]; existing: Trade[]; onCancel: () => void; onImport: (trades: Trade[]) => Promise<boolean> }) {
+export function CsvImportDialog({ stocks, accounts, existing, onCancel, onImport }: { stocks: Stock[]; accounts: InvestmentAccount[]; existing: Trade[]; onCancel: () => void; onImport: (trades: Trade[]) => Promise<boolean> }) {
   const { t, formatNumber } = useI18n();
   const [parsed, setParsed] = useState<ParsedCsv | null>(null);
   const [mapping, setMapping] = useState<CsvMapping>({});
   const [fileName, setFileName] = useState("");
   const [fileError, setFileError] = useState("");
   const [saving, setSaving] = useState(false);
+  const activeAccounts = accounts.filter((account) => !account.archivedAt);
+  const [targetAccountId, setTargetAccountId] = useState(activeAccounts.find((account) => account.isDefault)?.id ?? activeAccounts[0]?.id ?? "");
   const missing = required.filter((field) => mapping[field] === undefined);
   const hasStockColumn = mapping.ticker !== undefined || mapping.stockName !== undefined;
   const result = useMemo(
-    () => parsed && !missing.length && hasStockColumn ? convertCsvRows(parsed, mapping, stocks, existing) : null,
-    [existing, hasStockColumn, mapping, missing.length, parsed, stocks],
+    () => parsed && !missing.length && hasStockColumn ? convertCsvRows(parsed, mapping, stocks, existing, { accounts, targetAccountId }) : null,
+    [accounts, existing, hasStockColumn, mapping, missing.length, parsed, stocks, targetAccountId],
   );
 
   async function load(file?: File) {
@@ -86,6 +89,7 @@ export function CsvImportDialog({ stocks, existing, onCancel, onImport }: { stoc
           </section>
 
           {parsed && <>
+            {mapping.accountName === undefined && <section className="rounded-xl border p-5"><label className="text-sm font-medium">{t("이 거래를 어느 계좌로 가져올까요?")}<select required className="mt-2 h-10 w-full rounded-lg border bg-[var(--surface)] px-3" value={targetAccountId} onChange={(event) => setTargetAccountId(event.target.value)}><option value="">{t("계좌 추가 필요")}</option>{activeAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label></section>}
             <section className="rounded-xl border p-5">
               <h3 className="font-semibold">{t("열 연결")}</h3>
               <p className="mt-1 text-xs text-[var(--muted)]">{t("필수 열과 종목코드 또는 종목명 중 하나가 필요합니다.")}</p>

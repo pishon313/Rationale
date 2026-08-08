@@ -2,14 +2,15 @@ import Decimal from "decimal.js";
 import { currencies, fallbackRatesToKrw, type RatesToKrw } from "./currency";
 import { applyBuy, applySell, emptyPosition, type Position } from "./portfolio";
 import { tradeTypes, type Trade } from "@/features/trades/types";
+import { accountIdentity, normalizeLegacyAccountName, type InvestmentAccount } from "@/features/accounts/types";
 
 export type LedgerPosition = {
-  key: string; stockId: string; stockName: string; accountName: string; currency: Trade["currency"];
+  key: string; stockId: string; stockName: string; accountId: string; accountName: string; currency: Trade["currency"];
   quantity: number; averagePrice: number; investedAmount: number; investedAmountKrw: number; realizedProfit: number; realizedProfitKrw: number;
 };
-export type CashBalance = { accountName: string; currency: Trade["currency"]; balance: number; isReconciled: boolean };
+export type CashBalance = { accountId: string; accountName: string; currency: Trade["currency"]; balance: number; isReconciled: boolean };
 export type PositionCycle = {
-  id: string; stockId: string; stockName: string; accountName: string; currency: Trade["currency"];
+  id: string; stockId: string; stockName: string; accountId: string; accountName: string; currency: Trade["currency"];
   sequence: number; openedAt: string; closedAt: string | null; tradeIds: string[]; realizedProfit: number; realizedProfitKrw: number;
 };
 export type TradeCalculation = {
@@ -22,15 +23,17 @@ export type TradingLedger = {
   totalRealizedKrw: number;
 };
 
-type InternalPosition = { value: Position; investedAmountKrw: Decimal; realizedProfitKrw: Decimal; stockId: string; stockName: string; accountName: string; currency: Trade["currency"] };
+type InternalPosition = { value: Position; investedAmountKrw: Decimal; realizedProfitKrw: Decimal; stockId: string; stockName: string; accountId: string; accountName: string; currency: Trade["currency"] };
 type InternalCycle = Omit<PositionCycle, "realizedProfit" | "realizedProfitKrw"> & { realizedProfit: Decimal; realizedProfitKrw: Decimal };
 
 export function normalizeTrade(trade: Trade): Trade {
   return {
     ...trade,
+    accountId: trade.accountId?.trim() || null,
     amount: trade.amount ?? undefined,
     exchangeRate: Number.isFinite(trade.exchangeRate) ? trade.exchangeRate : fallbackRatesToKrw[trade.currency],
     accountName: trade.accountName?.trim() || "기본 계좌",
+    cashFlowKind: trade.cashFlowKind ?? (trade.isOpeningPosition ? "opening" : trade.tradeType === "입금" || trade.tradeType === "출금" ? "external" : undefined),
     memo: trade.memo ?? "",
     emotion: trade.emotion || "평온",
     emotionIntensity: trade.emotionIntensity || 1,
@@ -42,13 +45,14 @@ export function normalizeTrade(trade: Trade): Trade {
   };
 }
 
-export function buildTradingLedger(input: Trade[]): TradingLedger {
+export function buildTradingLedger(input: Trade[], accounts: readonly InvestmentAccount[] = []): TradingLedger {
+  const accountNames = new Map(accounts.map((account) => [account.id, account.name]));
   const trades = input.map(normalizeTrade).filter((trade) => !trade.deletedAt).sort(compareTrades);
   const tradeIdCounts = new Map<string, number>();
   for (const trade of trades) tradeIdCounts.set(trade.id, (tradeIdCounts.get(trade.id) ?? 0) + 1);
   const duplicateTradeIds = new Set([...tradeIdCounts].filter(([, count]) => count > 1).map(([id]) => id));
   const positions = new Map<string, InternalPosition>();
-  const cash = new Map<string, { accountName: string; currency: Trade["currency"]; value: Decimal; isReconciled: boolean }>();
+  const cash = new Map<string, { accountId: string; accountName: string; currency: Trade["currency"]; value: Decimal; isReconciled: boolean }>();
   const activeCycles = new Map<string, string>();
   const cycleCounts = new Map<string, number>();
   const cycles = new Map<string, InternalCycle>();
@@ -68,11 +72,13 @@ export function buildTradingLedger(input: Trade[]): TradingLedger {
     }
     try {
       validateTrade(trade);
+      const accountId = accountIdentity(trade);
+      const accountName = accountNames.get(accountId) ?? normalizeLegacyAccountName(trade.accountName);
       const cashEffect = calculateCashEffect(trade);
       if (trade.tradeType === "매수" || trade.tradeType === "매도") {
         const stockId = trade.stockId as string;
-        const key = positionKey(trade.accountName, stockId, trade.currency);
-        const current = positions.get(key) ?? { value: emptyPosition(), investedAmountKrw: new Decimal(0), realizedProfitKrw: new Decimal(0), stockId, stockName: trade.stockName, accountName: trade.accountName, currency: trade.currency };
+        const key = positionKey(accountId, stockId, trade.currency);
+        const current = positions.get(key) ?? { value: emptyPosition(), investedAmountKrw: new Decimal(0), realizedProfitKrw: new Decimal(0), stockId, stockName: trade.stockName, accountId, accountName, currency: trade.currency };
         let cycleId = activeCycles.get(key) ?? null;
         const beforeRealized = current.value.realizedProfit;
         const gross = new Decimal(trade.quantity).mul(trade.price);
@@ -85,7 +91,7 @@ export function buildTradingLedger(input: Trade[]): TradingLedger {
           cycleCounts.set(key, sequence);
           cycleId = `${key}:${trade.id}`;
           activeCycles.set(key, cycleId);
-          cycles.set(cycleId, { id: cycleId, stockId, stockName: trade.stockName, accountName: trade.accountName, currency: trade.currency, sequence, openedAt: trade.tradedAt, closedAt: null, tradeIds: [], realizedProfit: new Decimal(0), realizedProfitKrw: new Decimal(0) });
+          cycles.set(cycleId, { id: cycleId, stockId, stockName: trade.stockName, accountId, accountName, currency: trade.currency, sequence, openedAt: trade.tradedAt, closedAt: null, tradeIds: [], realizedProfit: new Decimal(0), realizedProfitKrw: new Decimal(0) });
         }
         if (!cycleId) throw new Error("연결할 매수 포지션이 없습니다.");
         const realized = next.realizedProfit.sub(beforeRealized);
@@ -107,7 +113,7 @@ export function buildTradingLedger(input: Trade[]): TradingLedger {
         base.averagePriceAfter = next.averagePrice.toNumber();
       }
       if (!trade.isOpeningPosition) {
-        applyCash(cash, trade, cashEffect);
+        applyCash(cash, trade, accountId, accountName, cashEffect);
         base.cashEffect = cashEffect.toNumber();
       }
       calculations[trade.id] = base;
@@ -119,8 +125,8 @@ export function buildTradingLedger(input: Trade[]): TradingLedger {
   }
 
   return {
-    positions: [...positions].map(([key, item]) => ({ key, stockId: item.stockId, stockName: item.stockName, accountName: item.accountName, currency: item.currency, quantity: item.value.quantity.toNumber(), averagePrice: item.value.averagePrice.toNumber(), investedAmount: item.value.investedAmount.toNumber(), investedAmountKrw: item.investedAmountKrw.toNumber(), realizedProfit: item.value.realizedProfit.toNumber(), realizedProfitKrw: item.realizedProfitKrw.toNumber() })),
-    cashBalances: [...cash.values()].map((item) => ({ accountName: item.accountName, currency: item.currency, balance: item.value.toNumber(), isReconciled: item.isReconciled })).sort((a, b) => a.accountName.localeCompare(b.accountName) || a.currency.localeCompare(b.currency)),
+    positions: [...positions].map(([key, item]) => ({ key, stockId: item.stockId, stockName: item.stockName, accountId: item.accountId, accountName: item.accountName, currency: item.currency, quantity: item.value.quantity.toNumber(), averagePrice: item.value.averagePrice.toNumber(), investedAmount: item.value.investedAmount.toNumber(), investedAmountKrw: item.investedAmountKrw.toNumber(), realizedProfit: item.value.realizedProfit.toNumber(), realizedProfitKrw: item.realizedProfitKrw.toNumber() })),
+    cashBalances: [...cash.values()].map((item) => ({ accountId: item.accountId, accountName: item.accountName, currency: item.currency, balance: item.value.toNumber(), isReconciled: item.isReconciled })).sort((a, b) => a.accountName.localeCompare(b.accountName) || a.currency.localeCompare(b.currency)),
     cycles: [...cycles.values()].map((cycle) => ({ ...cycle, realizedProfit: cycle.realizedProfit.toNumber(), realizedProfitKrw: cycle.realizedProfitKrw.toNumber() })),
     calculations, errors, totalRealizedKrw: totalRealizedKrw.toNumber(),
   };
@@ -138,7 +144,7 @@ export function aggregatePositions(ledger: TradingLedger) {
 
 export function cashBalanceKrw(ledger: TradingLedger, input: RatesToKrw | number = fallbackRatesToKrw) { const rates = typeof input === "number" ? { ...fallbackRatesToKrw, USD: input } : input; return ledger.cashBalances.reduce((sum, item) => sum + item.balance * rates[item.currency], 0); }
 export function tradeAmount(trade: Trade) { return trade.tradeType === "매수" || trade.tradeType === "매도" ? trade.quantity * trade.price : trade.amount ?? trade.quantity * trade.price; }
-export function positionKey(accountName: string, stockId: string, currency?: Trade["currency"]) { return `${accountName}::${stockId}${currency ? `::${currency}` : ""}`; }
+export function positionKey(accountId: string, stockId: string, currency?: Trade["currency"]) { return JSON.stringify(currency ? [accountId, stockId, currency] : [accountId, stockId]); }
 
 function validateTrade(trade: Trade) {
   if (!isValidTimestamp(trade.tradedAt) || !isValidTimestamp(trade.createdAt)) throw new Error("거래 일시가 올바르지 않습니다.");
@@ -162,9 +168,9 @@ function calculateCashEffect(trade: Trade) {
   if (trade.tradeType === "매도" || trade.tradeType === "배당" || trade.tradeType === "입금") return gross.sub(costs);
   return gross.add(costs).neg();
 }
-function applyCash(store: Map<string, { accountName: string; currency: Trade["currency"]; value: Decimal; isReconciled: boolean }>, trade: Trade, effect: Decimal) {
-  const key = `${trade.accountName}::${trade.currency}`; const current = store.get(key);
-  store.set(key, { accountName: trade.accountName, currency: trade.currency, value: (current?.value ?? new Decimal(0)).add(effect), isReconciled: current ? current.isReconciled : trade.tradeType === "입금" });
+function applyCash(store: Map<string, { accountId: string; accountName: string; currency: Trade["currency"]; value: Decimal; isReconciled: boolean }>, trade: Trade, accountId: string, accountName: string, effect: Decimal) {
+  const key = JSON.stringify([accountId, trade.currency]); const current = store.get(key);
+  store.set(key, { accountId, accountName, currency: trade.currency, value: (current?.value ?? new Decimal(0)).add(effect), isReconciled: trade.cashFlowKind === "reconciliation" || (current ? current.isReconciled : trade.tradeType === "입금") });
 }
 function isValidTimestamp(value: string) { return typeof value === "string" && value.trim().length > 0 && Number.isFinite(Date.parse(value)); }
 function compareTrades(a: Trade, b: Trade) { return compareTimestamps(a.tradedAt, b.tradedAt) || compareTimestamps(a.createdAt, b.createdAt) || a.id.localeCompare(b.id); }

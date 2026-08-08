@@ -7,8 +7,9 @@ import { stockMessages } from "./stocks";
 import { tradeMessages } from "./trades";
 import { redesignMessages } from "./redesign";
 import { dashboardMessages } from "./dashboard";
+import { accountMessages } from "./accounts";
 
-const catalogs: MessageCatalog[] = [commonMessages, appMessages, stockMessages, tradeMessages, journalMessages, securityMessages, redesignMessages, dashboardMessages];
+const catalogs: MessageCatalog[] = [commonMessages, appMessages, stockMessages, tradeMessages, journalMessages, securityMessages, redesignMessages, dashboardMessages, accountMessages];
 
 export function translate(locale: Locale, key: string) {
   if (locale === "ko") return key;

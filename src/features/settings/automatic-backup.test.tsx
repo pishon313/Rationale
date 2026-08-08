@@ -14,7 +14,7 @@ describe("AutomaticBackup", () => {
   beforeEach(() => {
     localStorage.clear();
     mocks.invoke.mockReset();
-    mocks.createBackupPayload.mockReset().mockResolvedValue({ version: 4 });
+    mocks.createBackupPayload.mockReset().mockResolvedValue({ version: 5 });
     mocks.reportPersistenceError.mockReset();
   });
 
@@ -28,7 +28,7 @@ describe("AutomaticBackup", () => {
 
     render(<AutomaticBackup />);
 
-    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith("ensure_automatic_backup", { content: JSON.stringify({ version: 4 }, null, 2) }));
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith("ensure_automatic_backup", { content: JSON.stringify({ version: 5 }, null, 2) }));
     expect(statuses).toEqual([missing, created]);
     expect(localStorage.getItem("tradejournal.last-automatic-backup-at")).toBeNull();
     expect(localStorage.getItem("tradejournal.last-automatic-backup-path")).toBeNull();

@@ -14,6 +14,7 @@ import { useLocalCollection } from "@/lib/use-local-collection";
 import { PerformanceSections } from "./performance-sections";
 import { AccountPerformanceSection } from "./account-performance-section";
 import { PeriodicReportSection } from "./periodic-report-section";
+import type { InvestmentAccount } from "@/features/accounts/types";
 
 export function AnalyticsPageClient() {
   const { t, formatDate, formatNumber, localeTag } = useI18n();
@@ -21,8 +22,9 @@ export function AnalyticsPageClient() {
   const plans = useLocalCollection<BuyPlan>("plans", []);
   const reviews = useLocalCollection<Review>("reviews", []);
   const stocks = useLocalCollection<Stock>("stocks", []);
+  const accounts = useLocalCollection<InvestmentAccount>("accounts", []);
   const summary = buildAnalytics(trades.items, reviews.items);
-  const ledger = buildTradingLedger(trades.items);
+  const ledger = buildTradingLedger(trades.items, accounts.items);
   const performance = plans.items.map((plan) => buildPlanPerformance(plan, trades.items, ledger)).filter((item) => item.buyQuantity > 0);
   const violations = trades.items.flatMap((trade) => (trade.ruleViolations ?? []).map((violation) => ({ trade, violation })));
   const emotions = summary.emotions.map((item) => ({ ...item, displayEmotion: t(item.emotion) }));
@@ -36,7 +38,7 @@ export function AnalyticsPageClient() {
     <div><p className="text-sm text-[var(--muted)]">{t("기록을 행동 패턴으로 바꾸는 곳")}</p><h1 className="mt-1 text-2xl font-semibold">{t("분석")}</h1></div>
     <section className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{cards.map(([label, value, Icon]) => <article key={label} className="rounded-xl border bg-[var(--surface)] p-5"><div className="flex items-center justify-between"><p className="text-sm text-[var(--muted)]">{label}</p><Icon size={18} className="text-[var(--accent)]" /></div><p className="mt-4 text-2xl font-semibold tabular-nums">{value}</p></article>)}</section>
     <div className="mt-4 grid gap-4 lg:grid-cols-2"><ChartCard title={t("월별 매매 횟수")} empty={!summary.monthlyTrades.length}><ResponsiveContainer width="100%" height={250}><BarChart data={summary.monthlyTrades}><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="month" tickFormatter={(value) => formatDate(`${value}-01T00:00:00`, { year: "numeric", month: "short" })} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(value) => formatDate(`${String(value)}-01T00:00:00`, { year: "numeric", month: "long" })} /><Bar dataKey="count" name={t("매매")} fill="var(--accent)" radius={[6, 6, 0, 0]} /></BarChart></ResponsiveContainer></ChartCard><ChartCard title={t("감정별 매매 횟수")} empty={!summary.emotions.length}><ResponsiveContainer width="100%" height={250}><BarChart data={emotions} layout="vertical"><CartesianGrid strokeDasharray="3 3" horizontal={false} /><XAxis type="number" allowDecimals={false} /><YAxis type="category" dataKey="displayEmotion" width={88} /><Tooltip /><Bar dataKey="count" name={t("매매")} fill="#7c6ee6" radius={[0, 6, 6, 0]} /></BarChart></ResponsiveContainer></ChartCard></div>
-    <AccountPerformanceSection trades={trades.items} stocks={stocks.items} ledger={ledger} />
+    <AccountPerformanceSection trades={trades.items} stocks={stocks.items} accounts={accounts.items} ledger={ledger} />
     <PerformanceSections trades={trades.items} plans={plans.items} ledger={ledger} />
     <PeriodicReportSection trades={trades.items} reviews={reviews.items} ledger={ledger} />
     <section className="mt-4 overflow-hidden rounded-xl border bg-[var(--surface)]"><div className="p-5"><h2 className="font-semibold">{t("계획 대비 실제 결과")}</h2><p className="mt-1 text-sm text-[var(--muted)]">{t("계획 가격·수량·금액과 실제 체결, 실현 R-Multiple을 비교합니다.")}</p></div><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-[var(--surface-muted)] text-xs text-[var(--muted)]"><tr>{["계획", "가격 편차", "수량 편차", "금액 편차", "계획 손익비", "실현손익", "R-Multiple"].map((item) => <th key={item} className="whitespace-nowrap px-4 py-3">{t(item)}</th>)}</tr></thead><tbody>{performance.map((item) => <tr key={item.plan.id} className="border-t"><td className="px-4 py-3"><b>{item.plan.stockName}</b><small className="block text-[var(--muted)]">{item.plan.title}</small></td><Metric value={item.priceDeviationPercent} localeTag={localeTag} /><Metric value={item.quantityDeviationPercent} localeTag={localeTag} /><Metric value={item.amountDeviationPercent} localeTag={localeTag} /><td className="px-4 text-right">{item.rewardRiskRatio ? `1 : ${formatNumber(item.rewardRiskRatio, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}</td><td className="px-4 text-right tabular-nums">{item.soldQuantity ? signed(item.realizedProfit, localeTag) : "—"}</td><td className="px-4 text-right font-medium">{item.rMultiple === null ? "—" : `${formatNumber(item.rMultiple, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}R`}</td></tr>)}</tbody></table>{!performance.length && <p className="p-6 text-center text-sm text-[var(--muted)]">{t("계획에 연결된 매수 기록이 없습니다.")}</p>}</div></section>

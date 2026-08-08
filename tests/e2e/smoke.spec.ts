@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+const e2eAccount = (id: string, name: string, isDefault = true) => ({ id, name, institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault, archivedAt: null, memo: "", createdAt: "2026-08-08T00:00:00.000Z", updatedAt: "2026-08-08T00:00:00.000Z" });
+
 test("대시보드 앱 셸을 표시한다", async ({ page }) => {
   await page.goto("/dashboard");
   await expect(page.getByRole("heading", { level: 1 })).toContainText("오늘 판단할 일을 먼저 봅니다.");
@@ -87,11 +89,12 @@ test("매매 원장에서 현금 입금 기록 화면을 연다", async ({ page 
 });
 
 test("현금 기록을 저장하고 다시 열어 수정·삭제한다", async ({ page }) => {
+  await page.addInitScript((account) => localStorage.setItem("tradejournal.accounts.v1", JSON.stringify([account])), e2eAccount("e2e-account", "E2E 계좌"));
   await page.goto("/trades");
   await page.getByRole("button", { name: "원장 기록" }).click();
   await page.getByRole("button", { name: "입금", exact: true }).click();
   await page.getByLabel("입금 금액").fill("100000");
-  await page.getByLabel("계좌").fill("E2E 계좌");
+  await page.getByLabel("계좌").selectOption("e2e-account");
   await page.getByRole("button", { name: "기록 저장" }).click();
 
   let row = page.getByRole("row").filter({ hasText: "E2E 계좌" });
@@ -113,11 +116,17 @@ test("현금 기록을 저장하고 다시 열어 수정·삭제한다", async (
 });
 
 test("새 계좌를 등록하면서 실제 현금 잔액으로 조정한다", async ({ page }) => {
+  await page.goto("/accounts");
+  await page.getByRole("button", { name: "계좌 추가" }).click();
+  await page.getByLabel("계좌명").fill("장기 계좌");
+  await page.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(page.getByRole("link", { name: "장기 계좌" })).toBeVisible();
   await page.goto("/trades");
   await page.getByRole("button", { name: "계좌 등록·잔액 조정" }).click();
-  await page.getByLabel("계좌", { exact: true }).fill("장기 계좌");
-  await page.getByLabel("실제 현금 잔액").fill("250000");
-  await page.getByRole("button", { name: "저장", exact: true }).click();
+  const adjustment = page.locator('h2:has-text("계좌 잔액 조정")').locator("..");
+  await adjustment.locator("select").first().selectOption({ label: "장기 계좌" });
+  await adjustment.locator('input[type="number"]').fill("250000");
+  await adjustment.getByRole("button", { name: "저장", exact: true }).click();
   await expect(page.getByRole("row").filter({ hasText: "장기 계좌" })).toContainText("250,000");
 });
 
@@ -135,26 +144,28 @@ test("분석에서 장기 계좌 성과와 계좌별 결과를 표시한다", as
   await expect(accountRow).toContainText("0.0%");
 });
 
-test("계좌 이름을 기존 계좌로 병합한다", async ({ page }) => {
-  const base = (id: string, accountName: string, amount: number) => ({
+test("계좌 이름 변경 후에도 기존 거래 identity를 유지한다", async ({ page }) => {
+  const base = (id: string, accountId: string, accountName: string, amount: number) => ({
     id, stockId: null, stockName: "", planId: null, tradeType: "입금", tradedAt: `2025-01-0${id === "a" ? "1" : "2"}T09:00:00+09:00`,
-    quantity: 0, price: 0, amount, currency: "KRW", exchangeRate: 1, fee: 0, tax: 0, accountName,
+    quantity: 0, price: 0, amount, currency: "KRW", exchangeRate: 1, fee: 0, tax: 0, accountId, accountName,
     memo: "", emotion: "평온", emotionIntensity: 1, confidenceScore: 3, ruleComplianceScore: 5, ruleViolations: [],
     createdAt: "2025-01-01T09:00:00+09:00", updatedAt: "2025-01-01T09:00:00+09:00", deletedAt: null,
   });
-  await page.addInitScript((records) => localStorage.setItem("tradejournal.trades.v1", JSON.stringify(records)), [base("a", "연금", 100000), base("b", "일반", 200000)]);
-  await page.goto("/trades");
-  await page.getByRole("button", { name: "계좌 관리" }).click();
-  await page.getByLabel("변경할 계좌").selectOption("연금");
-  await page.getByLabel("새 계좌명 또는 병합할 계좌명").fill("일반");
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "변경", exact: true }).click();
-  await expect(page.getByText("계좌를 병합하고 전체 원장을 다시 계산했습니다.")).toBeVisible();
-  await expect(page.getByRole("row").filter({ hasText: "일반" })).toHaveCount(2);
-  await expect(page.getByRole("row").filter({ hasText: "연금" })).toHaveCount(0);
+  await page.addInitScript(({records,accounts}) => { localStorage.setItem("tradejournal.trades.v1", JSON.stringify(records)); localStorage.setItem("tradejournal.accounts.v1", JSON.stringify(accounts)); }, {records: [base("a", "pension", "연금", 100000), base("b", "general", "일반", 200000)], accounts:[e2eAccount("pension","연금"),e2eAccount("general","일반",false)]});
+  await page.goto("/accounts");
+  const source = page.locator("article").filter({ hasText: "연금" });
+  await expect(source).toContainText("100,000");
+  await source.getByRole("button", { name: "수정" }).click();
+  await page.getByLabel("계좌명").fill("연금 변경");
+  await page.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(page.getByRole("link", { name: "연금 변경" })).toBeVisible();
+  await page.getByRole("navigation", { name: "주요 메뉴" }).getByRole("link", { name: "매매" }).click();
+  await expect(page.getByRole("row").filter({ hasText: "연금 변경" })).toHaveCount(1);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]")[0].accountName)).toBe("연금");
 });
 
 test("현금 흐름 없이 기존 보유 종목의 기초 포지션을 등록한다", async ({ page }) => {
+  await page.addInitScript((account) => localStorage.setItem("tradejournal.accounts.v1", JSON.stringify([account])), e2eAccount("opening-account", "기본 계좌"));
   await page.addInitScript(() => localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([{
     id: "opening-stock", ticker: "OPEN", name: "기존 보유 종목", market: "한국", currency: "KRW", assetType: "주식", sector: "테스트",
     status: "보유", investmentType: "장기 코어", currentPrice: 55000, targetPrice: null, averagePrice: 0, quantity: 0,
