@@ -18,6 +18,8 @@ import { emotions, tradeTypes, type Trade } from "./types";
 type Props = {
   trade?: Trade;
   initialType?: Trade["tradeType"];
+  initialStockId?: string;
+  openingPosition?: boolean;
   stocks: Stock[];
   plans: BuyPlan[];
   rules: InvestmentRule[];
@@ -33,13 +35,13 @@ const field = "mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3 text-
 // 계획 연결 데이터와 저장 로직은 유지하되, 당분간 원장 입력 UI에서는 숨깁니다.
 const showLinkedPlanField = false;
 
-export function TradeForm({ trade, initialType = "매수", stocks, plans, rules, ledger, formError = "", onCancel, onSave }: Props) {
+export function TradeForm({ trade, initialType = "매수", initialStockId, openingPosition: createOpeningPosition = false, stocks, plans, rules, ledger, formError = "", onCancel, onSave }: Props) {
   const { t, formatDate, formatNumber } = useI18n();
   const exchangeRates = useExchangeRates();
   const firstStock = stocks[0];
-  const openingPosition = trade?.isOpeningPosition === true;
+  const openingPosition = trade?.isOpeningPosition === true || createOpeningPosition;
   const [type, setType] = useState<Trade["tradeType"]>(openingPosition ? "매수" : trade?.tradeType ?? initialType);
-  const [stockId, setStockId] = useState(trade?.stockId ?? firstStock?.id ?? "");
+  const [stockId, setStockId] = useState(trade?.stockId ?? initialStockId ?? firstStock?.id ?? "");
   const [planId, setPlanId] = useState(trade?.planId ?? "");
   const [tradedAt, setTradedAt] = useState(() => toLocalDateTime(trade?.tradedAt));
   const [quantity, setQuantity] = useState(trade?.quantity ?? 0);
@@ -191,8 +193,8 @@ export function TradeForm({ trade, initialType = "매수", stocks, plans, rules,
       <form className="h-full w-full max-w-2xl overflow-y-auto bg-[var(--surface)]" onSubmit={submit}>
         <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-[var(--surface)] p-5">
           <div>
-            <h2 id="trade-form-title" className="text-lg font-semibold">{trade ? t("기록 수정") : t("새 원장 기록")}</h2>
-            <p className="mt-1 text-xs text-[var(--muted)]">{t("매매와 현금 흐름을 한 원장에 기록합니다.")}</p>
+            <h2 id="trade-form-title" className="text-lg font-semibold">{t(openingPosition && !trade ? "기초 포지션 등록" : trade ? "기록 수정" : "새 원장 기록")}</h2>
+            <p className="mt-1 text-xs text-[var(--muted)]">{t(openingPosition ? "기존 보유 수량과 평균단가를 현금 흐름 없이 시작값으로 기록합니다." : "매매와 현금 흐름을 한 원장에 기록합니다.")}</p>
           </div>
           <button type="button" aria-label={t("닫기")} disabled={saving} onClick={onCancel} className="disabled:opacity-50"><X /></button>
         </div>
@@ -215,7 +217,7 @@ export function TradeForm({ trade, initialType = "매수", stocks, plans, rules,
           {(isSecurity || isDividend) && <Label text={t("종목")}><select required={isSecurity} className={field} value={stockId} onChange={(event) => selectStock(event.target.value)}><option value="">{t("종목 선택")}</option>{!stock && trade?.stockId && <option value={trade.stockId}>{t("{stock} (현재 목록에 없음)", { stock: trade.stockName })}</option>}{stocks.map((item) => <option key={item.id} value={item.id}>{item.name} ({item.ticker}){item.deletedAt ? ` · ${t("삭제됨")}` : ""}</option>)}</select></Label>}
           {isSecurity && <>
             <Label text={t("수량")}><input required type="number" min="0" step="any" className={field} value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} />{type === "매도" && <small className="mt-1 block text-[var(--muted)]">{t("현재 원장 보유: {quantity}주", { quantity: formatNumber(available) })}</small>}</Label>
-            <Label text={t("체결 가격")}><input required type="number" min="0" step="any" className={field} value={price} onChange={(event) => setPrice(Number(event.target.value))} /></Label>
+            <Label text={t(openingPosition ? "평균단가" : "체결 가격")}><input required type="number" min="0" step="any" className={field} value={price} onChange={(event) => setPrice(Number(event.target.value))} /></Label>
           </>}
           {!isSecurity && <Label text={type === "배당" ? t("세전 배당금") : t("{type} 금액", { type: t(type) })}><input required type="number" min="0" step="any" className={field} value={amount} onChange={(event) => setAmount(Number(event.target.value))} /></Label>}
           <Label text={t("거래 일시")}><input required type="datetime-local" className={field} value={tradedAt} onChange={(event) => setTradedAt(event.target.value)} /></Label>
@@ -238,7 +240,7 @@ export function TradeForm({ trade, initialType = "매수", stocks, plans, rules,
 
         <div className="sticky bottom-0 flex justify-end gap-2 border-t bg-[var(--surface)] p-4">
           <button type="button" disabled={saving} onClick={onCancel} className="rounded-lg border px-4 py-2 text-sm disabled:opacity-50">{t("취소")}</button>
-          <button disabled={saving} className="rounded-lg bg-[var(--accent)] px-5 py-2 text-sm text-white disabled:opacity-60">{saving ? t("저장 중...") : trade ? t("변경 저장") : t("기록 저장")}</button>
+          <button disabled={saving} className="rounded-lg bg-[var(--accent)] px-5 py-2 text-sm text-white disabled:opacity-60">{saving ? t("저장 중...") : openingPosition && !trade ? t("기초 포지션 저장") : trade ? t("변경 저장") : t("기록 저장")}</button>
         </div>
       </form>
     </div>

@@ -32,6 +32,7 @@ export function TradesPageClient() {
   const { items: plans, ready: plansReady } = useLocalCollection<BuyPlan>("plans", []);
   const { items: rules, ready: rulesReady } = useLocalCollection<InvestmentRule>("rules", []);
   const [editing, setEditing] = useState<Trade | "new" | null>(null);
+  const [openingStockId, setOpeningStockId] = useState("");
   const [newTradeType, setNewTradeType] = useState<Trade["tradeType"]>("매수");
   const [accountManagerOpen, setAccountManagerOpen] = useState(false);
   const [balanceAdjustmentOpen, setBalanceAdjustmentOpen] = useState(false);
@@ -41,6 +42,7 @@ export function TradesPageClient() {
   const [isMigrating, setIsMigrating] = useState(false);
   const [migrationFailed, setMigrationFailed] = useState(false);
   const migrationInProgress = useRef(false);
+  const openingRequestHandled = useRef(false);
   const migration = useMemo(() => migrateTrades(allStocks, storedTrades), [allStocks, storedTrades]);
   const allTrades = migration.trades;
   const trades = useMemo(() => allTrades.filter((trade) => !trade.deletedAt), [allTrades]);
@@ -50,6 +52,20 @@ export function TradesPageClient() {
   const editingId = editing && editing !== "new" ? editing.id : null;
   const formLedger = useMemo(() => editingId ? buildTradingLedger(trades.filter((trade) => trade.id !== editingId)) : ledger, [editingId, ledger, trades]);
   const dataReady = tradesReady && stocksReady && plansReady && rulesReady && !isMigrating && !migrationFailed && migration.initializedStockIds.length === 0;
+
+  useEffect(() => {
+    if (!dataReady || openingRequestHandled.current) return;
+    openingRequestHandled.current = true;
+    const requested = new URLSearchParams(window.location.search).get("openingStockId") ?? "";
+    const stock = tradableStocks.find((item) => item.id === requested && item.quantity === 0);
+    if (!stock) return;
+    const timer = window.setTimeout(() => {
+      setOpeningStockId(stock.id);
+      setNewTradeType("매수");
+      setEditing("new");
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [dataReady, tradableStocks]);
 
   useEffect(() => {
     if (!tradesReady || !stocksReady || !plansReady || !rulesReady || !migration.initializedStockIds.length || migrationInProgress.current || migrationFailed) return;
@@ -100,7 +116,12 @@ export function TradesPageClient() {
   async function saveTrade(trade: Trade) {
     setFormError("");
     const next = editing === "new" ? [trade, ...allTrades] : allTrades.map((item) => item.id === trade.id ? trade : item);
-    await validateAndCommit(next, trade.id, true);
+    const saved = await validateAndCommit(next, trade.id, true);
+    if (saved && openingStockId) {
+      setOpeningStockId("");
+      window.history.replaceState(null, "", "/trades");
+      setMessage("기초 포지션을 등록하고 보유 수량과 평균단가를 계산했습니다.");
+    }
   }
 
   async function importCsv(imported: Trade[]) {
@@ -157,7 +178,7 @@ export function TradesPageClient() {
   const investedKrw = activePositions.reduce((sum, item) => sum + item.investedAmountKrw, 0);
   const ordered = [...trades].sort((a, b) => (Date.parse(b.tradedAt) || 0) - (Date.parse(a.tradedAt) || 0) || b.id.localeCompare(a.id));
   const negativeUnreconciled = ledger.cashBalances.some((item) => !item.isReconciled);
-  const successMessage = message.includes("추가") || message.includes("삭제") || message.includes("변경") || message.includes("병합");
+  const successMessage = message.includes("추가") || message.includes("등록") || message.includes("삭제") || message.includes("변경") || message.includes("병합");
   const rateDate = exchangeRates.snapshot.rateDate
     ? safeFormatDate(exchangeRates.snapshot.rateDate, formatDate, { dateStyle: "medium" })
     : t("기본값");
@@ -192,7 +213,7 @@ export function TradesPageClient() {
       <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-[var(--surface-muted)] text-xs text-[var(--muted)]"><tr>{["일시", "계좌", "종목/구분", "수량", "가격/금액", "현금 변동", "실현손익", "포지션", ""].map((head) => <th key={head} className="whitespace-nowrap px-4 py-3 font-medium">{t(head)}</th>)}</tr></thead><tbody>{ordered.map((trade) => <TradeRow key={trade.id} trade={trade} ledger={ledger} onEdit={() => { setMessage(""); setFormError(""); setEditing(trade); }} onDelete={() => void deleteTrade(trade)} />)}</tbody></table></div>
       {!ordered.length && <div className="grid h-44 place-items-center text-sm text-[var(--muted)]">{t("아직 원장 기록이 없습니다.")}</div>}
     </section>
-    {editing && <TradeForm trade={editing === "new" ? undefined : editing} initialType={editing === "new" ? newTradeType : undefined} stocks={tradableStocks} plans={plans} rules={rules} ledger={formLedger} formError={formError} onCancel={() => { setFormError(""); setEditing(null); }} onSave={saveTrade} />}
+    {editing && <TradeForm trade={editing === "new" ? undefined : editing} initialType={editing === "new" ? newTradeType : undefined} initialStockId={editing === "new" ? openingStockId || undefined : undefined} openingPosition={editing === "new" && Boolean(openingStockId)} stocks={tradableStocks} plans={plans} rules={rules} ledger={formLedger} formError={formError} onCancel={() => { setFormError(""); setOpeningStockId(""); window.history.replaceState(null, "", "/trades"); setEditing(null); }} onSave={saveTrade} />}
     {accountManagerOpen && <AccountManager accounts={[...new Set([...ledger.cashBalances.map((item) => item.accountName), ...ledger.positions.map((item) => item.accountName)])]} onClose={() => setAccountManagerOpen(false)} onRename={renameAccount} />}
     {balanceAdjustmentOpen && <BalanceAdjustment balances={ledger.cashBalances} onClose={() => setBalanceAdjustmentOpen(false)} onSave={adjustBalance} />}
     {csvOpen && <CsvImportDialog stocks={tradableStocks} existing={allTrades} onCancel={() => setCsvOpen(false)} onImport={importCsv} />}

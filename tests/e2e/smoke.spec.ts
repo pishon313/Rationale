@@ -153,3 +153,23 @@ test("계좌 이름을 기존 계좌로 병합한다", async ({ page }) => {
   await expect(page.getByRole("row").filter({ hasText: "일반" })).toHaveCount(2);
   await expect(page.getByRole("row").filter({ hasText: "연금" })).toHaveCount(0);
 });
+
+test("현금 흐름 없이 기존 보유 종목의 기초 포지션을 등록한다", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([{
+    id: "opening-stock", ticker: "OPEN", name: "기존 보유 종목", market: "한국", currency: "KRW", assetType: "주식", sector: "테스트",
+    status: "보유", investmentType: "장기 코어", currentPrice: 55000, targetPrice: null, averagePrice: 0, quantity: 0,
+    thesisSummary: "", currentView: "중립", currentViewMemo: "", nextReviewDate: null, reviewNote: "", nextEarningsDate: null,
+    ledgerInitializedAt: "2026-08-01T00:00:00.000Z", tags: [], createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", deletedAt: null,
+  }])));
+  await page.goto("/trades?openingStockId=opening-stock");
+  const dialog = page.getByRole("dialog", { name: "기초 포지션 등록" });
+  await expect(dialog.getByLabel("종목")).toHaveValue("opening-stock");
+  await dialog.getByLabel("수량").fill("12");
+  await dialog.getByLabel("평균단가").fill("45000");
+  await dialog.getByRole("button", { name: "기초 포지션 저장" }).click();
+  await expect(page.getByText("기초 포지션을 등록하고 보유 수량과 평균단가를 계산했습니다.")).toBeVisible();
+  await page.goto("/stocks");
+  const row = page.getByRole("row").filter({ hasText: "기존 보유 종목" });
+  await expect(row).toContainText("₩45,000");
+  await expect(row).toContainText("12");
+});

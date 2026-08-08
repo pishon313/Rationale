@@ -20,7 +20,7 @@ import { emptyDashboardNote, type DashboardNote } from "./dashboard-note";
 
 const VIEW_KEY = "tradejournal.dashboard.asset-view";
 const VIEW_EVENT = "tradejournal:asset-view";
-const COLORS = ["var(--color-accent)", "var(--color-lilac)", "var(--color-amber)", "var(--color-success)", "var(--color-danger)", "var(--color-ink-2)"];
+const COLORS = ["#5f57d9", "#9087ee", "#45a99a", "#e0a144", "#d96b76", "#5d8cc9", "#a477bd", "#7c8b57"];
 export function DashboardPageClient() {
   const { t, localeTag, formatDate, formatNumber } = useI18n();
   const exchangeRates = useExchangeRates();

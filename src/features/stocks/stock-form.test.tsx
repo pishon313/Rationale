@@ -35,4 +35,11 @@ describe("StockForm", () => {
     await waitFor(() => expect(onSave).toHaveBeenCalled());
     expect(onSave.mock.calls[0][0].ledgerInitializedAt).toEqual(expect.any(String));
   });
+
+  it("원장 관리 중이지만 수량이 0인 종목은 기초 포지션을 등록할 수 있다", () => {
+    const stock = { ...sampleStocks[1], quantity: 0, averagePrice: 0, ledgerInitializedAt: "2026-08-01T00:00:00.000Z" };
+    render(<StockForm stock={stock} onCancel={vi.fn()} onSave={vi.fn()} />);
+
+    expect(screen.getByRole("link", { name: "기초 포지션 등록" })).toHaveAttribute("href", `/trades?openingStockId=${stock.id}`);
+  });
 });

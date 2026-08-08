@@ -38,6 +38,10 @@ const rows = [
   ["포지션", "ポジション", "Position", "Position", "Posizione", "Posición"],
   ["아직 원장 기록이 없습니다.", "台帳の記録はまだありません。", "No ledger entries yet.", "Aucune écriture dans le registre.", "Nessuna voce nel registro.", "Aún no hay entradas en el registro."],
   ["기초 포지션", "開始ポジション", "Opening position", "Position initiale", "Posizione iniziale", "Posición inicial"],
+  ["기초 포지션 등록", "開始ポジションを登録", "Register opening position", "Enregistrer la position initiale", "Registra posizione iniziale", "Registrar posición inicial"],
+  ["기초 포지션 저장", "開始ポジションを保存", "Save opening position", "Enregistrer la position initiale", "Salva posizione iniziale", "Guardar posición inicial"],
+  ["기존 보유 수량과 평균단가를 현금 흐름 없이 시작값으로 기록합니다.", "既存の保有数量と平均単価を、現金の増減なしで開始値として記録します。", "Record the existing quantity and average price as starting values without changing cash.", "Enregistrez la quantité détenue et le prix moyen comme valeurs initiales sans modifier les liquidités.", "Registra quantità detenuta e prezzo medio come valori iniziali senza modificare la liquidità.", "Registra la cantidad existente y el precio medio como valores iniciales sin modificar el efectivo."],
+  ["기초 포지션을 등록하고 보유 수량과 평균단가를 계산했습니다.", "開始ポジションを登録し、保有数量と平均単価を計算しました。", "Registered the opening position and calculated the quantity and average price.", "La position initiale a été enregistrée et la quantité ainsi que le prix moyen ont été calculés.", "Posizione iniziale registrata; quantità e prezzo medio sono stati calcolati.", "Se registró la posición inicial y se calcularon la cantidad y el precio medio."],
   ["기록 수정", "記録を編集", "Edit entry", "Modifier l’écriture", "Modifica voce", "Editar entrada"],
   ["기록 삭제", "記録を削除", "Delete entry", "Supprimer l’écriture", "Elimina voce", "Eliminar entrada"],
 

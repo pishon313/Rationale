@@ -1,7 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { X } from "lucide-react";
+import { WalletCards, X } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { useI18n } from "@/i18n/i18n-provider";
 import { currencies, investmentTypes, markets, stockStatuses, stockViews, type Stock } from "./types";
@@ -70,7 +70,7 @@ export function StockForm({ stock, onCancel, onSave }: Props) {
     <Field label={t("목표 가격")} error={errorText(errors.targetPrice?.message, "0 이상의 값을 입력해 주세요.")}><input type="number" step="any" className={fieldClass} {...register("targetPrice")} /></Field>
     <Field label={t("평균단가")} error={errorText(errors.averagePrice?.message, "0 이상의 값을 입력해 주세요.")}><input readOnly={ledgerManaged} type="number" step="any" className={`${fieldClass} read-only:cursor-not-allowed read-only:opacity-60`} {...register("averagePrice")} /></Field>
     <Field label={t("보유 수량")} error={errorText(errors.quantity?.message, "0 이상의 값을 입력해 주세요.")}><input readOnly={ledgerManaged} type="number" step="any" className={`${fieldClass} read-only:cursor-not-allowed read-only:opacity-60`} {...register("quantity")} /></Field>
-    {ledgerManaged && <p className="sm:col-span-2 rounded-lg bg-[var(--surface-muted)] p-3 text-xs leading-5 text-[var(--muted)]">{t("통화·평균단가·보유 수량은 매매 원장에서 자동 계산됩니다. 값을 바꾸려면 해당 매매 기록을 수정해 주세요.")}</p>}
+    {ledgerManaged && <div className="sm:col-span-2 rounded-lg bg-[var(--surface-muted)] p-3 text-xs leading-5 text-[var(--muted)]"><p>{t("통화·평균단가·보유 수량은 매매 원장에서 자동 계산됩니다. 값을 바꾸려면 해당 매매 기록을 수정해 주세요.")}</p>{stock?.quantity === 0 && <a href={`/trades?openingStockId=${encodeURIComponent(stock.id)}`} className="mt-3 inline-flex items-center gap-2 rounded-lg border bg-[var(--surface)] px-3 py-2 text-sm font-medium text-[var(--foreground)]"><WalletCards size={16} />{t("기초 포지션 등록")}</a>}</div>}
     <Field label={t("현재 판단")}><select className={fieldClass} {...register("currentView")}>{stockViews.map((v) => <option key={v} value={v}>{t(v)}</option>)}</select></Field>
     <Field label={t("다음 검토일")}><input type="date" className={fieldClass} {...register("nextReviewDate")} /></Field>
     <Field label={t("검토할 사항")} error={errorText(errors.reviewNote?.message, "검토할 사항은 300자 이내로 입력해 주세요.")}><input className={fieldClass} placeholder={t("예: 분기 실적과 마진 추이 확인")} {...register("reviewNote")} /></Field>

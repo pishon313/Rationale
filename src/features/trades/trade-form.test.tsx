@@ -66,6 +66,21 @@ describe("TradeForm", () => {
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ currency: "KRW", exchangeRate: 1, isOpeningPosition: true }));
   });
 
+  it("기초 포지션 등록 시 종목을 미리 선택하고 현금 흐름 없는 시작 거래를 만든다", () => {
+    const onSave = vi.fn();
+    const stock = sampleStocks[1];
+    render(<TradeForm openingPosition initialStockId={stock.id} stocks={sampleStocks} plans={samplePlans} rules={sampleRules} ledger={buildTradingLedger([])} onCancel={vi.fn()} onSave={onSave} />);
+
+    expect(screen.getByRole("heading", { name: "기초 포지션 등록" })).toBeInTheDocument();
+    expect(screen.getByLabelText("종목")).toHaveValue(stock.id);
+    expect(screen.getByLabelText("평균단가")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("수량"), { target: { value: "12" } });
+    fireEvent.change(screen.getByLabelText("평균단가"), { target: { value: "45000" } });
+    fireEvent.click(screen.getByRole("button", { name: "기초 포지션 저장" }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ stockId: stock.id, quantity: 12, price: 45000, isOpeningPosition: true }));
+  });
+
   it("현금 기록에서 매매로 전환하면 선택 종목의 통화와 환율을 동기화한다", () => {
     const cashTrade = { ...sampleTrades[0], id: "cash", stockId: null, stockName: "", tradeType: "입금" as const, quantity: 0, price: 0, amount: 100_000, currency: "KRW" as const, exchangeRate: 1 };
     const usdStock = sampleStocks.find((stock) => stock.id === "micron")!;
