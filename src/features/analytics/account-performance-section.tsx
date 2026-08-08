@@ -21,8 +21,8 @@ export function AccountPerformanceSection({ trades, stocks, accounts, ledger }: 
   const cards = [
     [t("총자산"), money(data.totalAssetsKrw), t("현금 + 보유 자산")],
     [t("순입금액"), money(data.netContributionsKrw), t("입금 − 출금 + 기초 포지션")],
-    [t("총손익"), money(data.totalProfitKrw), t("총자산 − 순입금액")],
-    [t("총수익률"), percent(data.totalReturnPercent), t("총손익 ÷ 순입금액")],
+    [t("총손익"), money(data.totalProfitKrw), t("총자산 − 성과 기준 원금")],
+    [t("총수익률"), percent(data.totalReturnPercent), t("총손익 ÷ 성과 기준 원금")],
     ["XIRR", percent(data.xirrPercent), t("입출금 시점을 반영한 연환산 수익률")],
   ];
   return <section className="mt-4">

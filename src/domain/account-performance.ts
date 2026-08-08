@@ -66,7 +66,7 @@ function buildAccount(accountId: string, accountName: string, trades: Trade[], s
     reconciliationAdjustmentKrw,
     performanceBasisKrw,
     totalProfitKrw,
-    totalReturnPercent: netContributionsKrw > 0 ? totalProfitKrw / netContributionsKrw * 100 : null,
+    totalReturnPercent: performanceBasisKrw > 0 ? totalProfitKrw / performanceBasisKrw * 100 : null,
     xirrPercent: flows.length ? calculateXirr([...xirrFlows, { date: asOf, amount: totalAssetsKrw }]) : null,
     unpricedPositionCount,
   };
@@ -91,7 +91,7 @@ function aggregateAccounts(accounts: AccountPerformance[], trades: Trade[], ledg
     reconciliationAdjustmentKrw,
     performanceBasisKrw,
     totalProfitKrw,
-    totalReturnPercent: netContributionsKrw > 0 ? totalProfitKrw / netContributionsKrw * 100 : null,
+    totalReturnPercent: performanceBasisKrw > 0 ? totalProfitKrw / performanceBasisKrw * 100 : null,
     xirrPercent: flows.length ? calculateXirr([...xirrFlows, { date: asOf, amount: totalAssetsKrw }]) : null,
     unpricedPositionCount: sum(accounts.map((account) => account.unpricedPositionCount)),
   };
