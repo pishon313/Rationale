@@ -2,36 +2,38 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { WalletCards, X } from "lucide-react";
-import { Controller, useForm } from "react-hook-form";
+import Link from "next/link";
+import { useForm } from "react-hook-form";
 import { useI18n } from "@/i18n/i18n-provider";
-import { canonicalTradeAccount, displayTradeSystemText } from "@/features/trades/trade-i18n";
 import { currencies, investmentTypes, markets, stockStatuses, stockViews, type Stock } from "./types";
 import { stockFormSchema, type StockFormValues } from "./schema";
+import type { StockAccountHolding } from "./stock-account-holdings";
 
-type Props = { stock?: Stock; accountNames?: string[]; onCancel: () => void; onSave: (stock: Stock) => void };
+type Props = { stock?: Stock; holdings?: StockAccountHolding[]; onCancel: () => void; onSave: (stock: Stock) => void };
 
 const fieldClass = "mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3 text-sm";
 
-export function StockForm({ stock, accountNames = [], onCancel, onSave }: Props) {
-  const { t } = useI18n();
+export function StockForm({ stock, holdings = [], onCancel, onSave }: Props) {
+  const { t, formatNumber } = useI18n();
   const ledgerManaged = Boolean(stock?.ledgerInitializedAt);
+  const legacyPosition = Boolean(stock && !stock.ledgerInitializedAt);
   const errorText = (message: string | undefined, fallback: string) => {
     if (!message) return undefined;
     return /[가-힣]/.test(message) ? t(message) : t(fallback);
   };
-  const { control, register, handleSubmit, formState: { errors, isSubmitting }, watch, setValue } = useForm<StockFormValues>({
+  const { register, handleSubmit, formState: { errors, isSubmitting }, watch, setValue } = useForm<StockFormValues>({
     resolver: zodResolver(stockFormSchema),
     defaultValues: stock ? {
       ticker: stock.ticker, name: stock.name, market: stock.market, currency: stock.currency,
       assetType: stock.assetType, sector: stock.sector, status: stock.status, investmentType: stock.investmentType,
       currentPrice: stock.currentPrice, targetPrice: stock.targetPrice, averagePrice: stock.averagePrice,
-      quantity: stock.quantity, accountName: stock.openingAccountName ?? "기본 계좌", thesisSummary: stock.thesisSummary, currentView: stock.currentView,
+      quantity: stock.quantity, thesisSummary: stock.thesisSummary, currentView: stock.currentView,
       currentViewMemo: stock.currentViewMemo, nextReviewDate: stock.nextReviewDate, reviewNote: stock.reviewNote ?? "",
       nextEarningsDate: stock.nextEarningsDate ?? null, tagsText: stock.tags.join(", "),
     } : {
       ticker: "", name: "", market: "한국", currency: "KRW", assetType: "주식", sector: "",
       status: "관찰", investmentType: "관찰 전용", currentPrice: 0, targetPrice: null,
-      averagePrice: 0, quantity: 0, accountName: "기본 계좌", thesisSummary: "", currentView: "판단 보류", currentViewMemo: "",
+      averagePrice: 0, quantity: 0, thesisSummary: "", currentView: "판단 보류", currentViewMemo: "",
       nextReviewDate: null, reviewNote: "", nextEarningsDate: null, tagsText: "",
     },
   });
@@ -49,15 +51,15 @@ export function StockForm({ stock, accountNames = [], onCancel, onSave }: Props)
     onSave({ id: stock?.id ?? crypto.randomUUID(), ticker: parsed.ticker, name: parsed.name, market: parsed.market,
       currency: ledgerManaged ? stock!.currency : parsed.currency, assetType: parsed.assetType, sector: parsed.sector, status: parsed.status,
       investmentType: parsed.investmentType, currentPrice: parsed.currentPrice, targetPrice: parsed.targetPrice,
-      averagePrice: ledgerManaged ? stock!.averagePrice : parsed.averagePrice, quantity: ledgerManaged ? stock!.quantity : parsed.quantity,
-      openingAccountName: stock?.openingAccountName ?? canonicalTradeAccount(parsed.accountName, t), thesisSummary: parsed.thesisSummary,
+      averagePrice: stock?.averagePrice ?? 0, quantity: stock?.quantity ?? 0,
+      ...(stock?.openingAccountName !== undefined ? { openingAccountName: stock.openingAccountName } : {}), thesisSummary: parsed.thesisSummary,
       currentView: parsed.currentView, currentViewMemo: parsed.currentViewMemo,
       nextReviewDate: parsed.nextReviewDate || null, reviewNote: parsed.reviewNote,
       nextEarningsDate: parsed.nextEarningsDate || null,
       tags: parsed.tagsText.split(",").map((tag) => tag.trim()).filter(Boolean),
       priceUpdatedAt: stock?.priceUpdatedAt ?? null, priceQuotedAt: stock?.priceQuotedAt ?? null,
       priceSource: stock?.priceSource ?? "manual", priceStatus: "manual",
-      ledgerInitializedAt: stock ? stock.ledgerInitializedAt ?? null : parsed.quantity === 0 ? now : null,
+      ledgerInitializedAt: stock ? stock.ledgerInitializedAt ?? null : now,
       createdAt: stock?.createdAt ?? now, updatedAt: now, deletedAt: null });
   })}><div className="sticky top-0 z-10 flex items-center justify-between border-b bg-[var(--surface)] px-5 py-4"><div><h2 id="stock-form-title" className="text-lg font-semibold">{t(stock ? "종목 수정" : "새 종목 추가")}</h2><p className="mt-1 text-xs text-[var(--muted)]">{t("판단에 필요한 기본 정보를 기록하세요.")}</p></div><button type="button" aria-label={t("닫기")} onClick={onCancel} className="grid size-9 place-items-center rounded-lg hover:bg-[var(--surface-muted)]"><X size={19} /></button></div><div className="grid gap-5 p-5 sm:grid-cols-2">
     <Field label={t("티커")} error={errorText(errors.ticker?.message, "티커는 20자 이내로 입력해 주세요.")}><input autoFocus className={fieldClass} placeholder={t("예: 005930, TSLA")} {...register("ticker")} /></Field>
@@ -70,10 +72,9 @@ export function StockForm({ stock, accountNames = [], onCancel, onSave }: Props)
     <Field label={t("투자 유형")}><select className={fieldClass} {...register("investmentType")}>{investmentTypes.map((v) => <option key={v} value={v}>{t(v)}</option>)}</select></Field>
     <Field label={t("현재 가격")} error={errorText(errors.currentPrice?.message, "0 이상의 값을 입력해 주세요.")}><input type="number" step="any" className={fieldClass} {...register("currentPrice")} /></Field>
     <Field label={t("목표 가격")} error={errorText(errors.targetPrice?.message, "0 이상의 값을 입력해 주세요.")}><input type="number" step="any" className={fieldClass} {...register("targetPrice")} /></Field>
-    <Field label={t("평균단가")} error={errorText(errors.averagePrice?.message, "0 이상의 값을 입력해 주세요.")}><input readOnly={ledgerManaged} type="number" step="any" className={`${fieldClass} read-only:cursor-not-allowed read-only:opacity-60`} {...register("averagePrice")} /></Field>
-    <Field label={t("보유 수량")} error={errorText(errors.quantity?.message, "0 이상의 값을 입력해 주세요.")}><input readOnly={ledgerManaged} type="number" step="any" className={`${fieldClass} read-only:cursor-not-allowed read-only:opacity-60`} {...register("quantity")} /></Field>
-    {!stock && <Field label={t("계좌")} error={errorText(errors.accountName?.message, "계좌명을 입력해 주세요.")}><Controller name="accountName" control={control} render={({ field }) => <><input required list="stock-account-names" className={fieldClass} name={field.name} ref={field.ref} onBlur={field.onBlur} value={displayTradeSystemText(field.value ?? "기본 계좌", t)} onChange={(event) => field.onChange(canonicalTradeAccount(event.target.value, t))} /><datalist id="stock-account-names">{[...new Set(["기본 계좌", ...accountNames])].map((name) => <option key={name} value={displayTradeSystemText(name, t)} />)}</datalist></>} /></Field>}
-    {ledgerManaged && <div className="sm:col-span-2 rounded-lg bg-[var(--surface-muted)] p-3 text-xs leading-5 text-[var(--muted)]"><p>{t("통화·평균단가·보유 수량은 매매 원장에서 자동 계산됩니다. 값을 바꾸려면 해당 매매 기록을 수정해 주세요.")}</p>{stock?.quantity === 0 && <a href={`/trades?openingStockId=${encodeURIComponent(stock.id)}`} className="mt-3 inline-flex items-center gap-2 rounded-lg border bg-[var(--surface)] px-3 py-2 text-sm font-medium text-[var(--foreground)]"><WalletCards size={16} />{t("기초 포지션 등록")}</a>}</div>}
+    {!stock && <div className="sm:col-span-2 rounded-lg bg-[var(--surface-muted)] p-3 text-xs leading-5 text-[var(--muted)]">{t("보유 계좌·수량·평균단가는 종목 추가 후 매매 원장에서 등록합니다.")}</div>}
+    {ledgerManaged && <div className="sm:col-span-2 rounded-lg bg-[var(--surface-muted)] p-4 text-sm"><p className="font-medium">{t("보유 계좌")}</p>{holdings.length ? <ul className="mt-3 space-y-2">{holdings.map((holding) => <li key={holding.accountId} className="flex items-center justify-between gap-4"><span>{holding.accountName}</span><span className="tabular-nums text-[var(--muted)]">{formatNumber(holding.quantity, { maximumFractionDigits: 8 })}</span></li>)}</ul> : <p className="mt-2 text-xs text-[var(--muted)]">{t("현재 보유 포지션이 없습니다.")}</p>}<p className="mt-3 text-xs leading-5 text-[var(--muted)]">{t("계좌와 보유 수량은 매매 원장에서 관리됩니다.")}</p><div className="mt-3 flex flex-wrap gap-2"><Link href="/trades" className="inline-flex items-center gap-2 rounded-lg border bg-[var(--surface)] px-3 py-2 text-sm font-medium"><WalletCards size={16} />{t("매매 원장 열기")}</Link>{holdings.length === 0 && stock && <Link href={`/trades?openingStockId=${encodeURIComponent(stock.id)}`} className="inline-flex items-center gap-2 rounded-lg border bg-[var(--surface)] px-3 py-2 text-sm font-medium"><WalletCards size={16} />{t("기초 포지션 등록")}</Link>}</div></div>}
+    {legacyPosition && stock && <div className="sm:col-span-2 rounded-lg bg-[var(--surface-muted)] p-4 text-sm"><p className="font-medium">{t("기존 보유 정보")}</p><dl className="mt-3 grid gap-2 sm:grid-cols-3"><LegacyValue label={t("기초 계좌")} value={stock.openingAccountName || "—"} /><LegacyValue label={t("기초 수량")} value={formatNumber(stock.quantity, { maximumFractionDigits: 8 })} /><LegacyValue label={t("기초 평균단가")} value={formatNumber(stock.averagePrice, { maximumFractionDigits: 8 })} /></dl><p className="mt-3 text-xs leading-5 text-[var(--muted)]">{t("매매 원장 전환 전의 기존 보유 기록입니다.")}</p><Link href="/trades" className="mt-3 inline-flex items-center gap-2 rounded-lg border bg-[var(--surface)] px-3 py-2 text-sm font-medium"><WalletCards size={16} />{t("매매 원장 열기")}</Link></div>}
     <Field label={t("현재 판단")}><select className={fieldClass} {...register("currentView")}>{stockViews.map((v) => <option key={v} value={v}>{t(v)}</option>)}</select></Field>
     <Field label={t("다음 검토일")}><input type="date" className={fieldClass} {...register("nextReviewDate")} /></Field>
     <Field label={t("검토할 사항")} error={errorText(errors.reviewNote?.message, "검토할 사항은 300자 이내로 입력해 주세요.")}><input className={fieldClass} placeholder={t("예: 분기 실적과 마진 추이 확인")} {...register("reviewNote")} /></Field>
@@ -82,6 +83,10 @@ export function StockForm({ stock, accountNames = [], onCancel, onSave }: Props)
     <div className="sm:col-span-2"><Field label={t("현재 판단 메모")} error={errorText(errors.currentViewMemo?.message, "현재 판단 메모는 1000자 이내로 입력해 주세요.")}><textarea className="mt-1 min-h-20 w-full rounded-lg border bg-[var(--surface)] p-3 text-sm" {...register("currentViewMemo")} /></Field></div>
     <div className="sm:col-span-2"><Field label={t("태그")}><input className={fieldClass} placeholder={t("쉼표로 구분: 반도체, 코어")} {...register("tagsText")} /></Field></div>
   </div><div className="sticky bottom-0 flex justify-end gap-2 border-t bg-[var(--surface)] p-4"><button type="button" onClick={onCancel} className="rounded-lg border px-4 py-2 text-sm">{t("취소")}</button><button disabled={isSubmitting} className="rounded-lg bg-[var(--accent)] px-5 py-2 text-sm font-medium text-white">{t(stock ? "변경 저장" : "종목 추가")}</button></div></form></div>;
+}
+
+function LegacyValue({ label, value }: { label: string; value: string }) {
+  return <div><dt className="text-xs text-[var(--muted)]">{label}</dt><dd className="mt-1 tabular-nums">{value}</dd></div>;
 }
 
 function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) {
