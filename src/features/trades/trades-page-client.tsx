@@ -4,7 +4,7 @@ import { AlertTriangle, ArrowLeftRight, FileUp, Pencil, Plus, RefreshCw, Trash2,
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { currencies, fromKrw, type Currency } from "@/domain/currency";
-import { buildTradingLedger, cashBalanceKrw, normalizeTrade, tradeAmount, type TradingLedger } from "@/domain/trading-ledger";
+import { buildTradingLedger, cashBalanceKrw, tradeAmount, type TradingLedger } from "@/domain/trading-ledger";
 import type { BuyPlan } from "@/features/plans/types";
 import type { InvestmentRule } from "@/features/rules/types";
 import type { Stock } from "@/features/stocks/types";
@@ -18,7 +18,8 @@ import { TradeForm } from "./trade-form";
 import { displayTradeSystemText, translateTradeText } from "./trade-i18n";
 import type { Trade } from "./types";
 import type { InvestmentAccount } from "@/features/accounts/types";
-import { buildAccountTransfer, deleteAccountTransfer, getTransferPair, updateAccountTransfer, validateTransferPairs, type AccountTransferInput } from "@/features/accounts/account-transfer";
+import { buildAccountTransfer, getTransferPair, updateAccountTransfer, type AccountTransferInput } from "@/features/accounts/account-transfer";
+import { buildSoftDeletedTrades, commitTradeMutation } from "./trade-mutations";
 
 export function TradesPageClient() {
   const { t, formatDate, formatNumber } = useI18n();
@@ -95,33 +96,15 @@ export function TradesPageClient() {
   }, [allStocks, migration.initializedStockIds, migration.trades, migrationFailed, plansReady, replaceStocksAsync, replaceTradesAsync, rulesReady, stocksReady, tradesReady]);
 
   async function validateAndCommit(next: Trade[], changedId?: string, showInForm = false) {
-    try { validateTransferPairs(next); } catch (error) {
-      const validationError = error instanceof Error ? error.message : "이체 기록이 올바르지 않습니다.";
-      if (showInForm) setFormError(validationError); else setMessage(validationError);
+    const result = await commitTradeMutation({ currentTrades: allTrades, nextTrades: next, accounts, changedId, replaceTrades: replaceTradesAsync });
+    if (!result.ok) {
+      if (showInForm) setFormError(result.error); else setMessage(result.error);
       return false;
     }
-    const candidate = buildTradingLedger(next, accounts);
-    const direct = changedId ? candidate.calculations[changedId]?.error : null;
-    const previous = new Set(ledger.errors.map((item) => `${item.tradeId}:${item.message}`));
-    const introduced = candidate.errors.find((item) => !previous.has(`${item.tradeId}:${item.message}`));
-    const validationError = direct || (introduced ? `${introduced.tradeId}: ${introduced.message}` : "");
-    if (validationError) {
-      if (showInForm) setFormError(validationError);
-      else setMessage(validationError);
-      return false;
-    }
-    try {
-      await replaceTradesAsync(next.map(normalizeTrade));
-      setMessage("");
-      setFormError("");
-      setEditing(null);
-      return true;
-    } catch {
-      const error = "원장 기록을 저장하지 못했습니다. 다시 시도해 주세요.";
-      if (showInForm) setFormError(error);
-      else setMessage(error);
-      return false;
-    }
+    setMessage("");
+    setFormError("");
+    setEditing(null);
+    return true;
   }
 
   async function saveTrade(trade: Trade) {
@@ -172,10 +155,7 @@ export function TradesPageClient() {
       date: safeFormatDate(trade.tradedAt.slice(0, 10), formatDate, { dateStyle: "medium" }),
       subject,
     }))) return;
-    const now = new Date().toISOString();
-    const next = trade.cashFlowKind === "transfer"
-      ? deleteAccountTransfer(allTrades, trade.transferId ?? "", now)
-      : allTrades.map((item) => item.id === trade.id ? { ...item, deletedAt: now, updatedAt: now } : item);
+    const next = buildSoftDeletedTrades(allTrades, trade);
     if (await validateAndCommit(next)) setMessage("기록을 삭제하고 전체 원장을 다시 계산했습니다.");
   }
 
@@ -279,7 +259,7 @@ function TradeRow({ trade, accountName, ledger, onEdit, onDelete }: { trade: Tra
   return <tr className="border-t hover:bg-[var(--surface-muted)]">
     <td className="whitespace-nowrap px-4 py-4">{safeFormatDate(trade.tradedAt, formatDate, { dateStyle: "medium", timeStyle: "short" })}</td>
     <td className="whitespace-nowrap px-4">{displayTradeSystemText(accountName, t)}</td>
-    <td className="px-4"><b>{trade.stockName || t(trade.tradeType)}</b><small className="block text-[var(--muted)]">{trade.isOpeningPosition ? t("기초 포지션") : t(trade.tradeType)}{trade.memo ? ` · ${displayTradeSystemText(trade.memo, t)}` : ""}</small></td>
+    <td className="px-4"><b>{trade.stockName || t(trade.tradeType)}</b><small className="block text-[var(--muted)]">{trade.isOpeningPosition ? t("기초 포지션") : t(trade.tradeType)}</small></td>
     <td className="px-4 text-right tabular-nums">{trade.quantity ? formatNumber(trade.quantity) : "—"}</td>
     <td className="px-4 text-right tabular-nums">{money(tradeAmount(trade))}</td>
     <td className="px-4 text-right tabular-nums">{calculation ? `${calculation.cashEffect > 0 ? "+" : ""}${money(calculation.cashEffect)}` : "—"}</td>

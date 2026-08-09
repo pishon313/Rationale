@@ -4,7 +4,7 @@ const e2eAccount = (id: string, name: string, isDefault = true) => ({ id, name, 
 
 test("대시보드 앱 셸을 표시한다", async ({ page }) => {
   await page.goto("/dashboard");
-  await expect(page.getByRole("heading", { level: 1 })).toContainText("오늘 판단할 일을 먼저 봅니다.");
+  await expect(page.getByLabel("대시보드 표시 통화")).toBeVisible();
   await expect(page.getByRole("navigation", { name: "주요 메뉴" })).toBeVisible();
 });
 
@@ -183,4 +183,104 @@ test("현금 흐름 없이 기존 보유 종목의 기초 포지션을 등록한
   const row = page.getByRole("row").filter({ hasText: "기존 보유 종목" });
   await expect(row).toContainText("₩45,000");
   await expect(row).toContainText("12");
+});
+
+test("종목 상세에서 매매를 추가하고 수정한 뒤 삭제한다", async ({ page }) => {
+  await page.addInitScript(({ account, stock }) => {
+    localStorage.setItem("tradejournal.accounts.v1", JSON.stringify([account]));
+    localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([stock]));
+  }, {
+    account: e2eAccount("detail-account", "상세 계좌"),
+    stock: {
+      id: "detail-stock", ticker: "DETAIL", name: "상세 종목", market: "한국", currency: "KRW", assetType: "주식", sector: "테스트",
+      status: "관찰", investmentType: "관찰 전용", currentPrice: 150, targetPrice: null, averagePrice: 0, quantity: 0,
+      thesisSummary: "", currentView: "판단 보류", currentViewMemo: "", nextReviewDate: null, reviewNote: "", nextEarningsDate: null,
+      ledgerInitializedAt: "2026-08-09T00:00:00.000Z", tags: [], createdAt: "2026-08-09T00:00:00.000Z", updatedAt: "2026-08-09T00:00:00.000Z", deletedAt: null,
+    },
+  });
+  await page.goto("/stocks/detail?id=detail-stock");
+  await page.getByRole("button", { name: "매매 추가" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByLabel("종목")).toBeDisabled();
+  await expect(dialog.getByLabel("종목")).toHaveValue("detail-stock");
+  await dialog.getByLabel("수량").fill("2");
+  await dialog.getByLabel("체결 가격").fill("100");
+  await dialog.getByRole("button", { name: "기록 저장" }).click();
+  await expect(page.getByText("매매 기록을 추가했습니다.")).toBeVisible();
+  let row = page.getByRole("row").filter({ hasText: "상세 계좌" });
+  await expect(row).toContainText("2");
+
+  const holdingCard = page.locator("article").filter({ hasText: "상세 계좌" });
+  await holdingCard.getByRole("button", { name: "매도", exact: true }).click();
+  await expect(page.getByRole("dialog").getByLabel("계좌")).toBeDisabled();
+  await expect(page.getByRole("dialog").getByLabel("계좌")).toHaveValue("detail-account");
+  await expect(page.getByRole("dialog").getByRole("button", { name: "매도", exact: true })).toHaveClass(/text-\[var\(--accent\)\]/);
+  await page.getByRole("dialog").getByRole("button", { name: "닫기" }).click();
+
+  await row.getByRole("button", { name: "매수 기록 수정" }).click();
+  await page.getByRole("dialog").getByLabel("수량").fill("3");
+  await page.getByRole("dialog").getByLabel("체결 가격").fill("120");
+  await page.getByRole("dialog").getByRole("button", { name: "변경 저장" }).click();
+  await expect(page.getByText("매매 기록을 변경했습니다.")).toBeVisible();
+  row = page.getByRole("row").filter({ hasText: "상세 계좌" });
+  await expect(row).toContainText("3");
+
+  page.once("dialog", (confirmation) => confirmation.accept());
+  await row.getByRole("button", { name: "매수 기록 삭제" }).click();
+  await expect(page.getByText("매매 기록을 삭제했습니다.")).toBeVisible();
+  await expect(page.getByRole("row").filter({ hasText: "상세 계좌" })).toHaveCount(0);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]")[0].deletedAt)).toBeTruthy();
+});
+
+test("종목 통화를 정정하면 매수 기록과 거래일 환율을 원자적으로 갱신한다", async ({ page }) => {
+  const stock = {
+    id: "currency-stock", ticker: "NVDA", name: "엔비디아", market: "미국", currency: "KRW", assetType: "주식", sector: "반도체",
+    status: "보유", investmentType: "장기 코어", currentPrice: 223.96, targetPrice: 300, averagePrice: 188, quantity: 2,
+    thesisSummary: "", currentView: "중립", currentViewMemo: "", nextReviewDate: null, reviewNote: "", nextEarningsDate: null,
+    ledgerInitializedAt: "2026-08-09T00:00:00.000Z", tags: [], createdAt: "2026-08-09T00:00:00.000Z", updatedAt: "2026-08-09T00:00:00.000Z", deletedAt: null,
+  };
+  const trade = {
+    id: "currency-buy", stockId: stock.id, stockName: stock.name, planId: null, tradeType: "매수", tradedAt: "2026-08-01T10:00:00.000Z",
+    quantity: 2, price: 188, currency: "KRW", exchangeRate: 1, fee: 0, tax: 0, accountId: "currency-account", accountName: "통화 계좌",
+    memo: "", emotion: "평온", emotionIntensity: 1, confidenceScore: 3, ruleComplianceScore: 3, createdAt: "2026-08-01T10:00:00.000Z", updatedAt: "2026-08-01T10:00:00.000Z", deletedAt: null,
+  };
+  await page.route("https://api.frankfurter.dev/v2/rate/USD/KRW?date=2026-08-01", async (route) => route.fulfill({ json: { date: "2026-08-01", rate: 1400 } }));
+  await page.addInitScript(({ account, stock, trade }) => {
+    localStorage.setItem("tradejournal.accounts.v1", JSON.stringify([account]));
+    localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([stock]));
+    localStorage.setItem("tradejournal.trades.v1", JSON.stringify([trade]));
+  }, { account: e2eAccount("currency-account", "통화 계좌"), stock, trade });
+
+  await page.goto("/stocks/detail?id=currency-stock");
+  await expect(page.getByText("₩224", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "기본 정보 수정" }).click();
+  await page.getByRole("dialog", { name: "종목 수정" }).getByLabel("통화").selectOption("USD");
+  await page.getByRole("dialog", { name: "종목 수정" }).getByRole("button", { name: "변경 저장" }).click();
+  const confirmation = page.getByRole("alertdialog", { name: "종목 통화를 변경할까요?" });
+  await expect(confirmation).toContainText("KRW → USD");
+  await expect(confirmation).toContainText("1건");
+  await confirmation.getByRole("button", { name: "통화 변경" }).click();
+
+  await expect(page.getByRole("dialog", { name: "종목 수정" })).toHaveCount(0);
+  await expect(page.getByText("US$223.96", { exact: true })).toBeVisible();
+  await expect(page.getByText("US$188.00", { exact: true }).first()).toBeVisible();
+  const persisted = await page.evaluate(() => ({
+    stock: JSON.parse(localStorage.getItem("tradejournal.stocks.v1") ?? "[]")[0],
+    trade: JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]")[0],
+  }));
+  expect(persisted.stock).toMatchObject({ currency: "USD", currentPrice: 223.96, averagePrice: 188, quantity: 2 });
+  expect(persisted.trade).toMatchObject({ id: "currency-buy", currency: "USD", exchangeRate: 1400, price: 188, quantity: 2, accountId: "currency-account" });
+});
+
+test("계좌가 없으면 종목 상세에서 계좌 추가를 안내한다", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([{
+    id: "no-account-stock", ticker: "NONE", name: "계좌 없는 종목", market: "한국", currency: "KRW", assetType: "주식", sector: "",
+    status: "관찰", investmentType: "관찰 전용", currentPrice: 0, targetPrice: null, averagePrice: 0, quantity: 0,
+    thesisSummary: "", currentView: "판단 보류", currentViewMemo: "", nextReviewDate: null, reviewNote: "", nextEarningsDate: null,
+    ledgerInitializedAt: "2026-08-09T00:00:00.000Z", tags: [], createdAt: "2026-08-09T00:00:00.000Z", updatedAt: "2026-08-09T00:00:00.000Z", deletedAt: null,
+  }])));
+  await page.goto("/stocks/detail?id=no-account-stock");
+  await page.getByRole("button", { name: "매매 추가" }).click();
+  await expect(page.getByText("먼저 계좌를 추가해 주세요.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "계좌 추가" })).toHaveAttribute("href", "/accounts");
 });

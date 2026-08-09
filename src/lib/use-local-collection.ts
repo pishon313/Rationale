@@ -28,11 +28,15 @@ export function useLocalCollection<T extends LocalRecord>(name: string, fallback
     latestItems.current = next;
     setItems(next);
   }, [name]);
+  const applyCommitted = useCallback((next: T[]) => {
+    latestItems.current = next;
+    setItems(next);
+  }, []);
   return {
     items: items.filter((item) => !item.deletedAt), allItems: items, ready, loadError,
     add: (item: T) => commit((current) => [item, ...current]),
     update: (item: T) => commit((current) => current.map((value) => value.id === item.id ? item : value)),
     remove: (id: string) => commit((current) => current.map((value) => value.id === id ? { ...value, deletedAt: new Date().toISOString(), updatedAt: new Date().toISOString() } : value)),
-    replaceAsync,
+    replaceAsync, applyCommitted,
   };
 }

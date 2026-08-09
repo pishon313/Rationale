@@ -3,6 +3,7 @@ import { vi } from "vitest";
 import { sampleStocks } from "./sample-data";
 import { StockForm } from "./stock-form";
 import type { StockAccountHolding } from "./stock-account-holdings";
+import type { Trade } from "@/features/trades/types";
 
 describe("StockForm", () => {
   it("필수 필드 없이 제출하면 오류를 표시한다", async () => {
@@ -49,6 +50,52 @@ describe("StockForm", () => {
     expect(screen.getByRole("link", { name: "기초 포지션 등록" })).toHaveAttribute("href", `/trades?openingStockId=${stock.id}`);
   });
 
+  it("기존 매매가 한 통화이면 종목 통화를 해당 통화로 바로잡을 수 있다", async () => {
+    const onSave = vi.fn();
+    const stock = { ...sampleStocks[0], ledgerInitializedAt: "2026-08-01T00:00:00.000Z" };
+    render(<StockForm stock={stock} trades={[securityTrade("buy-1", "KRW")]} onCancel={vi.fn()} onSave={onSave} />);
+
+    const currency = screen.getByLabelText("통화");
+    expect(currency).not.toBeDisabled();
+    fireEvent.change(currency, { target: { value: "USD" } });
+    fireEvent.click(screen.getByRole("button", { name: "변경 저장" }));
+    expect(await screen.findByRole("alertdialog", { name: "종목 통화를 변경할까요?" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "통화 변경" }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ currency: "USD" })));
+  });
+
+  it("기존 매매에 여러 통화가 섞여 있으면 자동 변경을 차단한다", async () => {
+    const stock = { ...sampleStocks[0], ledgerInitializedAt: "2026-08-01T00:00:00.000Z" };
+    render(<StockForm stock={stock} trades={[securityTrade("buy-1", "KRW"), securityTrade("buy-2", "USD")]} onCancel={vi.fn()} onSave={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("통화"), { target: { value: "USD" } });
+    fireEvent.click(screen.getByRole("button", { name: "변경 저장" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("서로 다른 통화의 매매 기록");
+  });
+
+  it("통화 변경 확인을 취소하면 저장하지 않는다", async () => {
+    const onSave = vi.fn();
+    const stock = { ...sampleStocks[0], ledgerInitializedAt: "2026-08-01T00:00:00.000Z" };
+    render(<StockForm stock={stock} trades={[securityTrade("buy-1", "KRW")]} onCancel={vi.fn()} onSave={onSave} />);
+    fireEvent.change(screen.getByLabelText("통화"), { target: { value: "USD" } });
+    fireEvent.click(screen.getByRole("button", { name: "변경 저장" }));
+    await screen.findByRole("alertdialog", { name: "종목 통화를 변경할까요?" });
+    fireEvent.click(screen.getAllByRole("button", { name: "취소" }).at(-1)!);
+    expect(screen.queryByRole("alertdialog", { name: "종목 통화를 변경할까요?" })).not.toBeInTheDocument();
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("통화 변경 저장이 실패하면 form을 유지하고 오류를 표시한다", async () => {
+    const stock = { ...sampleStocks[0], ledgerInitializedAt: "2026-08-01T00:00:00.000Z" };
+    render(<StockForm stock={stock} trades={[securityTrade("buy-1", "KRW")]} onCancel={vi.fn()} onSave={vi.fn(async () => { throw new Error("저장 실패"); })} />);
+    fireEvent.change(screen.getByLabelText("통화"), { target: { value: "USD" } });
+    fireEvent.click(screen.getByRole("button", { name: "변경 저장" }));
+    fireEvent.click(await screen.findByRole("button", { name: "통화 변경" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("저장 실패");
+    expect(screen.getByRole("dialog", { name: "종목 수정" })).toBeInTheDocument();
+  });
+
   it("legacy 종목을 수정해도 기존 기초 보유값을 보존한다", async () => {
     const onSave = vi.fn();
     const stock = { ...sampleStocks[0], ledgerInitializedAt: null, openingAccountName: "예전 계좌", quantity: 7, averagePrice: 123 };
@@ -64,4 +111,8 @@ describe("StockForm", () => {
 
 function holding(accountId: string, accountName: string, quantity: number): StockAccountHolding {
   return { stockId: "stock", accountId, accountName, currency: "KRW", quantity, averagePrice: 100, investedAmount: quantity * 100, investedAmountKrw: quantity * 100 };
+}
+
+function securityTrade(id: string, currency: Trade["currency"]): Trade {
+  return { id, stockId: sampleStocks[0].id, stockName: sampleStocks[0].name, planId: null, tradeType: "매수", tradedAt: "2026-08-01T10:00:00.000Z", quantity: 1, price: 100, currency, exchangeRate: currency === "KRW" ? 1 : 1400, fee: 0, tax: 0, accountId: "account", accountName: "계좌", memo: "", emotion: "평온", emotionIntensity: 1, confidenceScore: 3, ruleComplianceScore: 3, createdAt: "2026-08-01T10:00:00.000Z", updatedAt: "2026-08-01T10:00:00.000Z", deletedAt: null };
 }

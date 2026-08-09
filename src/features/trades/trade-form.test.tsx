@@ -6,6 +6,7 @@ import { samplePlans } from "@/features/plans/sample-data";
 import { sampleRules } from "@/features/rules/sample-data";
 import { sampleTrades } from "./sample-data";
 import { TradeForm } from "./trade-form";
+import type { InvestmentAccount } from "@/features/accounts/types";
 
 vi.mock("@/i18n/i18n-provider", () => ({
   useI18n: () => ({
@@ -118,4 +119,28 @@ describe("TradeForm", () => {
     finishSave();
     await waitFor(() => expect(screen.getByRole("button", { name: "기록 저장" })).toBeEnabled());
   });
+
+  it("context에서는 종목과 계좌를 고정하고 허용된 유형만 표시한다", () => {
+    const onSave = vi.fn();
+    const accounts = [account("a", "Account A", true), account("b", "Account B")];
+    const stock = sampleStocks[0];
+    render(<TradeForm lockedStockId={stock.id} lockedAccountId="b" allowedTypes={["매수", "매도", "배당"]} stocks={sampleStocks} plans={samplePlans} rules={sampleRules} ledger={buildTradingLedger([])} accounts={accounts} onCancel={vi.fn()} onSave={onSave} />);
+    expect(screen.getByLabelText("종목")).toBeDisabled();
+    expect(screen.getByLabelText("종목")).toHaveValue(stock.id);
+    expect(screen.getByLabelText("계좌")).toBeDisabled();
+    expect(screen.getByLabelText("계좌")).toHaveValue("b");
+    expect(screen.queryByRole("button", { name: "입금" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "출금" })).not.toBeInTheDocument();
+  });
+
+  it("context의 초기 계좌를 선택하되 generic add에서는 변경할 수 있다", () => {
+    const accounts = [account("a", "Account A", true), account("b", "Account B")];
+    render(<TradeForm initialAccountId="b" allowedTypes={["매수", "매도", "배당"]} stocks={sampleStocks} plans={samplePlans} rules={sampleRules} ledger={buildTradingLedger([])} accounts={accounts} onCancel={vi.fn()} onSave={vi.fn()} />);
+    expect(screen.getByLabelText("계좌")).toHaveValue("b");
+    expect(screen.getByLabelText("계좌")).not.toBeDisabled();
+  });
 });
+
+function account(id: string, name: string, isDefault = false): InvestmentAccount {
+  return { id, name, institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault, archivedAt: null, memo: "", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
+}

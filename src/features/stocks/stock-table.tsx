@@ -32,7 +32,7 @@ export function StockTable({ stocks, accountHoldingsByStockId, onEdit, onDelete 
     return [
       { accessorKey: "name", header: t("종목"), cell: ({ row }) => <Link href={`/stocks/detail?id=${row.original.id}`} className="block min-w-36"><span className="font-medium hover:text-[var(--accent)]">{row.original.name}</span><span className="mt-0.5 block text-xs text-[var(--muted)]">{row.original.ticker} · {t(row.original.market)}</span></Link> },
       { accessorKey: "status", header: t("상태"), cell: ({ getValue }) => <span className="whitespace-nowrap rounded-full bg-[var(--accent-soft)] px-2.5 py-1 text-xs font-medium text-[var(--accent)]">{t(getValue<string>())}</span> },
-      { id: "accountHoldings", header: t("보유 계좌"), cell: ({ row }) => {
+      { id: "accountHoldings", accessorFn: (stock) => stockHoldingAccountSortKey(accountHoldingsByStockId.get(stock.id) ?? []), header: t("보유 계좌"), cell: ({ row }) => {
         const names = stockHoldingAccountNames(accountHoldingsByStockId.get(row.original.id) ?? []);
         const fullNames = names.join(" · ");
         return <span title={fullNames || undefined} aria-label={names.length ? t("보유 계좌: {accounts}", { accounts: fullNames }) : t("현재 보유 계좌가 없습니다.")} className="block max-w-40 truncate">{formatStockAccountSummary(names, t)}</span>;
@@ -49,7 +49,7 @@ export function StockTable({ stocks, accountHoldingsByStockId, onEdit, onDelete 
     ];
   }, [accountHoldingsByStockId, formatDate, formatNumber, onDelete, onEdit, t]);
 
-  const table = useReactTable({ data, columns, state: { sorting, globalFilter, columnVisibility: visibility }, onSortingChange: setSorting, onGlobalFilterChange: setGlobalFilter, onColumnVisibilityChange: setVisibility, getCoreRowModel: getCoreRowModel(), getFilteredRowModel: getFilteredRowModel(), getSortedRowModel: getSortedRowModel() });
+  const table = useReactTable({ data, columns, state: { sorting, globalFilter, columnVisibility: visibility }, globalFilterFn: (row, _columnId, value) => stockMatchesSearch(row.original, String(value)), onSortingChange: setSorting, onGlobalFilterChange: setGlobalFilter, onColumnVisibilityChange: setVisibility, getCoreRowModel: getCoreRowModel(), getFilteredRowModel: getFilteredRowModel(), getSortedRowModel: getSortedRowModel() });
 
   return <><div className="flex flex-wrap gap-2 border-b p-3"><input aria-label={t("종목 검색")} value={globalFilter} onChange={(e) => setGlobalFilter(e.target.value)} className="h-9 min-w-56 flex-1 rounded-lg border bg-[var(--surface)] px-3 text-sm" placeholder={t("종목명, 티커, 시장 검색")} /><select aria-label={t("상태 필터")} value={status} onChange={(e) => setStatus(e.target.value)} className="h-9 rounded-lg border bg-[var(--surface)] px-3 text-sm"><option value="전체">{t("전체")}</option>{stockStatuses.map((item) => <option key={item} value={item}>{t(item)}</option>)}</select><div className="relative"><button onClick={() => setColumnMenu((v) => !v)} className="flex h-9 items-center gap-2 rounded-lg border px-3 text-sm"><MoreHorizontal size={16} />{t("열 설정")}<ChevronDown size={14} /></button>{columnMenu && <div className="absolute right-0 top-11 z-20 w-44 rounded-lg border bg-[var(--surface)] p-2 shadow-xl">{table.getAllLeafColumns().filter((column) => column.getCanHide()).map((column) => <label key={column.id} className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-[var(--surface-muted)]"><input type="checkbox" checked={column.getIsVisible()} onChange={column.getToggleVisibilityHandler()} />{String(column.columnDef.header)}</label>)}</div>}</div></div><div className="overflow-x-auto"><table className="w-full border-collapse text-left text-sm"><thead className="bg-[var(--surface-muted)] text-xs text-[var(--muted)]"><tr>{table.getHeaderGroups()[0]?.headers.map((header) => <th key={header.id} className="whitespace-nowrap border-b px-4 py-3 font-medium"><button disabled={!header.column.getCanSort()} onClick={header.column.getToggleSortingHandler()} className="flex items-center gap-1">{flexRender(header.column.columnDef.header, header.getContext())}{header.column.getCanSort() && <ChevronsUpDown size={13} />}</button></th>)}</tr></thead><tbody>{table.getRowModel().rows.map((row) => <tr key={row.id} className="border-b last:border-0 hover:bg-[var(--surface-muted)]">{row.getVisibleCells().map((cell) => <td key={cell.id} className="whitespace-nowrap px-4 py-3.5">{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>)}</tr>)}</tbody></table>{table.getRowModel().rows.length === 0 && <div className="grid h-52 place-items-center text-center"><div><p className="font-medium">{t("조건에 맞는 종목이 없습니다")}</p><p className="mt-1 text-sm text-[var(--muted)]">{t("검색어나 필터를 변경해 보세요.")}</p></div></div>}</div><div className="border-t px-4 py-3 text-xs text-[var(--muted)]">{t("총 {count}개 종목 · 열 제목을 눌러 정렬", { count: formatNumber(table.getRowModel().rows.length) })}</div></>;
 }
@@ -64,6 +64,17 @@ export function stockHoldingAccountNames(holdings: StockAccountHolding[]) {
   const names = new Map<string, string>();
   for (const holding of holdings) if (!names.has(holding.accountId)) names.set(holding.accountId, holding.accountName);
   return [...names.values()];
+}
+
+export function stockHoldingAccountSortKey(holdings: StockAccountHolding[]) {
+  return stockHoldingAccountNames(holdings).join("\u0000");
+}
+
+export function stockMatchesSearch(stock: Stock, search: string) {
+  const query = search.trim().toLocaleLowerCase();
+  if (!query) return true;
+  return [stock.name, stock.ticker, stock.market, stock.sector, stock.investmentType, stock.status]
+    .some((value) => value.toLocaleLowerCase().includes(query));
 }
 
 function Numeric({ children, strong }: { children: React.ReactNode; strong?: boolean }) { return <span className={`block text-right tabular-nums ${strong ? "font-medium" : ""}`}>{children}</span>; }

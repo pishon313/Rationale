@@ -44,6 +44,16 @@ const rows = [
   ["기초 포지션을 등록하고 보유 수량과 평균단가를 계산했습니다.", "開始ポジションを登録し、保有数量と平均単価を計算しました。", "Registered the opening position and calculated the quantity and average price.", "La position initiale a été enregistrée et la quantité ainsi que le prix moyen ont été calculés.", "Posizione iniziale registrata; quantità e prezzo medio sono stati calcolati.", "Se registró la posición inicial y se calcularon la cantidad y el precio medio."],
   ["기록 수정", "記録を編集", "Edit entry", "Modifier l’écriture", "Modifica voce", "Editar entrada"],
   ["기록 삭제", "記録を削除", "Delete entry", "Supprimer l’écriture", "Elimina voce", "Eliminar entrada"],
+  ["매매 추가", "取引を追加", "Add trade", "Ajouter une transaction", "Aggiungi operazione", "Añadir operación"],
+  ["전체 원장", "取引台帳全体", "Full ledger", "Registre complet", "Registro completo", "Registro completo"],
+  ["추가 매수", "追加購入", "Buy more", "Acheter davantage", "Acquista ancora", "Comprar más"],
+  ["작업", "操作", "Actions", "Actions", "Azioni", "Acciones"],
+  ["{type} 기록 수정", "{type}記録を編集", "Edit {type} entry", "Modifier l’écriture {type}", "Modifica voce {type}", "Editar entrada de {type}"],
+  ["{type} 기록 삭제", "{type}記録を削除", "Delete {type} entry", "Supprimer l’écriture {type}", "Elimina voce {type}", "Eliminar entrada de {type}"],
+  ["먼저 계좌를 추가해 주세요.", "先に口座を追加してください。", "Add an account first.", "Ajoutez d’abord un compte.", "Aggiungi prima un conto.", "Añade primero una cuenta."],
+  ["매매 기록을 추가했습니다.", "取引記録を追加しました。", "Trade added.", "Transaction ajoutée.", "Operazione aggiunta.", "Operación añadida."],
+  ["매매 기록을 변경했습니다.", "取引記録を変更しました。", "Trade updated.", "Transaction modifiée.", "Operazione aggiornata.", "Operación actualizada."],
+  ["매매 기록을 삭제했습니다.", "取引記録を削除しました。", "Trade deleted.", "Transaction supprimée.", "Operazione eliminata.", "Operación eliminada."],
 
   // Trade form
   ["새 원장 기록", "新しい台帳記録", "New ledger entry", "Nouvelle écriture", "Nuova voce del registro", "Nueva entrada del registro"],

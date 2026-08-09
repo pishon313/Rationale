@@ -7,6 +7,7 @@ import { migrateTrades, projectStocksFromTrades } from "@/features/trades/migrat
 import { buildTradingLedger } from "@/domain/trading-ledger";
 import { useLocalCollection } from "@/lib/use-local-collection";
 import { buildStockAccountHoldings } from "./stock-account-holdings";
+import { correctStockCurrency } from "./stock-currency-correction";
 
 export function useStockStore() {
   const stockStore = useLocalCollection<Stock>("stocks", []);
@@ -24,12 +25,25 @@ export function useStockStore() {
 
   return {
     stocks: visibleStocks,
+    trades: migratedTrades,
+    storedTrades: trades,
     accounts: accountStore.allItems,
     ledger,
     accountHoldingsByStockId,
     ready: stockStore.ready && tradeStore.ready && accountStore.ready,
     addStock: stockStore.add,
     updateStock: stockStore.update,
+    correctStockCurrency: async (desiredStock: Stock) => {
+      const currentStock = stocks.find((item) => item.id === desiredStock.id);
+      if (!currentStock) throw new Error("수정할 종목을 찾지 못했습니다.");
+      const result = await correctStockCurrency({ stock: currentStock, desiredStock, stocks, trades, accounts: accountStore.allItems });
+      if (result.changed) {
+        stockStore.applyCommitted(result.stocks);
+        tradeStore.applyCommitted(result.trades);
+      }
+      return result;
+    },
+    replaceTradesAsync: tradeStore.replaceAsync,
     deleteStock: (id: string) => {
       if ((projectedStocks.find((stock) => stock.id === id)?.quantity ?? 0) > 0 || openStockIds.has(id)) return false;
       const stock = stocks.find((item) => item.id === id);

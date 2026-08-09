@@ -20,6 +20,10 @@ type Props = {
   trade?: Trade;
   initialType?: Trade["tradeType"];
   initialStockId?: string;
+  lockedStockId?: string;
+  initialAccountId?: string;
+  lockedAccountId?: string;
+  allowedTypes?: Trade["tradeType"][];
   openingPosition?: boolean;
   stocks: Stock[];
   plans: BuyPlan[];
@@ -37,14 +41,15 @@ const field = "mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3 text-
 // 계획 연결 데이터와 저장 로직은 유지하되, 당분간 원장 입력 UI에서는 숨깁니다.
 const showLinkedPlanField = false;
 
-export function TradeForm({ trade, initialType = "매수", initialStockId, openingPosition: createOpeningPosition = false, stocks, plans, rules, ledger, accounts, formError = "", onCancel, onSave }: Props) {
+export function TradeForm({ trade, initialType = "매수", initialStockId, lockedStockId, initialAccountId, lockedAccountId, allowedTypes, openingPosition: createOpeningPosition = false, stocks, plans, rules, ledger, accounts, formError = "", onCancel, onSave }: Props) {
   const { t, formatDate, formatNumber } = useI18n();
   const exchangeRates = useExchangeRates();
-  const firstStock = stocks[0];
   const openingPosition = trade?.isOpeningPosition === true || createOpeningPosition;
-  const openingStock = stocks.find((item) => item.id === initialStockId);
+  const contextualStockId = lockedStockId ?? initialStockId;
+  const openingStock = stocks.find((item) => item.id === contextualStockId);
+  const firstStock = openingStock ?? stocks[0];
   const [type, setType] = useState<Trade["tradeType"]>(openingPosition ? "매수" : trade?.tradeType ?? initialType);
-  const [stockId, setStockId] = useState(trade?.stockId ?? initialStockId ?? firstStock?.id ?? "");
+  const [stockId, setStockId] = useState(lockedStockId ?? trade?.stockId ?? initialStockId ?? firstStock?.id ?? "");
   const [planId, setPlanId] = useState(trade?.planId ?? "");
   const [tradedAt, setTradedAt] = useState(() => toLocalDateTime(trade?.tradedAt));
   const [quantity, setQuantity] = useState(trade?.quantity ?? 0);
@@ -59,7 +64,9 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, openi
   const resolvedAccounts = accounts ?? [{ id: trade?.accountId ?? "legacy-form-account", name: legacyAccountName, institution: "", kind: "brokerage" as const, subtype: "", baseCurrency: trade?.currency ?? openingStock?.currency ?? "KRW", isDefault: true, archivedAt: null, memo: "", createdAt: trade?.createdAt ?? "1970-01-01T00:00:00.000Z", updatedAt: trade?.updatedAt ?? trade?.createdAt ?? "1970-01-01T00:00:00.000Z" }];
   const activeAccounts = resolvedAccounts.filter((account) => !account.archivedAt);
   const legacyMatch = resolvedAccounts.find((account) => account.name === legacyAccountName);
-  const initialAccount = resolvedAccounts.find((account) => account.id === trade?.accountId)
+  const initialAccount = resolvedAccounts.find((account) => account.id === lockedAccountId)
+    ?? resolvedAccounts.find((account) => account.id === trade?.accountId)
+    ?? resolvedAccounts.find((account) => account.id === initialAccountId)
     ?? legacyMatch
     ?? activeAccounts.find((account) => account.isDefault)
     ?? activeAccounts[0];
@@ -70,6 +77,7 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, openi
   const [conditionMet, setConditionMet] = useState((trade?.ruleComplianceScore ?? 5) >= 4);
   const [localError, setLocalError] = useState("");
   const [saving, setSaving] = useState(false);
+  const visibleTradeTypes = allowedTypes ?? tradeTypes;
 
   const stock = stocks.find((item) => item.id === stockId);
   const isSecurity = type === "매수" || type === "매도";
@@ -113,6 +121,12 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, openi
     return () => { active = false; };
   }, [currency, exchangeRates.snapshot.rateDate, exchangeRates.snapshot.ratesToKrw, trade, tradedAt]);
 
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape" && !saving) onCancel(); };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [onCancel, saving]);
+
   function syncStockCurrency(nextStock?: Stock) {
     if (!nextStock) return;
     const nextRate = exchangeRates.snapshot.ratesToKrw[nextStock.currency];
@@ -121,6 +135,7 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, openi
   }
 
   function selectStock(id: string) {
+    if (lockedStockId) return;
     setStockId(id);
     setPlanId("");
     setLocalError("");
@@ -204,7 +219,7 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, openi
     : t(rateNote.key);
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/35" role="dialog" aria-modal="true" aria-labelledby="trade-form-title">
+    <div className="fixed inset-0 z-[300] flex justify-end bg-black/35" role="dialog" aria-modal="true" aria-labelledby="trade-form-title">
       <form className="h-full w-full max-w-2xl overflow-y-auto bg-[var(--surface)]" onSubmit={submit}>
         <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-[var(--surface)] p-5">
           <div>
@@ -219,8 +234,8 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, openi
 
           <div className="sm:col-span-2">
             <Label text={t("유형")} asGroup>
-              <div className="mt-2 grid grid-cols-5 rounded-lg bg-[var(--surface-muted)] p-1">
-                {tradeTypes.map((item) => {
+              <div className="mt-2 grid rounded-lg bg-[var(--surface-muted)] p-1" style={{ gridTemplateColumns: `repeat(${visibleTradeTypes.length}, minmax(0, 1fr))` }}>
+                {visibleTradeTypes.map((item) => {
                   const locked = openingPosition && item !== "매수";
                   return <button key={item} type="button" disabled={saving || locked} onClick={() => selectType(item)} className={`rounded-md px-2 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-40 ${type === item ? "bg-[var(--surface)] font-medium text-[var(--accent)] shadow-sm" : "text-[var(--muted)]"}`}>{t(item)}</button>;
                 })}
@@ -229,14 +244,14 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, openi
             </Label>
           </div>
 
-          {(isSecurity || isDividend) && <Label text={t("종목")}><select required={isSecurity} className={field} value={stockId} onChange={(event) => selectStock(event.target.value)}><option value="">{t("종목 선택")}</option>{!stock && trade?.stockId && <option value={trade.stockId}>{t("{stock} (현재 목록에 없음)", { stock: trade.stockName })}</option>}{stocks.map((item) => <option key={item.id} value={item.id}>{item.name} ({item.ticker}){item.deletedAt ? ` · ${t("삭제됨")}` : ""}</option>)}</select></Label>}
+          {(isSecurity || isDividend) && <Label text={t("종목")}><select required={isSecurity} disabled={Boolean(lockedStockId)} className={`${field} disabled:cursor-not-allowed disabled:opacity-70`} value={stockId} onChange={(event) => selectStock(event.target.value)}><option value="">{t("종목 선택")}</option>{!stock && trade?.stockId && <option value={trade.stockId}>{t("{stock} (현재 목록에 없음)", { stock: trade.stockName })}</option>}{stocks.map((item) => <option key={item.id} value={item.id}>{item.name} ({item.ticker}){item.deletedAt ? ` · ${t("삭제됨")}` : ""}</option>)}</select></Label>}
           {isSecurity && <>
             <Label text={t("수량")}><input required type="number" min="0" step="any" className={field} value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} />{type === "매도" && <small className="mt-1 block text-[var(--muted)]">{t("현재 원장 보유: {quantity}주", { quantity: formatNumber(available) })}</small>}</Label>
             <Label text={t(openingPosition ? "평균단가" : "체결 가격")}><input required type="number" min="0" step="any" className={field} value={price} onChange={(event) => setPrice(Number(event.target.value))} /></Label>
           </>}
           {!isSecurity && <Label text={type === "배당" ? t("세전 배당금") : t("{type} 금액", { type: t(type) })}><input required type="number" min="0" step="any" className={field} value={amount} onChange={(event) => setAmount(Number(event.target.value))} /></Label>}
           <Label text={t("거래 일시")}><input required type="datetime-local" className={field} value={tradedAt} onChange={(event) => setTradedAt(event.target.value)} /></Label>
-          <Label text={t("계좌")}><select required className={field} value={accountId} onChange={(event) => setAccountId(event.target.value)}><option value="">{t("계좌 추가 필요")}</option>{selectableAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}{account.institution ? ` · ${account.institution}` : ""}{account.archivedAt ? ` · ${t("보관됨")}` : ""}</option>)}</select></Label>
+          <Label text={t("계좌")}><select required disabled={Boolean(lockedAccountId)} className={`${field} disabled:cursor-not-allowed disabled:opacity-70`} value={accountId} onChange={(event) => setAccountId(event.target.value)}><option value="">{t("계좌 추가 필요")}</option>{selectableAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}{account.institution ? ` · ${account.institution}` : ""}{account.archivedAt ? ` · ${t("보관됨")}` : ""}</option>)}</select></Label>
           {(!isSecurity || !stock) && <Label text={t("통화")}><select className={field} value={currency} onChange={(event) => { const next = event.target.value as Trade["currency"]; setCurrency(next); setExchangeRate(exchangeRates.snapshot.ratesToKrw[next]); }}>{currencies.map((item) => <option key={item}>{item}</option>)}</select></Label>}
           {currency !== "KRW" && <Label text={t("적용 환율")}><input aria-label={t("적용 환율")} required type="number" min="0" step="any" className={field} value={exchangeRate} onChange={(event) => { setExchangeRate(Number(event.target.value)); setRateNote({ key: "직접 입력한 환율" }); }} /><small className="mt-1 block text-[var(--muted)]">{t("1 {currency}당 KRW · {note}", { currency, note: localizedRateNote })}</small></Label>}
           <Label text={t("수수료")}><input type="number" min="0" step="any" className={field} value={fee} onChange={(event) => setFee(Number(event.target.value))} /></Label>

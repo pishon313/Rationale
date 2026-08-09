@@ -7,8 +7,8 @@ import { useI18n } from "@/i18n/i18n-provider";
 const nav = [
   ["대시보드", "/dashboard", Gauge], ["종목", "/stocks", Tags], ["매수 계획", "/plans", Lightbulb],
   ["관찰 기록", "/observations", Eye], ["회고", "/reviews", BookOpen],
-  ["분석", "/analytics", BarChart3], ["투자 원칙", "/rules", ClipboardCheck], ["Note", "/notes", FileText], ["설정", "/settings", Settings],
-  ["매매", "/trades", WalletCards], ["계좌", "/accounts", Landmark],
+  ["분석", "/analytics", BarChart3], ["투자 원칙", "/rules", ClipboardCheck], ["Note", "/notes", FileText],
+  ["매매", "/trades", WalletCards], ["계좌", "/accounts", Landmark], ["설정", "/settings", Settings],
 ] as const;
 
 export function AppSidebar() {
