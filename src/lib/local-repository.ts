@@ -1,4 +1,6 @@
 import { validateStoredCollection, validateStoredRecord, type CollectionValidationErrorType } from "./collection-validation";
+import { isSyncableRecord, toSyncEnvelope } from "@/features/sync/sync-projection";
+import type { SyncConflictV1, SyncEntityType, SyncEnvelopeV1, SyncWriteSource } from "@/features/sync/sync-types";
 
 type Identifiable = { id: string; updatedAt?: string };
 export type CollectionWrite = { collection: string; values: readonly Identifiable[] };
@@ -17,7 +19,7 @@ export type CorruptedCollection = {
 };
 export type CorruptionSnapshot = { collections: CorruptedCollection[] };
 type VersionedWrite = CollectionWrite & { generation: number };
-type FailedWrite = VersionedWrite & { error: string; failureOrder: number };
+type FailedWrite = VersionedWrite & { error: string; failureOrder: number; source: SyncWriteSource; conflicts: readonly SyncConflictV1[]; acknowledgedRecordNames: readonly string[]; queuedEnvelopes: readonly SyncEnvelopeV1[] };
 
 const COLLECTION_STATE = "__tradejournal_collection_state__";
 const browserKey = (collection: string) => `tradejournal.${collection}.v1`;
@@ -59,14 +61,16 @@ export function reportPersistenceError(error: unknown, fallback: string) {
 
 export async function retryLastSave() {
   discardSupersededFailures();
-  const retry = [...failedWrites.values()].map(({ collection, values }) => ({ collection, values }));
+  const failures = [...failedWrites.values()];
+  const retry = failures.map(({ collection, values }) => ({ collection, values }));
   if (!retry.length) {
     updatePersistence({ error: null, canRetry: false });
     return;
   }
   for (const { collection } of retry) failedWrites.delete(collection);
   syncFailureSnapshot();
-  await saveCollectionsAtomically(retry);
+  const metadata = failures.sort((a, b) => b.failureOrder - a.failureOrder)[0];
+  await saveCollectionsAtomically(retry, { source: metadata.source, conflicts: metadata.conflicts, acknowledgedRecordNames: metadata.acknowledgedRecordNames, queuedEnvelopes: metadata.queuedEnvelopes });
 }
 
 export function isTauriApp() {
@@ -142,7 +146,7 @@ export async function saveCollection<T extends Identifiable>(collection: string,
   await saveCollectionsAtomically([{ collection, values }]);
 }
 
-export function saveCollectionsAtomically(writes: readonly CollectionWrite[], options: { resolveCorruption?: boolean } = {}) {
+export function saveCollectionsAtomically(writes: readonly CollectionWrite[], options: { resolveCorruption?: boolean; source?: SyncWriteSource; conflicts?: readonly SyncConflictV1[]; acknowledgedRecordNames?: readonly string[]; queuedEnvelopes?: readonly SyncEnvelopeV1[] } = {}) {
   assertUniqueCollections(writes);
   const blocked = writes.map((write) => write.collection).filter(hasUnresolvedCorruption);
   if (blocked.length && !options.resolveCorruption) {
@@ -152,7 +156,7 @@ export function saveCollectionsAtomically(writes: readonly CollectionWrite[], op
   }
   const prepared = versionWrites(cloneWrites(writes));
   updatePersistence({ pendingWrites: persistenceSnapshot.pendingWrites + 1 });
-  const task = writeQueue.catch(() => undefined).then(() => performSave(prepared));
+  const task = writeQueue.catch(() => undefined).then(() => performSave(prepared, options.source ?? "localUser", options.conflicts ?? [], options.acknowledgedRecordNames ?? [], options.queuedEnvelopes ?? []));
   writeQueue = task.then(() => undefined, () => undefined);
   return task.then(
     () => {
@@ -161,7 +165,7 @@ export function saveCollectionsAtomically(writes: readonly CollectionWrite[], op
       if (options.resolveCorruption) resolveCorruption(prepared.map((write) => write.collection));
     },
     (error) => {
-      recordFailure(prepared, error);
+      recordFailure(prepared, error, { source: options.source ?? "localUser", conflicts: options.conflicts ?? [], acknowledgedRecordNames: options.acknowledgedRecordNames ?? [], queuedEnvelopes: options.queuedEnvelopes ?? [] });
       throw error;
     },
   ).finally(() => updatePersistence({ pendingWrites: Math.max(0, persistenceSnapshot.pendingWrites - 1) }));
@@ -197,7 +201,7 @@ export async function exportQuarantinedData() {
   return JSON.stringify({ format: "rationale-corrupt-data", exportedAt: new Date().toISOString(), entries }, null, 2);
 }
 
-async function performSave(writes: readonly CollectionWrite[]) {
+async function performSave(writes: readonly CollectionWrite[], source: SyncWriteSource, conflicts: readonly SyncConflictV1[], acknowledgedRecordNames: readonly string[], queuedEnvelopes: readonly SyncEnvelopeV1[]) {
   if (!isTauriApp()) {
     const previous = new Map(writes.map(({ collection }) => [browserKey(collection), localStorage.getItem(browserKey(collection))]));
     try {
@@ -218,8 +222,15 @@ async function performSave(writes: readonly CollectionWrite[]) {
     collection,
     records: values.map((value) => ({ id: value.id, data: JSON.stringify(value), updatedAt: value.updatedAt ?? now })),
   }));
-  await invoke("save_collections_atomically", { writes: payload, stateUpdatedAt: now });
+  const envelopes = writes.flatMap(({ collection, values }) => !isSyncEntityType(collection) ? [] : values.filter(isSyncableRecord).map((value) => {
+    if (collection === "accounts") return toSyncEnvelope(collection, value as never);
+    if (collection === "stocks") return toSyncEnvelope(collection, value as never);
+    return toSyncEnvelope(collection, value as never);
+  }));
+  await invoke("save_collections_atomically", { writes: payload, stateUpdatedAt: now, source, envelopes, conflicts, acknowledgedRecordNames, queuedEnvelopes });
 }
+
+function isSyncEntityType(value: string): value is SyncEntityType { return value === "accounts" || value === "stocks" || value === "trades"; }
 
 function cloneWrites(writes: readonly CollectionWrite[]): CollectionWrite[] {
   return writes.map(({ collection, values }) => ({ collection, values: JSON.parse(JSON.stringify(values)) as Identifiable[] }));
@@ -233,12 +244,12 @@ function versionWrites(writes: readonly CollectionWrite[]): VersionedWrite[] {
   });
 }
 
-function recordFailure(writes: readonly VersionedWrite[], error: unknown) {
+function recordFailure(writes: readonly VersionedWrite[], error: unknown, metadata: Pick<FailedWrite, "source" | "conflicts" | "acknowledgedRecordNames" | "queuedEnvelopes">) {
   const message = persistenceErrorMessage(error, "기록을 저장하지 못했습니다.");
   const order = ++failureOrder;
   for (const write of writes) {
     if (collectionGenerations.get(write.collection) !== write.generation) continue;
-    failedWrites.set(write.collection, { ...write, error: message, failureOrder: order });
+    failedWrites.set(write.collection, { ...write, ...metadata, error: message, failureOrder: order });
   }
   syncFailureSnapshot();
 }

@@ -18,7 +18,7 @@ export function ReviewsPageClient() {
   const stocks = useLocalCollection<Stock>("stocks", []);
   const [editing, setEditing] = useState<Review | "new" | null>(null);
   const formatReviewedAt = (value: string) => {
-    const date = new Date(`${value}T00:00:00`);
+    const date = new Date(value.includes("T") ? value : `${value}T00:00:00`);
     return Number.isNaN(date.getTime()) ? value : formatDate(date, { dateStyle: "medium" });
   };
 
@@ -120,7 +120,7 @@ export function ReviewForm({ value, stocks, initialStockId, cancel, save }: { va
     const stockName = stock?.name ?? form.stockName.trim();
     if (!stockName) return;
     const now = new Date().toISOString();
-    save({ ...form, id: value?.id ?? crypto.randomUUID(), stockId: stock?.id ?? null, stockName, tradeId: value?.tradeId ?? null, strategyTags: splitTags(strategyTags), mistakeTags: splitTags(mistakeTags), attachmentUrls: form.attachmentUrls ?? [], createdAt: value?.createdAt ?? now, updatedAt: now, deletedAt: null });
+    save({ ...form, id: value?.id ?? crypto.randomUUID(), stockId: stock?.id ?? null, stockName, tradeId: value?.tradeId ?? null, reviewedAt: form.reviewedAt.slice(0, 10), strategyTags: splitTags(strategyTags), mistakeTags: splitTags(mistakeTags), attachmentUrls: form.attachmentUrls ?? [], createdAt: value?.createdAt ?? now, updatedAt: now, deletedAt: null });
   }
 
   return <div className="fixed inset-0 z-50 flex justify-end bg-black/35">
@@ -141,7 +141,7 @@ export function ReviewForm({ value, stocks, initialStockId, cancel, save }: { va
           </select>
         </Field>
         <Field label={t("회고일")}>
-          <input required type="date" className={input} value={form.reviewedAt} onChange={(event) => set("reviewedAt", event.target.value)} />
+          <input required type="date" className={input} value={form.reviewedAt.slice(0, 10)} onChange={(event) => set("reviewedAt", event.target.value)} />
         </Field>
         {!form.stockId && <div className="sm:col-span-2">
           <Field label={t("회고 대상")}>

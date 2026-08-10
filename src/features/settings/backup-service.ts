@@ -97,7 +97,7 @@ export function backupWrites(parsed: ValidatedBackup): CollectionWrite[] {
 }
 
 export async function restoreBackup(current: BackupV5, backup: ValidatedBackup) {
-  await saveCollectionsAtomically([snapshotWrite(current), ...backupWrites(backup)], { resolveCorruption: true });
+  await saveCollectionsAtomically([snapshotWrite(current), ...backupWrites(backup)], { resolveCorruption: true, source: "backupRestore" });
 }
 
 export function snapshotWrite(backup: BackupV5): CollectionWrite {

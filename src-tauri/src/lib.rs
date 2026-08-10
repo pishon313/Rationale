@@ -172,6 +172,46 @@ struct AtomicCollectionWrite {
     records: Vec<AtomicRecordWrite>,
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncEnvelopeWrite {
+    record_name: String,
+    entity_type: String,
+    logical_id: String,
+    schema_version: u8,
+    updated_at: String,
+    deleted_at: Option<String>,
+    payload: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncConflictWrite {
+    record_name: String,
+    entity_type: String,
+    logical_id: String,
+    local_payload: String,
+    remote_payload: String,
+    detected_at: String,
+    chosen_side: String,
+    reason: String,
+}
+
+fn comparable_sync_envelope(serialized: &str) -> Result<serde_json::Value, String> {
+    let mut value: serde_json::Value =
+        serde_json::from_str(serialized).map_err(|_| "INVALID_SYNC_ENVELOPE".to_string())?;
+    if let Some(object) = value.as_object_mut() {
+        object.remove("updatedAt");
+        if let Some(payload) = object
+            .get_mut("payload")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            payload.remove("updatedAt");
+        }
+    }
+    Ok(value)
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CorruptRecordEntry {
@@ -235,6 +275,11 @@ async fn save_collections_atomically(
     db_instances: State<'_, DbInstances>,
     writes: Vec<AtomicCollectionWrite>,
     state_updated_at: String,
+    source: String,
+    envelopes: Vec<SyncEnvelopeWrite>,
+    conflicts: Vec<SyncConflictWrite>,
+    acknowledged_record_names: Vec<String>,
+    queued_envelopes: Vec<SyncEnvelopeWrite>,
 ) -> Result<(), String> {
     let instances = db_instances.0.read().await;
     let pool = match instances.get(DATABASE_URL) {
@@ -242,6 +287,13 @@ async fn save_collections_atomically(
         _ => return Err("LOCAL_DATABASE_NOT_LOADED".into()),
     };
     drop(instances);
+
+    if !matches!(
+        source.as_str(),
+        "localUser" | "remoteSync" | "backupRestore" | "sampleData" | "systemDerived"
+    ) {
+        return Err("INVALID_WRITE_SOURCE".into());
+    }
 
     let mut collection_names = HashSet::new();
     for write in &writes {
@@ -289,6 +341,155 @@ async fn save_collections_atomically(
             .bind(&write.collection)
             .bind("{}")
             .bind(&state_updated_at)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    if source == "localUser" || source == "remoteSync" {
+        for envelope in envelopes {
+            if envelope.schema_version != 1
+                || !matches!(
+                    envelope.entity_type.as_str(),
+                    "accounts" | "stocks" | "trades"
+                )
+                || envelope.record_name
+                    != format!("v1|{}|{}", envelope.entity_type, envelope.logical_id)
+            {
+                return Err("INVALID_SYNC_ENVELOPE".into());
+            }
+            let serialized = serde_json::to_string(&envelope)
+                .map_err(|_| "INVALID_SYNC_ENVELOPE".to_string())?;
+            let previous = sqlx::query_scalar::<_, String>(
+                "SELECT envelope FROM sync_record_state WHERE record_name = ?",
+            )
+            .bind(&envelope.record_name)
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(|error| error.to_string())?;
+            let changed = match previous.as_deref() {
+                Some(value) => {
+                    comparable_sync_envelope(value)? != comparable_sync_envelope(&serialized)?
+                }
+                None => true,
+            };
+            if source == "localUser" && changed {
+                sqlx::query("INSERT INTO sync_outbox (record_name, entity_type, logical_id, operation, envelope, updated_at, queued_at) VALUES (?, ?, ?, 'upsert', ?, ?, ?) ON CONFLICT(record_name) DO UPDATE SET entity_type = excluded.entity_type, logical_id = excluded.logical_id, operation = excluded.operation, envelope = excluded.envelope, updated_at = excluded.updated_at, queued_at = excluded.queued_at")
+                    .bind(&envelope.record_name).bind(&envelope.entity_type).bind(&envelope.logical_id).bind(&serialized).bind(&envelope.updated_at).bind(&state_updated_at)
+                    .execute(&mut *transaction).await.map_err(|error| error.to_string())?;
+            }
+            sqlx::query("INSERT INTO sync_record_state (record_name, entity_type, logical_id, envelope, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(record_name) DO UPDATE SET envelope = excluded.envelope, updated_at = excluded.updated_at")
+                .bind(&envelope.record_name).bind(&envelope.entity_type).bind(&envelope.logical_id).bind(&serialized).bind(&envelope.updated_at)
+                .execute(&mut *transaction).await.map_err(|error| error.to_string())?;
+        }
+    }
+    for conflict in conflicts {
+        sqlx::query("INSERT INTO sync_conflicts (record_name, entity_type, logical_id, local_payload, remote_payload, detected_at, chosen_side, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+            .bind(conflict.record_name).bind(conflict.entity_type).bind(conflict.logical_id).bind(conflict.local_payload).bind(conflict.remote_payload).bind(conflict.detected_at).bind(conflict.chosen_side).bind(conflict.reason)
+            .execute(&mut *transaction).await.map_err(|error| error.to_string())?;
+    }
+    for record_name in acknowledged_record_names {
+        sqlx::query("DELETE FROM sync_outbox WHERE record_name = ?")
+            .bind(record_name)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    for envelope in queued_envelopes {
+        if envelope.schema_version != 1
+            || envelope.record_name
+                != format!("v1|{}|{}", envelope.entity_type, envelope.logical_id)
+        {
+            return Err("INVALID_SYNC_ENVELOPE".into());
+        }
+        let serialized =
+            serde_json::to_string(&envelope).map_err(|_| "INVALID_SYNC_ENVELOPE".to_string())?;
+        sqlx::query("INSERT INTO sync_outbox (record_name, entity_type, logical_id, operation, envelope, updated_at, queued_at) VALUES (?, ?, ?, 'upsert', ?, ?, ?) ON CONFLICT(record_name) DO UPDATE SET envelope = excluded.envelope, updated_at = excluded.updated_at, queued_at = excluded.queued_at")
+            .bind(&envelope.record_name).bind(&envelope.entity_type).bind(&envelope.logical_id).bind(serialized).bind(&envelope.updated_at).bind(&state_updated_at)
+            .execute(&mut *transaction).await.map_err(|error| error.to_string())?;
+    }
+    if source == "backupRestore" {
+        sqlx::query("INSERT INTO sync_settings (id, enabled, status, updated_at) VALUES ('singleton', 0, 'needsReconciliation', ?) ON CONFLICT(id) DO UPDATE SET status = 'needsReconciliation', updated_at = excluded.updated_at")
+            .bind(&state_updated_at).execute(&mut *transaction).await.map_err(|error| error.to_string())?;
+    }
+    transaction
+        .commit()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncRuntimeStatus {
+    enabled: bool,
+    status: String,
+    last_successful_sync_at: Option<String>,
+    pending_outbox_count: i64,
+    last_error: Option<String>,
+}
+
+#[tauri::command]
+async fn get_sync_outbox(
+    db_instances: State<'_, DbInstances>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let instances = db_instances.0.read().await;
+    let pool = match instances.get(DATABASE_URL) {
+        Some(DbPool::Sqlite(pool)) => pool.clone(),
+        _ => return Err("LOCAL_DATABASE_NOT_LOADED".into()),
+    };
+    drop(instances);
+    let values = sqlx::query_scalar::<_, String>(
+        "SELECT envelope FROM sync_outbox ORDER BY queued_at, record_name",
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    values
+        .into_iter()
+        .map(|value| serde_json::from_str(&value).map_err(|_| "INVALID_SYNC_OUTBOX".to_string()))
+        .collect()
+}
+
+#[tauri::command]
+async fn get_sync_runtime_status(
+    db_instances: State<'_, DbInstances>,
+) -> Result<SyncRuntimeStatus, String> {
+    let instances = db_instances.0.read().await;
+    let pool = match instances.get(DATABASE_URL) {
+        Some(DbPool::Sqlite(pool)) => pool.clone(),
+        _ => return Err("LOCAL_DATABASE_NOT_LOADED".into()),
+    };
+    drop(instances);
+    let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sync_outbox")
+        .fetch_one(&pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    let row = sqlx::query_as::<_, (i64, String, Option<String>, Option<String>)>("SELECT enabled, status, last_successful_sync_at, last_error FROM sync_settings WHERE id = 'singleton'").fetch_optional(&pool).await.map_err(|error| error.to_string())?;
+    let (enabled, status, last_successful_sync_at, last_error) =
+        row.unwrap_or((0, "disabled".into(), None, None));
+    Ok(SyncRuntimeStatus {
+        enabled: enabled != 0,
+        status,
+        last_successful_sync_at,
+        pending_outbox_count: count,
+        last_error,
+    })
+}
+
+#[tauri::command(rename_all = "camelCase")]
+async fn acknowledge_sync_records(
+    db_instances: State<'_, DbInstances>,
+    record_names: Vec<String>,
+) -> Result<(), String> {
+    let instances = db_instances.0.read().await;
+    let pool = match instances.get(DATABASE_URL) {
+        Some(DbPool::Sqlite(pool)) => pool.clone(),
+        _ => return Err("LOCAL_DATABASE_NOT_LOADED".into()),
+    };
+    drop(instances);
+    let mut transaction = pool.begin().await.map_err(|error| error.to_string())?;
+    for record_name in record_names {
+        sqlx::query("DELETE FROM sync_outbox WHERE record_name = ?")
+            .bind(record_name)
             .execute(&mut *transaction)
             .await
             .map_err(|error| error.to_string())?;
@@ -603,6 +804,12 @@ pub fn run() {
             sql: "CREATE TABLE IF NOT EXISTS corrupt_records (quarantine_id TEXT PRIMARY KEY NOT NULL, collection TEXT NOT NULL, record_id TEXT NOT NULL, raw_data TEXT NOT NULL, original_updated_at TEXT NOT NULL, detected_at TEXT NOT NULL, error_type TEXT NOT NULL, item_index INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS corrupt_records_collection_idx ON corrupt_records(collection);",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 3,
+            description: "create_sync_v1_state",
+            sql: "CREATE TABLE IF NOT EXISTS sync_outbox (record_name TEXT PRIMARY KEY NOT NULL, entity_type TEXT NOT NULL, logical_id TEXT NOT NULL, operation TEXT NOT NULL, envelope TEXT NOT NULL, updated_at TEXT NOT NULL, queued_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sync_record_state (record_name TEXT PRIMARY KEY NOT NULL, entity_type TEXT NOT NULL, logical_id TEXT NOT NULL, envelope TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sync_conflicts (id INTEGER PRIMARY KEY AUTOINCREMENT, record_name TEXT NOT NULL, entity_type TEXT NOT NULL, logical_id TEXT NOT NULL, local_payload TEXT NOT NULL, remote_payload TEXT NOT NULL, detected_at TEXT NOT NULL, chosen_side TEXT NOT NULL, reason TEXT NOT NULL); CREATE INDEX IF NOT EXISTS sync_conflicts_record_idx ON sync_conflicts(record_name); CREATE TABLE IF NOT EXISTS sync_settings (id TEXT PRIMARY KEY NOT NULL, enabled INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'disabled', last_successful_sync_at TEXT, last_error TEXT, account_identifier TEXT, updated_at TEXT NOT NULL);",
+            kind: MigrationKind::Up,
+        },
     ];
     tauri::Builder::default()
         .plugin(
@@ -617,6 +824,9 @@ pub fn run() {
             has_api_key,
             fetch_quote,
             save_collections_atomically,
+            get_sync_outbox,
+            get_sync_runtime_status,
+            acknowledge_sync_records,
             get_automatic_backup_status,
             ensure_automatic_backup,
             encrypt_backup,
@@ -847,5 +1057,30 @@ mod encrypted_backup_tests {
         );
         assert!(directory.join(".tradejournal-auto-99999.json.tmp").exists());
         fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod sync_state_tests {
+    use super::*;
+
+    #[test]
+    fn comparison_ignores_logical_timestamp_only_changes() {
+        let first = r#"{"recordName":"v1|stocks|s","entityType":"stocks","logicalId":"s","schemaVersion":1,"updatedAt":"2026-01-01T00:00:00Z","deletedAt":null,"payload":{"id":"s","thesisSummary":"same","updatedAt":"2026-01-01T00:00:00Z"}}"#;
+        let quote_refresh = r#"{"recordName":"v1|stocks|s","entityType":"stocks","logicalId":"s","schemaVersion":1,"updatedAt":"2026-01-02T00:00:00Z","deletedAt":null,"payload":{"id":"s","thesisSummary":"same","updatedAt":"2026-01-02T00:00:00Z"}}"#;
+        assert_eq!(
+            comparable_sync_envelope(first).unwrap(),
+            comparable_sync_envelope(quote_refresh).unwrap()
+        );
+    }
+
+    #[test]
+    fn comparison_detects_user_owned_projection_changes() {
+        let first = r#"{"recordName":"v1|stocks|s","entityType":"stocks","logicalId":"s","schemaVersion":1,"updatedAt":"2026-01-01T00:00:00Z","deletedAt":null,"payload":{"id":"s","thesisSummary":"first","updatedAt":"2026-01-01T00:00:00Z"}}"#;
+        let changed = r#"{"recordName":"v1|stocks|s","entityType":"stocks","logicalId":"s","schemaVersion":1,"updatedAt":"2026-01-02T00:00:00Z","deletedAt":null,"payload":{"id":"s","thesisSummary":"changed","updatedAt":"2026-01-02T00:00:00Z"}}"#;
+        assert_ne!(
+            comparable_sync_envelope(first).unwrap(),
+            comparable_sync_envelope(changed).unwrap()
+        );
     }
 }

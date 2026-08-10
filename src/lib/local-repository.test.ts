@@ -285,13 +285,17 @@ describe("Tauri local repository", () => {
     ]);
 
     expect(sqlMocks.load).toHaveBeenCalledWith("sqlite:tradejournal.db");
-    expect(sqlMocks.invoke).toHaveBeenCalledWith("save_collections_atomically", {
+    expect(sqlMocks.invoke).toHaveBeenCalledWith("save_collections_atomically", expect.objectContaining({
       writes: [
         { collection: "stocks", records: [expect.objectContaining({ id: "stock-1", data: JSON.stringify({ id: "stock-1" }) })] },
         { collection: "trades", records: [] },
       ],
       stateUpdatedAt: expect.any(String),
-    });
+      source: "localUser",
+      acknowledgedRecordNames: [],
+      conflicts: [],
+      queuedEnvelopes: [],
+    }));
   });
 
   it("serializes overlapping writes so an older snapshot cannot finish last", async () => {

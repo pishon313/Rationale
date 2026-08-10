@@ -14,6 +14,7 @@ describe("Sample Dataset v1", () => {
     expect(new Set(all).size).toBe(all.length);
     expect(all.every((id) => id.startsWith("sample:v1:"))).toBe(true);
     expect(first.stocks.find((item) => item.ticker === "NVDA")?.nextEarningsDate).toBe("2026-08-24");
+    expect(first.reviews[0].reviewedAt).toBe("2026-08-03");
     const ledger = validateSampleDataset(first);
     expect(ledger.errors).toEqual([]);
     expect(ledger.positions.find((item) => item.stockId.endsWith(":samsung"))?.quantity).toBe(45);

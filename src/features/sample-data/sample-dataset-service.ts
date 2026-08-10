@@ -62,4 +62,4 @@ function findUserDependencies(current: SampleCollections, known: ReturnType<type
 }
 
 type ServiceDependencies = { load: () => Promise<SampleCollections>; save: (writes: readonly CollectionWrite[]) => Promise<void> };
-const defaults: ServiceDependencies = { load: loadSampleCollections, save: saveCollectionsAtomically };
+const defaults: ServiceDependencies = { load: loadSampleCollections, save: (writes) => saveCollectionsAtomically(writes, { source: "sampleData" }) };
