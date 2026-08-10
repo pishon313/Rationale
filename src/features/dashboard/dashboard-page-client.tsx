@@ -19,6 +19,7 @@ import { useI18n } from "@/i18n/i18n-provider";
 import { emptyDashboardNote, type DashboardNote } from "./dashboard-note";
 import { PortfolioSummary } from "./portfolio-summary";
 import type { InvestmentAccount } from "@/features/accounts/types";
+import { SampleOnboarding } from "@/features/sample-data/sample-onboarding";
 
 const VIEW_KEY = "tradejournal.dashboard.asset-view";
 const VIEW_EVENT = "tradejournal:asset-view";
@@ -61,7 +62,11 @@ export function DashboardPageClient() {
 function DashboardMemo() {
   const { t } = useI18n();
   const notes = useLocalCollection<DashboardNote>("dashboard-notes", [emptyDashboardNote]);
+  const accounts = useLocalCollection<InvestmentAccount>("accounts", []);
+  const stocks = useLocalCollection<Stock>("stocks", []);
+  const trades = useLocalCollection<Trade>("trades", []);
   const note = notes.items[0] ?? emptyDashboardNote;
+  if (accounts.ready && stocks.ready && trades.ready && !accounts.allItems.length && !stocks.allItems.length && !trades.allItems.length) return <SampleOnboarding />;
   return <section className="mt-4 rounded-xl border bg-[var(--surface)] p-5"><div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2"><StickyNote size={19} className="text-[var(--accent)]" /><h2 className="font-semibold">{t("자유 메모")}</h2></div><span className="text-xs text-[var(--muted)]">{t(note.updatedAt ? "자동 저장됨" : "이 Mac에 자동 저장")}</span></div>{notes.ready ? <MemoEditor key={note.updatedAt} note={note} onSave={(content) => notes.update({ ...note, content, updatedAt: new Date().toISOString() })} /> : <textarea aria-label={t("대시보드 자유 메모")} disabled className="mt-4 min-h-36 w-full rounded-lg border bg-[var(--surface-muted)] p-4 opacity-60" placeholder={t("메모를 불러오는 중입니다.")} />}</section>;
 }
 
