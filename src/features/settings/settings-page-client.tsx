@@ -7,7 +7,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { currencies } from "@/domain/currency";
 import { useI18n } from "@/i18n/i18n-provider";
-import { languageNames, locales, type Locale } from "@/i18n/types";
+import { languageNames, type Locale } from "@/i18n/types";
 import { isTauriApp, loadCollection } from "@/lib/local-repository";
 import { localDateValue } from "@/lib/local-date";
 import { useCurrencyPreference, useExchangeRates } from "@/lib/use-exchange-rates";
@@ -18,7 +18,7 @@ import { decryptBackupPayload, encryptedBackupErrorMessage, encryptedBackupExten
 import { SampleDataCard } from "@/features/sample-data/sample-data-card";
 
 export function SettingsPageClient() {
-  const { locale, setLocale, t } = useI18n();
+  const { locale, t } = useI18n();
   const [keyValue, setKeyValue] = useState("");
   const [hasKey, setHasKey] = useState(false);
   const [message, setMessage] = useState("");
@@ -185,7 +185,7 @@ export function SettingsPageClient() {
     <div><p className="text-sm text-[var(--muted)]">{t("개인용 로컬 앱 관리")}</p><h1 className="mt-1 text-2xl font-semibold">{t("설정")}</h1></div>
     {message && <div className="mt-5 rounded-lg bg-[var(--accent-soft)] p-3 text-sm text-[var(--accent)]">{message}</div>}
     <div className="mt-6 grid gap-4 lg:grid-cols-2">
-      <LanguageCard locale={locale} setLocale={setLocale} />
+      <LanguageCard locale={locale} />
       <CurrencyCard />
       <SampleDataCard />
       <section className="rounded-xl border bg-[var(--surface)] p-5"><div className="flex items-center gap-2"><HardDrive size={19} className="text-[var(--accent)]" /><h2 className="font-semibold">{t("데이터 백업")}</h2></div><p className="mt-2 text-sm leading-6 text-[var(--muted)]">{t("모든 투자 기록과 Note, 언어 설정을 하나의 파일로 저장합니다. Mac 교체 전에 백업하세요.")}</p><div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs leading-5 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"><p className="flex items-center gap-2 font-medium"><ShieldAlert size={15} />{t("백업 파일 보안")}</p><p className="mt-1">{t("일반 JSON과 자동 백업은 암호화되지 않으며 거래 내역, 계좌명, 메모와 감정 기록을 포함할 수 있습니다. 이메일·메신저·공유 폴더에 올릴 때 주의하세요.")}</p><p className="mt-1">{t("계좌번호, 비밀번호, 인증정보는 메모에 입력하지 말고 Mac의 FileVault를 사용하는 것을 권장합니다.")}</p></div><div className="mt-3 rounded-lg bg-[var(--surface-muted)] p-3 text-xs leading-5 text-[var(--muted)]"><p className="flex items-center gap-2 font-medium text-[var(--foreground)]"><ShieldCheck size={15} className="text-emerald-600" />{t("자동 백업")}</p><p className="mt-1">{t("Mac 앱은 하루 한 번 암호화되지 않은 JSON 자동 백업을 만들고 최근 7개를 보관합니다.")}</p><p className="mt-1">{t("민감한 기록을 외부에 보관할 때는 수동 암호화 백업을 사용하세요.")}</p><p className="mt-1">{t("최근 자동 백업")}: {automaticBackupAt ? formatBackupDate(automaticBackupAt, locale) : t("아직 없음")}</p>{automaticBackupPath && <p className="mt-1 break-all" title={automaticBackupPath}>{automaticBackupPath}</p>}</div><div className="mt-5 flex flex-wrap gap-2"><button onClick={() => void exportBackup()} className="flex items-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm text-white"><Download size={16} />{t("일반 백업 저장")}</button><button type="button" disabled={!isTauriApp()} onClick={() => setShowEncryptedExport(true)} className="flex items-center gap-2 rounded-lg border px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"><LockKeyhole size={16} />{t("암호화 백업 저장")}</button><button onClick={() => void importBackup()} className="flex items-center gap-2 rounded-lg border px-4 py-2 text-sm"><Upload size={16} />{t("백업 복원")}</button>{restoreAvailable && <button onClick={() => void undoRestore()} className="flex items-center gap-2 rounded-lg border px-4 py-2 text-sm"><ArchiveRestore size={16} />{t("마지막 복원 되돌리기")}</button>}</div>{!isTauriApp() && <p className="mt-2 text-xs text-[var(--muted)]">{t("암호화 백업은 Mac 앱에서 사용할 수 있습니다. 브라우저 미리보기에서는 일반 JSON 백업을 사용하세요.")}</p>}</section>
@@ -219,9 +219,9 @@ function formatBackupDate(value: string | number, locale: Locale) {
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(date);
 }
 
-function LanguageCard({ locale, setLocale }: { locale: Locale; setLocale: (locale: Locale) => Promise<void> }) {
+function LanguageCard({ locale }: { locale: Locale }) {
   const { t } = useI18n();
-  return <section className="rounded-xl border bg-[var(--surface)] p-5"><div className="flex items-center gap-2"><Languages size={19} className="text-[var(--accent)]" /><h2 className="font-semibold">{t("언어")}</h2></div><p className="mt-2 text-sm leading-6 text-[var(--muted)]">{t("앱의 메뉴와 안내 문구를 표시할 언어를 선택합니다. 작성한 기록은 번역되지 않습니다.")}</p><label className="mt-4 block text-sm font-medium">{t("표시 언어")}<select aria-label={t("표시 언어")} value={locale} onChange={(event) => void setLocale(event.target.value as Locale)} className="mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3">{locales.map((item) => <option key={item} value={item}>{languageNames[item]}</option>)}</select></label></section>;
+  return <section className="rounded-xl border bg-[var(--surface)] p-5"><div className="flex items-center gap-2"><Languages size={19} className="text-[var(--accent)]" /><h2 className="font-semibold">{t("언어")}</h2></div><p className="mt-2 text-sm leading-6 text-[var(--muted)]">{t("앱의 언어는 Mac의 언어 설정을 따릅니다. 지원하지 않는 언어에서는 English로 표시됩니다.")}</p><div className="mt-4 rounded-lg bg-[var(--surface-muted)] p-3 text-sm"><span className="text-[var(--muted)]">{t("현재 언어")}</span><b className="ml-2">{languageNames[locale]}</b></div></section>;
 }
 
 function CurrencyCard() {

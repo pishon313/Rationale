@@ -10,8 +10,9 @@ import { dashboardMessages } from "./dashboard";
 import { accountMessages } from "./accounts";
 import { stockAccountMessages } from "./stock-accounts";
 import { sampleDataMessages, sampleEscapedMessages } from "./sample-data";
+import { systemLanguageMessages } from "./system-language";
 
-const catalogs: MessageCatalog[] = [sampleEscapedMessages, sampleDataMessages, commonMessages, appMessages, stockMessages, stockAccountMessages, tradeMessages, journalMessages, securityMessages, redesignMessages, dashboardMessages, accountMessages];
+const catalogs: MessageCatalog[] = [systemLanguageMessages, sampleEscapedMessages, sampleDataMessages, commonMessages, appMessages, stockMessages, stockAccountMessages, tradeMessages, journalMessages, securityMessages, redesignMessages, dashboardMessages, accountMessages];
 
 export function translate(locale: Locale, key: string) {
   if (locale === "ko") return key;

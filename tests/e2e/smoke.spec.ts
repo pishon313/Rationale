@@ -8,30 +8,24 @@ test("대시보드 앱 셸을 표시한다", async ({ page }) => {
   await expect(page.getByRole("navigation", { name: "주요 메뉴" })).toBeVisible();
 });
 
-test("지원하는 여섯 언어를 즉시 전환하고 저장한다", async ({ page }) => {
+test("Mac 설정 언어를 따르고 수동 언어 선택을 표시하지 않는다", async ({ page }) => {
   await page.goto("/settings");
-  const language = page.locator('select:has(option[value="ko"])');
-  const headings = {
-    ko: "설정",
-    ja: "設定",
-    en: "Settings",
-    fr: "Paramètres",
-    it: "Impostazioni",
-    es: "Configuración",
-  } as const;
-
-  for (const [locale, heading] of Object.entries(headings)) {
-    await language.selectOption(locale);
-    await expect(page.locator("html")).toHaveAttribute("lang", locale);
-    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
-  }
-
-  await page.reload();
-  await expect(page.locator("html")).toHaveAttribute("lang", "es");
-  await expect(language).toHaveValue("es");
-
-  await language.selectOption("ko");
   await expect(page.locator("html")).toHaveAttribute("lang", "ko");
+  await expect(page.getByRole("heading", { name: "설정", exact: true })).toBeVisible();
+  await expect(page.getByText("앱의 언어는 Mac의 언어 설정을 따릅니다. 지원하지 않는 언어에서는 English로 표시됩니다.")).toBeVisible();
+  await expect(page.getByText("한국어", { exact: true })).toBeVisible();
+  await expect(page.locator('select:has(option[value="ko"])')).toHaveCount(0);
+});
+
+test("지원하지 않는 Mac 언어는 English로 표시한다", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "languages", { get: () => ["zh-CN"] });
+    Object.defineProperty(navigator, "language", { get: () => "zh-CN" });
+  });
+  await page.goto("/settings");
+
+  await expect(page.locator("html")).toHaveAttribute("lang", "en");
+  await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
 });
 
 test("빈 종목 목록에서 새 종목을 등록하고 상세로 이동한다", async ({ page }) => {
