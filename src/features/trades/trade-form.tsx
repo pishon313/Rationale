@@ -201,6 +201,8 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, locke
       confidenceScore: trade?.confidenceScore ?? 3,
       ruleComplianceScore: isSecurity ? (warnings.length ? 2 : conditionMet ? 5 : 3) : 5,
       ruleViolations: isSecurity ? warnings : [],
+      journalStatus: "recorded",
+      origin: trade?.origin ?? { kind: "manual" },
       createdAt: trade?.createdAt ?? now,
       updatedAt: now,
       deletedAt: null,
@@ -250,7 +252,7 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, locke
             <Label text={t(openingPosition ? "평균단가" : "체결 가격")}><input required type="number" min="0" step="any" className={field} value={price} onChange={(event) => setPrice(Number(event.target.value))} /></Label>
           </>}
           {!isSecurity && <Label text={type === "배당" ? t("세전 배당금") : t("{type} 금액", { type: t(type) })}><input required type="number" min="0" step="any" className={field} value={amount} onChange={(event) => setAmount(Number(event.target.value))} /></Label>}
-          <Label text={t("거래 일시")}><input required type="datetime-local" className={field} value={tradedAt} onChange={(event) => setTradedAt(event.target.value)} /></Label>
+          <Label text={t("거래 일시")}><input required type="datetime-local" step="1" className={field} value={tradedAt} onChange={(event) => setTradedAt(event.target.value)} /></Label>
           <Label text={t("계좌")}><select required disabled={Boolean(lockedAccountId)} className={`${field} disabled:cursor-not-allowed disabled:opacity-70`} value={accountId} onChange={(event) => setAccountId(event.target.value)}><option value="">{t("계좌 추가 필요")}</option>{selectableAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}{account.institution ? ` · ${account.institution}` : ""}{account.archivedAt ? ` · ${t("보관됨")}` : ""}</option>)}</select></Label>
           {(!isSecurity || !stock) && <Label text={t("통화")}><select className={field} value={currency} onChange={(event) => { const next = event.target.value as Trade["currency"]; setCurrency(next); setExchangeRate(exchangeRates.snapshot.ratesToKrw[next]); }}>{currencies.map((item) => <option key={item}>{item}</option>)}</select></Label>}
           {currency !== "KRW" && <Label text={t("적용 환율")}><input aria-label={t("적용 환율")} required type="number" min="0" step="any" className={field} value={exchangeRate} onChange={(event) => { setExchangeRate(Number(event.target.value)); setRateNote({ key: "직접 입력한 환율" }); }} /><small className="mt-1 block text-[var(--muted)]">{t("1 {currency}당 KRW · {note}", { currency, note: localizedRateNote })}</small></Label>}
@@ -282,8 +284,9 @@ function Label({ text, children, asGroup = false }: { text: string; children: Re
 }
 
 function toLocalDateTime(value?: string) {
+  if (value && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/.test(value)) return value.length === 16 ? `${value}:00` : value;
   const date = value ? new Date(value) : null;
-  if (!date) return localDateTimeValue();
-  if (Number.isNaN(date.getTime())) return value?.slice(0, 16) ?? "";
-  return localDateTimeValue(date);
+  if (!date) return localDateTimeValue(new Date(), true);
+  if (Number.isNaN(date.getTime())) return value?.slice(0, 19) ?? "";
+  return localDateTimeValue(date, true);
 }

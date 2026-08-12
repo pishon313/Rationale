@@ -1,11 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sampleStocks } from "@/features/stocks/sample-data";
 import type { Stock } from "@/features/stocks/types";
+import type { ImportMappingProfile } from "@/features/import/import-types";
 import { clearPersistenceError, getCorruptionSnapshot, getPersistenceSnapshot, loadCollection, resetCorruptedCollection, resolveCorruption, retryLastSave, saveCollection, saveCollectionsAtomically } from "./local-repository";
 
 const sqlMocks = vi.hoisted(() => ({ load: vi.fn(), invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-sql", () => ({ default: { load: sqlMocks.load } }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: sqlMocks.invoke }));
+
+const mappingProfile: ImportMappingProfile = {
+  id: "profile-1", name: "Broker", version: 1, bindings: { tradedAt: { normalizedHeader: "date", occurrence: 0 } },
+  headerSignature: "date#0", createdAt: "2026-08-12T00:00:00Z", updatedAt: "2026-08-12T00:00:00Z",
+};
 
 describe("browser local repository", () => {
   beforeEach(() => {
@@ -53,6 +59,17 @@ describe("browser local repository", () => {
     await expect(loadCollection<Stock>("stocks", [])).resolves.toEqual([]);
     expect(getCorruptionSnapshot().collections[0]).toMatchObject({ errorType: "INVALID_RECORD", invalidIndexes: [1] });
     expect(localStorage.getItem("tradejournal.stocks.v1")).toBe(raw);
+  });
+
+  it("persists valid mapping profiles and quarantines invalid browser profiles", async () => {
+    await saveCollection("import-mapping-profiles", [mappingProfile]);
+    await expect(loadCollection<ImportMappingProfile>("import-mapping-profiles", [])).resolves.toEqual([mappingProfile]);
+
+    const raw = JSON.stringify([{ ...mappingProfile, bindings: { tradedAt: 0 } }]);
+    localStorage.setItem("tradejournal.import-mapping-profiles.v1", raw);
+    await expect(loadCollection<ImportMappingProfile>("import-mapping-profiles", [])).resolves.toEqual([]);
+    expect(getCorruptionSnapshot().collections[0]).toMatchObject({ collection: "import-mapping-profiles", errorType: "INVALID_RECORD", invalidIndexes: [0] });
+    expect(localStorage.getItem("tradejournal.import-mapping-profiles.v1")).toBe(raw);
   });
 
   it("does not duplicate quarantine entries when the same corruption is loaded repeatedly", async () => {
@@ -273,6 +290,18 @@ describe("Tauri local repository", () => {
       expect.objectContaining({ recordId: "broken-shape", errorType: "INVALID_RECORD" }),
     ] });
     expect(getCorruptionSnapshot().collections[0]).toMatchObject({ collection: "stocks", source: "sqlite", affectedRecordCount: 2, validRecordCount: 2, invalidIndexes: [2, 3] });
+  });
+
+  it("loads valid SQLite mapping profiles and quarantines invalid ones", async () => {
+    const invalid = { ...mappingProfile, id: "profile-2", bindings: { tradedAt: 0 } };
+    sqlMocks.load.mockResolvedValue({ select: vi.fn().mockResolvedValue([
+      { id: mappingProfile.id, data: JSON.stringify(mappingProfile), updated_at: mappingProfile.updatedAt },
+      { id: invalid.id, data: JSON.stringify(invalid), updated_at: invalid.updatedAt },
+    ]), execute: vi.fn() });
+    sqlMocks.invoke.mockResolvedValue(undefined);
+
+    await expect(loadCollection<ImportMappingProfile>("import-mapping-profiles", [])).resolves.toEqual([mappingProfile]);
+    expect(sqlMocks.invoke).toHaveBeenCalledWith("quarantine_corrupt_records", { entries: [expect.objectContaining({ recordId: "profile-2", errorType: "INVALID_RECORD" })] });
   });
 
   it("delegates a multi-collection save to the single-connection Rust command", async () => {

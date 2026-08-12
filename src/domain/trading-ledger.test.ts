@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTradingLedger, cashBalanceKrw } from "./trading-ledger";
+import { buildTradingLedger, cashBalanceKrw, normalizeTrade } from "./trading-ledger";
 import type { Trade } from "@/features/trades/types";
 import type { InvestmentAccount } from "@/features/accounts/types";
 
@@ -7,6 +7,15 @@ const trade = (value: Partial<Trade> & Pick<Trade, "id" | "tradeType" | "tradedA
 const account = (id: string, name: string): InvestmentAccount => ({ id, name, institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault: false, archivedAt: null, memo: "", createdAt: "2026-01-01", updatedAt: "2026-01-01" });
 
 describe("trading ledger", () => {
+  it("legacy Trade에 recorded 및 legacy 기본값을 보수적으로 적용한다", () => {
+    expect(normalizeTrade(trade({ id: "legacy", tradeType: "매수", tradedAt: "2026-01-01", quantity: 1, price: 100 }))).toMatchObject({ journalStatus: "recorded", origin: { kind: "legacy" } });
+  });
+
+  it("journal status와 origin은 경제 원장 결과를 바꾸지 않는다", () => {
+    const base = [trade({ id: "buy", tradeType: "매수", tradedAt: "2026-01-01", quantity: 1, price: 100 })];
+    const imported = base.map((item) => ({ ...item, journalStatus: "unreviewed" as const, origin: { kind: "fileImport" as const, sourceKey: "file:v1:abc", importBatchId: "batch", importedAt: "2026-01-01", sourceRow: 2, timePrecision: "date" as const } }));
+    expect(buildTradingLedger(imported).positions).toEqual(buildTradingLedger(base).positions);
+  });
   it("accountId가 같으면 legacy 이름이 달라도 같은 계좌로 계산한다", () => {
     const ledger = buildTradingLedger([
       trade({ id: "a", tradeType: "입금", tradedAt: "2026-01-01", stockId: null, amount: 100, accountId: "account-1", accountName: "옛 이름" }),

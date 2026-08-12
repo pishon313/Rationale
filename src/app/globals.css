@@ -69,6 +69,11 @@ button, nav a { white-space: nowrap; }
 table { font-variant-numeric: tabular-nums; }
 thead { letter-spacing: 0.015em; }
 
+.destructive-icon-action { color: #9f3f4d; }
+.destructive-icon-action:hover { background: color-mix(in srgb, #9f3f4d 9%, transparent); }
+.dark .destructive-icon-action { color: #c76876; }
+.dark .destructive-icon-action:hover { background: color-mix(in srgb, #c76876 12%, transparent); }
+
 ::selection { background: var(--color-accent-soft); color: var(--color-ink); }
 
 .app-shell {

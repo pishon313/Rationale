@@ -86,6 +86,24 @@ describe("validateBackupPayload", () => {
     expect(parsed.trades.every((trade) => parsed.accounts.some((account) => account.id === trade.accountId))).toBe(true);
   });
 
+  it("preserves imported Trade provenance and journal status in Backup V5", () => {
+    const backup = version5();
+    const imported = { ...backup.trades[0], journalStatus: "unreviewed" as const, origin: { kind: "fileImport" as const, sourceKey: "file:v1:abc", importBatchId: "file:v1:batch:abc", provider: "broker", externalExecutionId: "exec-1", importedAt: valid.exportedAt, sourceRow: 2, timePrecision: "second" as const } };
+    const parsed = validateBackupPayload({ ...backup, trades: [imported, ...backup.trades.slice(1)] });
+    expect(parsed.trades[0]).toMatchObject({ journalStatus: "unreviewed", origin: imported.origin });
+  });
+
+  it("rejects malformed provided import metadata while accepting old V5 Trades", () => {
+    expect(validateBackupPayload(version5()).version).toBe(5);
+    const backup = version5();
+    expect(() => validateBackupPayload({ ...backup, trades: backup.trades.map((trade, index) => index ? trade : { ...trade, journalStatus: "pending" }) })).toThrow("저널 상태");
+    expect(() => validateBackupPayload({ ...backup, trades: backup.trades.map((trade, index) => index ? trade : { ...trade, origin: { kind: "fileImport", sourceKey: "file:v1:x" } }) })).toThrow("가져오기 출처");
+  });
+
+  it("keeps mapping profiles out of Backup V5 writes", () => {
+    expect(backupWrites(validateBackupPayload(version5())).map((write) => write.collection)).not.toContain("import-mapping-profiles");
+  });
+
   it("accepts legacy, stock, and market observation shapes in version 5", () => {
     const stock = { ...sampleObservations[0], id: "new-stock-observation", scope: "stock", marketTargets: [] };
     const market = { ...sampleObservations[0], id: "market-observation", scope: "market", stockId: null, stockName: "", marketTargets: ["nasdaq", "sp500"] };

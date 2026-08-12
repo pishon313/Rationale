@@ -2,8 +2,8 @@ export function localDateValue(date = new Date()) {
   return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())}`;
 }
 
-export function localDateTimeValue(date = new Date()) {
-  return `${localDateValue(date)}T${two(date.getHours())}:${two(date.getMinutes())}`;
+export function localDateTimeValue(date = new Date(), includeSeconds = false) {
+  return `${localDateValue(date)}T${two(date.getHours())}:${two(date.getMinutes())}${includeSeconds ? `:${two(date.getSeconds())}` : ""}`;
 }
 
 export function localMonthValue(date = new Date()) {

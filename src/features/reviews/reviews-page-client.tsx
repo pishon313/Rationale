@@ -43,7 +43,7 @@ export function ReviewsPageClient() {
           </div>
           <div className="flex">
             <button aria-label={t("회고 수정")} onClick={() => setEditing(review)} className="grid size-8 place-items-center"><Pencil size={15} /></button>
-            <button aria-label={t("회고 삭제")} onClick={() => store.remove(review.id)} className="grid size-8 place-items-center text-red-600"><Trash2 size={15} /></button>
+            <button aria-label={t("회고 삭제")} onClick={() => store.remove(review.id)} className="destructive-icon-action grid size-8 place-items-center rounded-md"><Trash2 size={15} /></button>
           </div>
         </div>
         <div className="mt-4 grid grid-cols-2 gap-3">

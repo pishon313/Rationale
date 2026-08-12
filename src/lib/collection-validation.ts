@@ -1,6 +1,7 @@
 import { currencies } from "@/domain/currency";
 import { validateBackupCollectionRecord, validateBackupPayload } from "@/features/settings/backup";
 import { isLocale } from "@/i18n/types";
+import { importFields, type ColumnReference, type ImportMappingProfile } from "@/features/import/import-types";
 
 export type CollectionValidationErrorType = "INVALID_COLLECTION_SHAPE" | "INVALID_RECORD";
 export type CollectionValidationResult = { valid: true } | { valid: false; errorType: CollectionValidationErrorType; index?: number };
@@ -44,7 +45,23 @@ export function validateStoredRecord(collection: string, value: unknown, index: 
       if (record.id !== "latest" || typeof record.content !== "string" || !isTimestamp(record.createdAt) || !isTimestamp(record.updatedAt)) throw new Error("invalid restore snapshot");
       validateBackupPayload(JSON.parse(record.content));
       break;
+    case "import-mapping-profiles":
+      validateImportMappingProfile(record as ImportMappingProfile);
+      break;
   }
+}
+
+function validateImportMappingProfile(profile: ImportMappingProfile) {
+  const allowedProfileKeys = new Set(["id", "name", "version", "bindings", "headerSignature", "createdAt", "updatedAt"]);
+  if (Object.keys(profile).some((key) => !allowedProfileKeys.has(key))) throw new Error("invalid import mapping profile field");
+  if (!profile.name.trim() || profile.version !== 1 || !profile.headerSignature || !isTimestamp(profile.createdAt) || !isTimestamp(profile.updatedAt) || !profile.bindings || typeof profile.bindings !== "object" || Array.isArray(profile.bindings)) throw new Error("invalid import mapping profile");
+  for (const [field, reference] of Object.entries(profile.bindings)) {
+    if (!(importFields as readonly string[]).includes(field) || !validColumnReference(reference as ColumnReference)) throw new Error("invalid import mapping binding");
+  }
+}
+
+function validColumnReference(value: ColumnReference) {
+  return Boolean(value && Object.keys(value).every((key) => key === "normalizedHeader" || key === "occurrence") && typeof value.normalizedHeader === "string" && value.normalizedHeader && Number.isInteger(value.occurrence) && value.occurrence >= 0);
 }
 
 function validateExchangeRates(record: Record<string, unknown>) {

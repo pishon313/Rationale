@@ -1,5 +1,5 @@
 import type { BuyPlan } from "@/features/plans/types";
-import type { Trade } from "@/features/trades/types";
+import { isJournalRecorded, type Trade } from "@/features/trades/types";
 import type { TradingLedger } from "./trading-ledger";
 
 export type PlanRisk = {
@@ -38,7 +38,7 @@ export function calculatePlanRisk(plan: BuyPlan): PlanRisk {
 }
 
 export function buildPlanPerformance(plan: BuyPlan, allTrades: Trade[], ledger: TradingLedger): PlanPerformance {
-  const trades = allTrades.filter((trade) => !trade.deletedAt && trade.planId === plan.id);
+  const trades = allTrades.filter((trade) => !trade.deletedAt && isJournalRecorded(trade) && trade.planId === plan.id);
   const buys = trades.filter((trade) => trade.tradeType === "매수");
   const sells = trades.filter((trade) => trade.tradeType === "매도");
   const buyQuantity = sum(buys, (trade) => trade.quantity);

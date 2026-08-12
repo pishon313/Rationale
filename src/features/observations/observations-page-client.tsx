@@ -74,7 +74,7 @@ export function ObservationsPageClient() {
               <button
                 aria-label={t("{title} 삭제", { title: item.title })}
                 onClick={() => store.remove(item.id)}
-                className="grid size-8 place-items-center text-red-600"
+                className="destructive-icon-action grid size-8 place-items-center rounded-md"
               >
                 <Trash2 size={15} />
               </button>

@@ -8,7 +8,7 @@ import type { BuyPlan } from "@/features/plans/types";
 import type { Review } from "@/features/reviews/types";
 import type { Stock } from "@/features/stocks/types";
 import { translateTradeText } from "@/features/trades/trade-i18n";
-import type { Trade } from "@/features/trades/types";
+import { isJournalRecorded, type Trade } from "@/features/trades/types";
 import { useI18n } from "@/i18n/i18n-provider";
 import { useLocalCollection } from "@/lib/use-local-collection";
 import { PerformanceSections } from "./performance-sections";
@@ -26,7 +26,7 @@ export function AnalyticsPageClient() {
   const summary = buildAnalytics(trades.items, reviews.items);
   const ledger = buildTradingLedger(trades.items, accounts.items);
   const performance = plans.items.map((plan) => buildPlanPerformance(plan, trades.items, ledger)).filter((item) => item.buyQuantity > 0);
-  const violations = trades.items.flatMap((trade) => (trade.ruleViolations ?? []).map((violation) => ({ trade, violation })));
+  const violations = trades.items.filter(isJournalRecorded).flatMap((trade) => (trade.ruleViolations ?? []).map((violation) => ({ trade, violation })));
   const emotions = summary.emotions.map((item) => ({ ...item, displayEmotion: t(item.emotion) }));
   const cards = [
     [t("매매 횟수"), t("{count}회", { count: formatNumber(summary.tradeCount) }), ListChecks],
@@ -36,6 +36,7 @@ export function AnalyticsPageClient() {
   ] as const;
   return <>
     <div><p className="text-sm text-[var(--muted)]">{t("기록을 행동 패턴으로 바꾸는 곳")}</p><h1 className="mt-1 text-2xl font-semibold">{t("분석")}</h1></div>
+    {summary.unreviewedTradeCount > 0 && <p className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">{t("검토 전 가져오기 {count}건은 손익에는 포함되지만 계획·감정·원칙 분석에서는 제외됩니다.", { count: formatNumber(summary.unreviewedTradeCount) })}</p>}
     <section className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{cards.map(([label, value, Icon]) => <article key={label} className="rounded-xl border bg-[var(--surface)] p-5"><div className="flex items-center justify-between"><p className="text-sm text-[var(--muted)]">{label}</p><Icon size={18} className="text-[var(--accent)]" /></div><p className="mt-4 text-2xl font-semibold tabular-nums">{value}</p></article>)}</section>
     <div className="mt-4 grid gap-4 lg:grid-cols-2"><ChartCard title={t("월별 매매 횟수")} empty={!summary.monthlyTrades.length}><ResponsiveContainer width="100%" height={250}><BarChart data={summary.monthlyTrades}><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="month" tickFormatter={(value) => formatDate(`${value}-01T00:00:00`, { year: "numeric", month: "short" })} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(value) => formatDate(`${String(value)}-01T00:00:00`, { year: "numeric", month: "long" })} /><Bar dataKey="count" name={t("매매")} fill="var(--accent)" radius={[6, 6, 0, 0]} /></BarChart></ResponsiveContainer></ChartCard><ChartCard title={t("감정별 매매 횟수")} empty={!summary.emotions.length}><ResponsiveContainer width="100%" height={250}><BarChart data={emotions} layout="vertical"><CartesianGrid strokeDasharray="3 3" horizontal={false} /><XAxis type="number" allowDecimals={false} /><YAxis type="category" dataKey="displayEmotion" width={88} /><Tooltip /><Bar dataKey="count" name={t("매매")} fill="#7c6ee6" radius={[0, 6, 6, 0]} /></BarChart></ResponsiveContainer></ChartCard></div>
     <AccountPerformanceSection trades={trades.items} stocks={stocks.items} accounts={accounts.items} ledger={ledger} />

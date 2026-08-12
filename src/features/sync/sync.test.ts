@@ -24,6 +24,18 @@ describe("Sync Contract v1", () => {
     expect(isSyncableRecord({ id: "sample:v1:stock:nvda" })).toBe(false); expect(recordNameFor("trades", "t1")).toBe("v1|trades|t1");
   });
 
+  it("preserves journal status and import provenance in the whole Trade payload", () => {
+    const imported = { ...trade("imported", 0.35), journalStatus: "unreviewed" as const, origin: { kind: "fileImport" as const, sourceKey: "file:v1:abc", importBatchId: "file:v1:batch:abc", provider: "broker", externalExecutionId: "exec-1", importedAt: at, sourceRow: 2, timePrecision: "second" as const } };
+    expect(toTradeSyncPayload(imported)).toMatchObject({ journalStatus: "unreviewed", origin: imported.origin });
+    expect(toSyncEnvelope("trades", imported).payload).toMatchObject({ origin: imported.origin });
+  });
+
+  it("accepts old Trade payloads and rejects malformed additive metadata", () => {
+    expect(() => validateSyncCandidate(collections([trade("legacy", 0.35)]))).not.toThrow();
+    expect(() => validateSyncCandidate(collections([{ ...trade("bad-status", 0.35), journalStatus: "pending" as Trade["journalStatus"] }]))).toThrow("저널 상태");
+    expect(() => validateSyncCandidate(collections([{ ...trade("bad-origin", 0.35), origin: { kind: "fileImport", sourceKey: "file:v1:x" } as Trade["origin"] }]))).toThrow("가져오기 출처");
+  });
+
   it("preserves local quote and derived stock fields on remote materialization", () => {
     const remote = { ...toStockSyncPayload(stock), thesisSummary: "Remote", updatedAt: "2026-08-11T00:00:00Z" };
     expect(fromStockSyncPayload(remote, stock)).toMatchObject({ thesisSummary: "Remote", currentPrice: 140, quantity: 9, averagePrice: 100 });

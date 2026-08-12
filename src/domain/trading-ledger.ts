@@ -1,7 +1,7 @@
 import Decimal from "decimal.js";
 import { currencies, fallbackRatesToKrw, type RatesToKrw } from "./currency";
 import { applyBuy, applySell, emptyPosition, type Position } from "./portfolio";
-import { tradeTypes, type Trade } from "@/features/trades/types";
+import { journalStatusOf, tradeOriginOf, tradeTypes, type Trade } from "@/features/trades/types";
 import { accountIdentity, normalizeLegacyAccountName, type InvestmentAccount } from "@/features/accounts/types";
 
 export type LedgerPosition = {
@@ -40,6 +40,8 @@ export function normalizeTrade(trade: Trade): Trade {
     confidenceScore: trade.confidenceScore || 3,
     ruleComplianceScore: trade.ruleComplianceScore || 3,
     ruleViolations: trade.ruleViolations ?? [],
+    journalStatus: journalStatusOf(trade),
+    origin: tradeOriginOf(trade),
     updatedAt: trade.updatedAt ?? trade.createdAt,
     deletedAt: trade.deletedAt ?? null,
   };

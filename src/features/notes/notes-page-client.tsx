@@ -49,7 +49,7 @@ export function NotesPageClient() {
               type="button"
               aria-label={t("{title} 삭제", { title: note.title })}
               onClick={() => notes.remove(note.id)}
-              className="grid size-8 place-items-center text-[var(--muted)] hover:text-red-600"
+              className="destructive-icon-action grid size-8 place-items-center rounded-md"
             >
               <Trash2 size={15} />
             </button>

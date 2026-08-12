@@ -1,5 +1,5 @@
 import type { BuyPlan } from "@/features/plans/types";
-import type { Trade } from "@/features/trades/types";
+import { isJournalRecorded, type Trade } from "@/features/trades/types";
 import { buildTradingLedger, type TradingLedger } from "./trading-ledger";
 
 export type PerformanceGroup = { label: string; count: number; wins: number; winRate: number; profitKrw: number };
@@ -31,7 +31,7 @@ export function buildPerformanceAnalytics(trades: Trade[], plans: BuyPlan[], inp
     const cycleTrades = cycle.tradeIds.map((id) => tradeById.get(id)).filter((trade): trade is Trade => Boolean(trade));
     const entry = cycleTrades.find((trade) => trade.tradeType === "매수");
     const plan = entry?.planId ? planById.get(entry.planId) : undefined;
-    return { profitKrw: cycle.realizedProfitKrw, stock: cycle.stockName, strategy: plan?.scenarioType ?? "비계획", emotion: entry?.emotion || "미기록" };
+    return { profitKrw: cycle.realizedProfitKrw, stock: cycle.stockName, strategy: entry && isJournalRecorded(entry) ? plan?.scenarioType ?? "비계획" : "미기록", emotion: entry && isJournalRecorded(entry) ? entry.emotion || "미기록" : "미기록" };
   });
   const wins = results.filter((item) => item.profitKrw > 0);
   const losses = results.filter((item) => item.profitKrw < 0);

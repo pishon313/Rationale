@@ -1,9 +1,9 @@
 import type { Review } from "@/features/reviews/types";
-import type { Trade } from "@/features/trades/types";
+import { isJournalRecorded, type Trade } from "@/features/trades/types";
 import type { TradingLedger } from "./trading-ledger";
 
 export type ReportPeriod = "week" | "month";
-export type PeriodicReport = { label: string; tradeCount: number; realizedProfitKrw: number; closedCount: number; winRate: number; plannedTradeRate: number; violationCount: number; reviewCount: number; bestStock: string | null; bestStockProfitKrw: number; mistakeTags: Array<{ tag: string; count: number }>; lessons: string[] };
+export type PeriodicReport = { label: string; tradeCount: number; recordedTradeCount: number; unreviewedTradeCount: number; realizedProfitKrw: number; closedCount: number; winRate: number; plannedTradeRate: number; violationCount: number; reviewCount: number; bestStock: string | null; bestStockProfitKrw: number; mistakeTags: Array<{ tag: string; count: number }>; lessons: string[] };
 
 export function listReportPeriods(period: ReportPeriod, trades: Trade[], reviews: Review[]) {
   const dates = [...trades.filter((item) => !item.deletedAt).map((item) => item.tradedAt), ...reviews.filter((item) => !item.deletedAt).map((item) => item.reviewedAt)];
@@ -14,6 +14,7 @@ export function buildPeriodicReport(period: ReportPeriod, key: string, trades: T
   const [start, end] = periodRange(period, key);
   const inRange = (value: string | null) => Boolean(value && value.slice(0, 10) >= start && value.slice(0, 10) <= end);
   const periodTrades = trades.filter((trade) => !trade.deletedAt && (trade.tradeType === "매수" || trade.tradeType === "매도") && inRange(trade.tradedAt));
+  const recordedTrades = periodTrades.filter(isJournalRecorded);
   const sells = periodTrades.filter((trade) => trade.tradeType === "매도" && !ledger.calculations[trade.id]?.error);
   const closed = ledger.cycles.filter((cycle) => inRange(cycle.closedAt));
   const periodReviews = reviews.filter((review) => !review.deletedAt && inRange(review.reviewedAt));
@@ -26,11 +27,13 @@ export function buildPeriodicReport(period: ReportPeriod, key: string, trades: T
   return {
     label: period === "month" ? `${key.replace("-", "년 ")}월` : `${start.replaceAll("-", ".")}–${end.replaceAll("-", ".")}`,
     tradeCount: periodTrades.length,
+    recordedTradeCount: recordedTrades.length,
+    unreviewedTradeCount: periodTrades.length - recordedTrades.length,
     realizedProfitKrw: sells.reduce((sum, trade) => sum + (ledger.calculations[trade.id]?.realizedProfitKrw ?? 0), 0),
     closedCount: closed.length,
     winRate: closed.length ? wins / closed.length * 100 : 0,
-    plannedTradeRate: periodTrades.length ? periodTrades.filter((trade) => trade.planId).length / periodTrades.length * 100 : 0,
-    violationCount: periodTrades.reduce((sum, trade) => sum + (trade.ruleViolations?.length ?? 0), 0),
+    plannedTradeRate: recordedTrades.length ? recordedTrades.filter((trade) => trade.planId).length / recordedTrades.length * 100 : 0,
+    violationCount: recordedTrades.reduce((sum, trade) => sum + (trade.ruleViolations?.length ?? 0), 0),
     reviewCount: periodReviews.length,
     bestStock: best?.[0] ?? null,
     bestStockProfitKrw: best?.[1] ?? 0,

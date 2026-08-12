@@ -5,7 +5,7 @@ import { conditionTypes, planStatuses, scenarioTypes, type BuyPlan } from "@/fea
 import { reviewEvaluations, type Review } from "@/features/reviews/types";
 import { ruleTypes, severities, type InvestmentRule } from "@/features/rules/types";
 import { currencies, investmentTypes, markets, stockStatuses, stockViews, type Stock } from "@/features/stocks/types";
-import { tradeTypes, type Trade } from "@/features/trades/types";
+import { tradeJournalStatuses, tradeOriginKinds, tradeTypes, type Trade } from "@/features/trades/types";
 import { accountKinds } from "@/features/accounts/types";
 import type { InvestmentAccount } from "@/features/accounts/types";
 import { validateTransferPairs } from "@/features/accounts/account-transfer";
@@ -311,6 +311,19 @@ function validateTradeRecord(trade: Record<string, unknown>, index: number) {
   if (trade.accountId !== undefined && trade.accountId !== null && (typeof trade.accountId !== "string" || !trade.accountId.trim())) throw new Error(`${label}의 계좌 ID가 올바르지 않습니다.`);
   if (trade.cashFlowKind !== undefined) requireEnum(trade.cashFlowKind, ["external", "transfer", "reconciliation", "opening"] as const, label, "현금 흐름 유형");
   if (trade.transferId !== undefined && (typeof trade.transferId !== "string" || !trade.transferId.trim())) throw new Error(`${label}의 이체 ID가 올바르지 않습니다.`);
+  if (trade.journalStatus !== undefined) requireEnum(trade.journalStatus, tradeJournalStatuses, label, "저널 상태");
+  if (trade.origin !== undefined) {
+    if (!isRecord(trade.origin)) throw new Error(`${label}의 출처가 올바르지 않습니다.`);
+    requireEnum(trade.origin.kind, tradeOriginKinds, label, "출처 유형");
+    for (const field of ["sourceKey", "provider", "externalExecutionId", "externalOrderId", "importBatchId"] as const) if (trade.origin[field] !== undefined && (typeof trade.origin[field] !== "string" || !trade.origin[field])) throw new Error(`${label}의 출처가 올바르지 않습니다.`);
+    if (trade.origin.importedAt !== undefined) requireTimestamp(trade.origin.importedAt, label, "가져온 일시");
+    if (trade.origin.sourceRow !== undefined && (!Number.isInteger(trade.origin.sourceRow) || Number(trade.origin.sourceRow) < 1)) throw new Error(`${label}의 원본 행이 올바르지 않습니다.`);
+    if (trade.origin.timePrecision !== undefined) requireEnum(trade.origin.timePrecision, ["date", "minute", "second"] as const, label, "시간 정밀도");
+    if (trade.origin.kind === "fileImport" || trade.origin.kind === "brokerApi") {
+      if (typeof trade.origin.sourceKey !== "string" || !trade.origin.sourceKey || typeof trade.origin.importBatchId !== "string" || !trade.origin.importBatchId || !isTimestamp(trade.origin.importedAt)) throw new Error(`${label}의 가져오기 출처가 완전하지 않습니다.`);
+    }
+    if (trade.origin.kind === "brokerApi" && (typeof trade.origin.provider !== "string" || !trade.origin.provider)) throw new Error(`${label}의 API 제공자가 올바르지 않습니다.`);
+  }
 
   const quantity = requiredNumber(trade.quantity, label, "수량");
   const price = requiredNumber(trade.price, label, "가격");

@@ -157,6 +157,63 @@ test("매매 원장에서 현금 입금 기록 화면을 연다", async ({ page 
   await expect(page.getByLabel("계좌")).toBeVisible();
 });
 
+test("거래 파일 후보를 검토하고 원자적으로 가져온 뒤 재가져오기 중복을 차단한다", async ({ page }) => {
+  const account = e2eAccount("import-account", "가져오기 계좌");
+  const stock = {
+    id: "import-stock", ticker: "IMPT", name: "가져오기 종목", market: "한국", currency: "KRW", assetType: "주식", sector: "테스트",
+    status: "보유", investmentType: "장기 코어", currentPrice: 1000, targetPrice: null, averagePrice: 0, quantity: 0,
+    thesisSummary: "", currentView: "중립", currentViewMemo: "", nextReviewDate: null, reviewNote: "", nextEarningsDate: null,
+    ledgerInitializedAt: "2026-08-01T00:00:00.000Z", tags: [], createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", deletedAt: null,
+  };
+  const manual = {
+    id: "manual-import-match", stockId: stock.id, stockName: stock.name, planId: null, tradeType: "매수", tradedAt: "2026-08-12T10:00:01",
+    quantity: 1, price: 1000, currency: "KRW", exchangeRate: 1, fee: 0, tax: 0, accountId: account.id, accountName: account.name,
+    memo: "", emotion: "평온", emotionIntensity: 1, confidenceScore: 3, ruleComplianceScore: 3, ruleViolations: [], journalStatus: "recorded", origin: { kind: "manual" },
+    createdAt: "2026-08-12T10:00:01", updatedAt: "2026-08-12T10:00:01", deletedAt: null,
+  };
+  await page.addInitScript(({ account, stock, manual }) => {
+    if (localStorage.getItem("tradejournal.accounts.v1") === null) {
+      localStorage.setItem("tradejournal.accounts.v1", JSON.stringify([account]));
+    }
+    if (localStorage.getItem("tradejournal.stocks.v1") === null) {
+      localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([stock]));
+    }
+    if (localStorage.getItem("tradejournal.trades.v1") === null) {
+      localStorage.setItem("tradejournal.trades.v1", JSON.stringify([manual]));
+    }
+  }, { account, stock, manual });
+
+  await page.goto("/trades");
+  await page.getByRole("button", { name: "파일 가져오기" }).click();
+  let dialog = page.getByRole("dialog", { name: "증권사 거래 내역 가져오기" });
+  await dialog.locator('input[type="file"]').setInputFiles({
+    name: "synthetic-broker.csv", mimeType: "text/csv",
+    buffer: Buffer.from("거래일시,종목코드,구분,수량,가격,수수료,세금\n2026-08-12T10:00:01,IMPT,매수,1,1000,0,0\n2026-08-12T10:00:02,IMPT,매수,1,1000,0,0"),
+  });
+  await expect(dialog.getByText("중복 가능성 1")).toBeVisible();
+  await expect(dialog.getByText("추가 가능 1")).toBeVisible();
+  const possible = dialog.getByLabel("행 2 선택");
+  await expect(possible).not.toBeChecked();
+  await possible.check();
+  await expect(dialog.getByRole("button", { name: "2건 가져오기" })).toBeEnabled();
+  await possible.uncheck();
+  await dialog.getByRole("button", { name: "1건 가져오기" }).click();
+  await expect(page.getByText("1건의 거래 내역을 원장에 추가했습니다.")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]").length)).toBe(2);
+  await page.reload();
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]"))).toHaveLength(2);
+
+  await page.getByRole("button", { name: "파일 가져오기" }).click();
+  dialog = page.getByRole("dialog", { name: "증권사 거래 내역 가져오기" });
+  await dialog.locator('input[type="file"]').setInputFiles({
+    name: "synthetic-broker-reimport.csv", mimeType: "text/csv",
+    buffer: Buffer.from("거래일시,종목코드,구분,수량,가격,수수료,세금\n2026-08-12T10:00:02,IMPT,매수,1,1000,0,0"),
+  });
+  await expect(dialog.getByText("정확한 중복 1")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "0건 가져오기" })).toBeDisabled();
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]"))).toHaveLength(2);
+});
+
 test("현금 기록을 저장하고 다시 열어 수정·삭제한다", async ({ page }) => {
   await page.addInitScript((account) => localStorage.setItem("tradejournal.accounts.v1", JSON.stringify([account])), e2eAccount("e2e-account", "E2E 계좌"));
   await page.goto("/trades");

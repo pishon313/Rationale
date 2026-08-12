@@ -36,6 +36,13 @@ describe("encrypted backup routing", () => {
     expect(invokeMock).toHaveBeenCalledWith("decrypt_backup", { container: "encrypted", password: "password123" });
   });
 
+  it("preserves import provenance through the encrypted restore validation path", async () => {
+    const origin = { kind: "fileImport" as const, sourceKey: "file:v1:abc", importBatchId: "file:v1:batch:abc", importedAt: legacy.exportedAt, sourceRow: 2, timePrecision: "second" as const };
+    invokeMock.mockResolvedValue(JSON.stringify({ ...legacy, trades: [{ ...sampleTrades[0], journalStatus: "unreviewed", origin }, ...sampleTrades.slice(1)] }));
+    const restored = await decryptBackupPayload("encrypted", "password123");
+    expect(restored.trades[0]).toMatchObject({ journalStatus: "unreviewed", origin });
+  });
+
   it("validates password length and exact confirmation without trimming", () => {
     expect(validateNewBackupPassword("short", "short")).toBe("PASSWORD_TOO_SHORT");
     expect(validateNewBackupPassword("password123", "password124")).toBe("PASSWORD_MISMATCH");

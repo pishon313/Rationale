@@ -36,6 +36,26 @@ describe("TradeForm", () => {
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ planId: trade.planId }));
   });
 
+  it("가져온 거래를 수정하면 초와 출처를 보존하고 검토 완료로 저장한다", () => {
+    const onSave = vi.fn();
+    const origin = { kind: "fileImport" as const, sourceKey: "file:v1:abc", importBatchId: "file:v1:batch:abc", importedAt: "2026-08-12T00:00:00Z", sourceRow: 2, timePrecision: "second" as const };
+    const trade = { ...sampleTrades[0], tradedAt: "2026-08-12T10:11:12", origin, journalStatus: "unreviewed" as const };
+    render(<TradeForm trade={trade} stocks={sampleStocks} plans={samplePlans} rules={sampleRules} ledger={buildTradingLedger([])} onCancel={vi.fn()} onSave={onSave} />);
+    expect(screen.getByLabelText("거래 일시")).toHaveAttribute("step", "1");
+    expect(screen.getByLabelText("거래 일시")).toHaveValue("2026-08-12T10:11:12.000");
+    fireEvent.click(screen.getByRole("button", { name: "변경 저장" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ id: trade.id, createdAt: trade.createdAt, tradedAt: "2026-08-12T10:11:12", origin, journalStatus: "recorded" }));
+  });
+
+  it("새 수동 거래는 manual 및 recorded 메타데이터를 사용한다", () => {
+    const onSave = vi.fn();
+    render(<TradeForm stocks={sampleStocks} plans={samplePlans} rules={sampleRules} ledger={buildTradingLedger([])} onCancel={vi.fn()} onSave={onSave} />);
+    fireEvent.change(screen.getByLabelText("수량"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("체결 가격"), { target: { value: "1000" } });
+    fireEvent.click(screen.getByRole("button", { name: "기록 저장" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ journalStatus: "recorded", origin: { kind: "manual" } }));
+  });
+
   it("입금 유형에서는 현금 금액 필드를 표시한다", () => {
     render(<TradeForm stocks={sampleStocks} plans={samplePlans} rules={sampleRules} ledger={buildTradingLedger([])} onCancel={vi.fn()} onSave={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "입금" }));

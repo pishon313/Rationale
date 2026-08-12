@@ -19,7 +19,7 @@ Account syncs user-owned metadata but excludes `isDefault`, which is a device pr
 
 Stock syncs identity, classification, thesis, review dates, ledger initialization, tags, and lifecycle timestamps. It excludes authoritative `quantity` and `averagePrice`, all quote-cache fields, and the legacy device-local opening account label. Holdings are projected from merged Trades by the production ledger.
 
-Trade syncs the complete normalized economic record without rounding, including fractional quantities, transfers, opening positions, rule snapshots, and `deletedAt`. Trade is the economic source of truth.
+Trade syncs the complete normalized economic record without rounding, including fractional quantities, transfers, opening positions, `journalStatus`, `origin` provenance, rule snapshots, and `deletedAt`. Trade is the economic source of truth. Import source keys and provider/external execution metadata therefore survive multi-device whole-record LWW merges.
 
 IDs beginning with `sample:v1:` are never synchronized. Sample Dataset remains device-local onboarding data.
 
@@ -37,6 +37,6 @@ First sync compares deterministic record names and merges both sides. Local-only
 
 ## Local state and restore
 
-Outbox, record state, conflicts, status, CloudKit tokens, and serialized engine state are dedicated device-local SQLite data and are excluded from Backup V5. Local domain writes and outbox changes share a SQLite transaction. Remote, sample, derived, and backup sources never echo as ordinary local edits. Backup restore sets `needsReconciliation` and pauses outgoing sync until explicit reconciliation.
+Outbox, record state, conflicts, status, CloudKit tokens, serialized engine state, and the `import-mapping-profiles` collection are device-local and excluded from Backup V5. Mapping profiles contain no raw imported rows and are never synchronized. Local domain writes and outbox changes share a SQLite transaction. Remote, sample, derived, and backup sources never echo as ordinary local edits. Backup restore sets `needsReconciliation` and pauses outgoing sync until explicit reconciliation.
 
 iCloud account sign-out/change pauses sync and preserves all local records. A different private database is never automatically merged without reconciliation.
