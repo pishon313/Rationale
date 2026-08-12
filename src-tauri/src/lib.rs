@@ -543,12 +543,74 @@ fn validate_quote_provider(provider: &str) -> Result<(), String> {
     }
 }
 
-fn validate_quote_request(symbol: &str, market: &str) -> Result<(), String> {
+fn validate_quote_request(
+    symbol: &str,
+    country: &str,
+    exchange: &str,
+    expected_currency: &str,
+) -> Result<(), String> {
     if symbol.trim().is_empty() || symbol.len() > 20 || symbol.chars().any(char::is_control) {
         return Err("INVALID_QUOTE_SYMBOL".into());
     }
-    if !matches!(market, "한국" | "미국" | "기타") {
-        return Err("INVALID_QUOTE_MARKET".into());
+    if country.trim().is_empty() || country.len() > 60 || country.chars().any(char::is_control) {
+        return Err("INVALID_QUOTE_COUNTRY".into());
+    }
+    if exchange.trim().is_empty() || exchange.len() > 30 || exchange.chars().any(char::is_control) {
+        return Err("INVALID_QUOTE_EXCHANGE".into());
+    }
+    if !matches!(expected_currency, "KRW" | "USD" | "JPY" | "EUR" | "CAD") {
+        return Err("INVALID_QUOTE_CURRENCY".into());
+    }
+    Ok(())
+}
+
+fn normalized(value: &str) -> String {
+    value.trim().to_ascii_uppercase()
+}
+
+fn normalized_country(value: &str) -> String {
+    match normalized(value).as_str() {
+        "CANADA" => "CA".into(),
+        "UNITED STATES" | "USA" => "US".into(),
+        "SOUTH KOREA" | "KOREA" => "KR".into(),
+        other => other.into(),
+    }
+}
+
+fn validate_quote_identity(
+    body: &serde_json::Value,
+    symbol: &str,
+    country: &str,
+    exchange: &str,
+    expected_currency: &str,
+) -> Result<(), String> {
+    let response_symbol = body
+        .get("symbol")
+        .and_then(|v| v.as_str())
+        .ok_or("QUOTE_SYMBOL_MISSING")?;
+    let response_country = body
+        .get("country")
+        .and_then(|v| v.as_str())
+        .ok_or("QUOTE_COUNTRY_MISSING")?;
+    let response_exchange = body
+        .get("exchange")
+        .and_then(|v| v.as_str())
+        .ok_or("QUOTE_EXCHANGE_MISSING")?;
+    let response_currency = body
+        .get("currency")
+        .and_then(|v| v.as_str())
+        .ok_or("QUOTE_CURRENCY_MISSING")?;
+    if normalized(response_symbol) != normalized(symbol) {
+        return Err("QUOTE_SYMBOL_MISMATCH".into());
+    }
+    if normalized_country(response_country) != normalized_country(country) {
+        return Err("QUOTE_COUNTRY_MISMATCH".into());
+    }
+    if normalized(response_exchange) != normalized(exchange) {
+        return Err("QUOTE_EXCHANGE_MISMATCH".into());
+    }
+    if normalized(response_currency) != normalized(expected_currency) {
+        return Err("QUOTE_CURRENCY_MISMATCH".into());
     }
     Ok(())
 }
@@ -557,6 +619,8 @@ fn validate_quote_request(symbol: &str, market: &str) -> Result<(), String> {
 #[serde(rename_all = "camelCase")]
 struct QuoteResult {
     price: f64,
+    symbol: String,
+    country: String,
     currency: String,
     exchange: String,
     quoted_at: String,
@@ -565,8 +629,13 @@ struct QuoteResult {
 }
 
 #[tauri::command]
-async fn fetch_quote(symbol: String, market: String) -> Result<QuoteResult, String> {
-    validate_quote_request(&symbol, &market)?;
+async fn fetch_quote(
+    symbol: String,
+    country: String,
+    exchange: String,
+    expected_currency: String,
+) -> Result<QuoteResult, String> {
+    validate_quote_request(&symbol, &country, &exchange, &expected_currency)?;
     let entry = keyring::Entry::new(SERVICE, QUOTE_PROVIDER)
         .map_err(|_| "KEYCHAIN_UNAVAILABLE".to_string())?;
     let api_key = entry.get_password().map_err(|e| match e {
@@ -577,18 +646,15 @@ async fn fetch_quote(symbol: String, market: String) -> Result<QuoteResult, Stri
         .timeout(Duration::from_secs(12))
         .build()
         .map_err(|_| "HTTP_CLIENT_FAILED".to_string())?;
-    let country = if market == "한국" {
-        "South Korea"
-    } else {
-        "United States"
-    };
+    let query = vec![
+        ("symbol", symbol.as_str()),
+        ("country", country.as_str()),
+        ("exchange", exchange.as_str()),
+        ("apikey", api_key.as_str()),
+    ];
     let response = client
         .get("https://api.twelvedata.com/quote")
-        .query(&[
-            ("symbol", symbol.as_str()),
-            ("country", country),
-            ("apikey", api_key.as_str()),
-        ])
+        .query(&query)
         .send()
         .await
         .map_err(|e| {
@@ -610,6 +676,7 @@ async fn fetch_quote(symbol: String, market: String) -> Result<QuoteResult, Stri
             .unwrap_or("시세 API 요청에 실패했습니다");
         return Err(format!("PROVIDER_ERROR:{message}"));
     }
+    validate_quote_identity(&body, &symbol, &country, &exchange, &expected_currency)?;
     let price_text = body
         .get("close")
         .or_else(|| body.get("price"))
@@ -618,12 +685,25 @@ async fn fetch_quote(symbol: String, market: String) -> Result<QuoteResult, Stri
     let price = price_text
         .parse::<f64>()
         .map_err(|_| "PRICE_INVALID".to_string())?;
+    if !price.is_finite() || price <= 0.0 {
+        return Err("PRICE_INVALID".into());
+    }
     Ok(QuoteResult {
         price,
+        symbol: body
+            .get("symbol")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        country: body
+            .get("country")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
         currency: body
             .get("currency")
             .and_then(|v| v.as_str())
-            .unwrap_or(if market == "한국" { "KRW" } else { "USD" })
+            .unwrap_or("")
             .to_string(),
         exchange: body
             .get("exchange")
@@ -920,20 +1000,43 @@ mod encrypted_backup_tests {
             Err("UNSUPPORTED_API_PROVIDER".into())
         );
         assert_eq!(
-            validate_quote_request("", "한국"),
+            validate_quote_request("", "KR", "KRX", "KRW"),
             Err("INVALID_QUOTE_SYMBOL".into())
         );
         assert_eq!(
-            validate_quote_request("A\nB", "미국"),
+            validate_quote_request("A\nB", "US", "NASDAQ", "USD"),
             Err("INVALID_QUOTE_SYMBOL".into())
         );
         assert_eq!(
-            validate_quote_request("TSLA", "unknown"),
-            Err("INVALID_QUOTE_MARKET".into())
+            validate_quote_request("TSLA", "", "NASDAQ", "USD"),
+            Err("INVALID_QUOTE_COUNTRY".into())
         );
         assert!(validate_quote_provider(QUOTE_PROVIDER).is_ok());
-        assert!(validate_quote_request("005930", "한국").is_ok());
-        assert!(validate_quote_request("BRK.B", "미국").is_ok());
+        assert!(validate_quote_request("005930", "KR", "KRX", "KRW").is_ok());
+        assert!(validate_quote_request("BRK.B", "US", "NYSE", "USD").is_ok());
+        assert!(validate_quote_request("SHLD", "CA", "TSX", "CAD").is_ok());
+    }
+
+    #[test]
+    fn quote_identity_rejects_wrong_country_exchange_symbol_or_currency() {
+        let quote = serde_json::json!({ "symbol": "SHLD", "country": "Canada", "exchange": "TSX", "currency": "CAD" });
+        assert!(validate_quote_identity(&quote, "SHLD", "CA", "TSX", "CAD").is_ok());
+        assert_eq!(
+            validate_quote_identity(&quote, "SHLD", "US", "TSX", "CAD"),
+            Err("QUOTE_COUNTRY_MISMATCH".into())
+        );
+        assert_eq!(
+            validate_quote_identity(&quote, "SHLD", "CA", "NYSE", "CAD"),
+            Err("QUOTE_EXCHANGE_MISMATCH".into())
+        );
+        assert_eq!(
+            validate_quote_identity(&quote, "OTHER", "CA", "TSX", "CAD"),
+            Err("QUOTE_SYMBOL_MISMATCH".into())
+        );
+        assert_eq!(
+            validate_quote_identity(&quote, "SHLD", "CA", "TSX", "USD"),
+            Err("QUOTE_CURRENCY_MISMATCH".into())
+        );
     }
 
     fn temporary_backup_directory(label: &str) -> PathBuf {

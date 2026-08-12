@@ -10,6 +10,7 @@ import type { Stock } from "./types";
 import { StockForm } from "./stock-form";
 import { StockTable } from "./stock-table";
 import { useStockStore } from "./use-stock-store";
+import { assertMatchingQuote, twelveDataIdentity, type TwelveDataQuote } from "./quote-identity";
 
 export function StocksPageClient() {
   const { t, formatNumber } = useI18n();
@@ -24,7 +25,9 @@ export function StocksPageClient() {
     setRefreshing(true); let success = 0; const failures: string[] = [];
     for (const stock of stocks) {
       try {
-        const quote = await invoke<{ price: number; currency: string; exchange: string; quotedAt: string; isMarketOpen: boolean | null; source: string }>("fetch_quote", { symbol: stock.ticker, market: stock.market });
+        const identity = twelveDataIdentity(stock);
+        if (!identity) throw new Error("QUOTE_IDENTITY_MISSING");
+        const quote = assertMatchingQuote(stock, await invoke<TwelveDataQuote>("fetch_quote", { symbol: identity.symbol, country: identity.country, exchange: identity.exchange, expectedCurrency: stock.currency }));
         updateStock({ ...stock, currentPrice: quote.price, priceUpdatedAt: new Date().toISOString(), priceQuotedAt: quote.quotedAt || null, priceSource: "twelve-data", priceStatus: "online", updatedAt: new Date().toISOString() }); success++;
       } catch (error) { failures.push(`${stock.name}: ${quoteErrorMessage(String(error), t)}`); }
     }

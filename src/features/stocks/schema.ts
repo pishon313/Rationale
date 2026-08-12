@@ -11,6 +11,9 @@ export const stockFormSchema = z.object({
   name: z.string().trim().min(1, "종목명을 입력해 주세요.").max(100),
   market: z.enum(markets),
   currency: z.enum(currencies),
+  twelveDataSymbol: z.string().trim().max(20),
+  twelveDataCountry: z.string().trim().max(60),
+  twelveDataExchange: z.string().trim().max(30),
   assetType: z.string().trim().min(1, "자산 유형을 입력해 주세요."),
   sector: z.string().trim().max(60),
   status: z.enum(stockStatuses),
@@ -26,6 +29,12 @@ export const stockFormSchema = z.object({
   reviewNote: z.string().trim().max(300, "검토할 사항은 300자 이내로 입력해 주세요."),
   nextEarningsDate: z.string().nullable(),
   tagsText: z.string(),
+}).superRefine((value, context) => {
+  const hasAnyIdentity = Boolean(value.twelveDataSymbol || value.twelveDataCountry || value.twelveDataExchange);
+  if (value.market !== "기타" && !hasAnyIdentity) return;
+  for (const [path, field] of [["twelveDataSymbol", value.twelveDataSymbol], ["twelveDataCountry", value.twelveDataCountry], ["twelveDataExchange", value.twelveDataExchange]] as const) {
+    if (!field) context.addIssue({ code: "custom", path: [path], message: "기타 시장은 Twelve Data 종목 식별자를 모두 입력해 주세요." });
+  }
 });
 
 export type StockFormValues = z.input<typeof stockFormSchema>;

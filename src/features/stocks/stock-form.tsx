@@ -31,13 +31,14 @@ export function StockForm({ stock, holdings = [], trades = [], onCancel, onSave 
     resolver: zodResolver(stockFormSchema),
     defaultValues: stock ? {
       ticker: stock.ticker, name: stock.name, market: stock.market, currency: stock.currency,
+      twelveDataSymbol: stock.twelveData?.symbol ?? "", twelveDataCountry: stock.twelveData?.country ?? "", twelveDataExchange: stock.twelveData?.exchange ?? "",
       assetType: stock.assetType, sector: stock.sector, status: stock.status, investmentType: stock.investmentType,
       currentPrice: stock.currentPrice, targetPrice: stock.targetPrice, averagePrice: stock.averagePrice,
       quantity: stock.quantity, thesisSummary: stock.thesisSummary, currentView: stock.currentView,
       currentViewMemo: stock.currentViewMemo, nextReviewDate: stock.nextReviewDate, reviewNote: stock.reviewNote ?? "",
       nextEarningsDate: stock.nextEarningsDate ?? null, tagsText: stock.tags.join(", "),
     } : {
-      ticker: "", name: "", market: "한국", currency: "KRW", assetType: "주식", sector: "",
+      ticker: "", name: "", market: "한국", currency: "KRW", twelveDataSymbol: "", twelveDataCountry: "", twelveDataExchange: "", assetType: "주식", sector: "",
       status: "관찰", investmentType: "관찰 전용", currentPrice: 0, targetPrice: null,
       averagePrice: 0, quantity: 0, thesisSummary: "", currentView: "판단 보류", currentViewMemo: "",
       nextReviewDate: null, reviewNote: "", nextEarningsDate: null, tagsText: "",
@@ -74,6 +75,7 @@ export function StockForm({ stock, holdings = [], trades = [], onCancel, onSave 
     const parsed = stockFormSchema.parse(values); const now = new Date().toISOString();
     const next: Stock = { id: stock?.id ?? crypto.randomUUID(), ticker: parsed.ticker, name: parsed.name, market: parsed.market,
       currency: parsed.currency, assetType: parsed.assetType, sector: parsed.sector, status: parsed.status,
+      twelveData: parsed.twelveDataSymbol && parsed.twelveDataCountry && parsed.twelveDataExchange ? { symbol: parsed.twelveDataSymbol.toUpperCase(), country: parsed.twelveDataCountry.toUpperCase(), exchange: parsed.twelveDataExchange.toUpperCase() } : null,
       investmentType: parsed.investmentType, currentPrice: parsed.currentPrice, targetPrice: parsed.targetPrice,
       averagePrice: stock?.averagePrice ?? 0, quantity: stock?.quantity ?? 0,
       ...(stock?.openingAccountName !== undefined ? { openingAccountName: stock.openingAccountName } : {}), thesisSummary: parsed.thesisSummary,
@@ -100,6 +102,7 @@ export function StockForm({ stock, holdings = [], trades = [], onCancel, onSave 
     <Field label={t("종목명")} error={errorText(errors.name?.message, "종목명은 100자 이내로 입력해 주세요.")}><input className={fieldClass} placeholder={t("예: 삼성전자")} {...register("name")} /></Field>
     <Field label={t("시장")}><select className={fieldClass} value={market} onChange={(e) => syncCurrency(e.target.value)}>{markets.map((v) => <option key={v} value={v}>{t(v)}</option>)}</select></Field>
     <Field label={t("통화")}><select aria-label={t("통화")} className={fieldClass} {...register("currency")}>{currencies.map((currency) => <option key={currency} value={currency}>{currency}</option>)}</select>{ledgerManaged && <span className="mt-1 block text-xs font-normal leading-5 text-[var(--muted)]">{t("통화를 변경하면 기존 매수·매도 기록의 통화와 거래일 환율을 다시 적용합니다.")}</span>}</Field>
+    <><Field label="Twelve Data symbol" error={errors.twelveDataSymbol?.message}><input className={fieldClass} placeholder={market === "한국" ? "005930" : market === "미국" ? "TSLA" : "SHLD"} {...register("twelveDataSymbol")} /></Field><Field label="Twelve Data country" error={errors.twelveDataCountry?.message}><input className={fieldClass} placeholder={market === "한국" ? "KR" : market === "미국" ? "US" : "CA"} {...register("twelveDataCountry")} /></Field><Field label="Twelve Data exchange" error={errors.twelveDataExchange?.message}><input className={fieldClass} placeholder={market === "한국" ? "KRX" : market === "미국" ? "NASDAQ" : "TSX"} {...register("twelveDataExchange")} /></Field><div className="self-end pb-2 text-xs leading-5 text-[var(--muted)]">자동 시세를 사용하려면 세 값을 모두 입력하세요. 표시 시장과 별도로 Twelve Data에서 사용할 정확한 identity입니다.</div></>
     <Field label={t("자산 유형")} error={errorText(errors.assetType?.message, "자산 유형을 입력해 주세요.")}><input className={fieldClass} {...register("assetType")} /></Field>
     <Field label={t("섹터")} error={errorText(errors.sector?.message, "섹터는 60자 이내로 입력해 주세요.")}><input className={fieldClass} placeholder={t("예: 반도체")} {...register("sector")} /></Field>
     <Field label={t("상태")}><select className={fieldClass} {...register("status")}>{stockStatuses.map((v) => <option key={v} value={v}>{t(v)}</option>)}</select></Field>

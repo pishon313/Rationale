@@ -175,6 +175,11 @@ function validateStockRecord(stock: Record<string, unknown>, index: number) {
   requireEnum(stock.status, stockStatuses, label, "상태");
   requireEnum(stock.investmentType, investmentTypes, label, "투자 유형");
   requireEnum(stock.currentView, stockViews, label, "현재 판단");
+  if (stock.twelveData !== undefined && stock.twelveData !== null) {
+    if (!isRecord(stock.twelveData)) throw new Error(`${label}의 Twelve Data 식별자가 올바르지 않습니다.`);
+    requireStrings(stock.twelveData, ["symbol", "country", "exchange"], `${label} Twelve Data 식별자`);
+    if (!(stock.twelveData.symbol as string).trim() || !(stock.twelveData.country as string).trim() || !(stock.twelveData.exchange as string).trim()) throw new Error(`${label}의 Twelve Data 식별자가 완전하지 않습니다.`);
+  }
   requireNonNegativeNumbers(stock, ["currentPrice", "averagePrice", "quantity"], label);
   requireNullableNumber(stock.targetPrice, label, "목표 가격");
   requireStringArray(stock.tags, label, "태그");

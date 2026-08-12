@@ -5,12 +5,15 @@ export const stockStatuses = ["보유", "매수 대기", "관찰", "매도 완�
 export const investmentTypes = ["장기 코어", "중기 투자", "스윙", "단기", "관찰 전용"] as const;
 export const stockViews = ["강세", "중립", "약세", "판단 보류"] as const;
 
+export type TwelveDataIdentity = { symbol: string; country: string; exchange: string };
+
 export type Stock = {
   id: string;
   ticker: string;
   name: string;
   market: (typeof markets)[number];
   currency: Currency;
+  twelveData?: TwelveDataIdentity | null;
   assetType: string;
   sector: string;
   status: (typeof stockStatuses)[number];
