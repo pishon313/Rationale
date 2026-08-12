@@ -1,8 +1,8 @@
 import type { MessageCatalog } from "../types";
 export const systemLanguageMessages: MessageCatalog = {
-  ja: { "앱의 언어는 Mac의 언어 설정을 따릅니다. 지원하지 않는 언어에서는 English로 표시됩니다.": "アプリの言語はMacの言語設定に従います。対応していない言語ではEnglishで表示されます。", "현재 언어": "現在の言語" },
-  en: { "앱의 언어는 Mac의 언어 설정을 따릅니다. 지원하지 않는 언어에서는 English로 표시됩니다.": "The app follows your Mac language settings. English is used when the language is not supported.", "현재 언어": "Current language" },
-  fr: { "앱의 언어는 Mac의 언어 설정을 따릅니다. 지원하지 않는 언어에서는 English로 표시됩니다.": "L’application suit les réglages de langue de votre Mac. L’anglais est utilisé si la langue n’est pas prise en charge.", "현재 언어": "Langue actuelle" },
-  it: { "앱의 언어는 Mac의 언어 설정을 따릅니다. 지원하지 않는 언어에서는 English로 표시됩니다.": "L’app segue le impostazioni della lingua del Mac. Se la lingua non è supportata viene usato l’inglese.", "현재 언어": "Lingua attuale" },
-  es: { "앱의 언어는 Mac의 언어 설정을 따릅니다. 지원하지 않는 언어에서는 English로 표시됩니다.": "La aplicación sigue la configuración de idioma del Mac. Si el idioma no es compatible, se usa inglés.", "현재 언어": "Idioma actual" },
+  ja: { "처음에는 Mac의 언어 설정을 따르며, 언제든 표시 언어를 직접 선택할 수 있습니다. 지원하지 않는 시스템 언어에서는 English가 사용됩니다.": "初回はMacの言語設定に従い、表示言語はいつでも選択できます。対応していないシステム言語ではEnglishが使用されます。", "Mac 시스템 설정": "Macのシステム設定" },
+  en: { "처음에는 Mac의 언어 설정을 따르며, 언제든 표시 언어를 직접 선택할 수 있습니다. 지원하지 않는 시스템 언어에서는 English가 사용됩니다.": "The app initially follows your Mac language settings, and you can choose a display language at any time. English is used for unsupported system languages.", "Mac 시스템 설정": "Mac system settings" },
+  fr: { "처음에는 Mac의 언어 설정을 따르며, 언제든 표시 언어를 직접 선택할 수 있습니다. 지원하지 않는 시스템 언어에서는 English가 사용됩니다.": "L’application suit initialement la langue du Mac, et vous pouvez choisir la langue d’affichage à tout moment. L’anglais est utilisé pour les langues système non prises en charge.", "Mac 시스템 설정": "Réglages système du Mac" },
+  it: { "처음에는 Mac의 언어 설정을 따르며, 언제든 표시 언어를 직접 선택할 수 있습니다. 지원하지 않는 시스템 언어에서는 English가 사용됩니다.": "Inizialmente l’app segue la lingua del Mac, ma puoi scegliere la lingua di visualizzazione in qualsiasi momento. Per le lingue di sistema non supportate viene usato l’inglese.", "Mac 시스템 설정": "Impostazioni di sistema del Mac" },
+  es: { "처음에는 Mac의 언어 설정을 따르며, 언제든 표시 언어를 직접 선택할 수 있습니다. 지원하지 않는 시스템 언어에서는 English가 사용됩니다.": "Al principio, la aplicación sigue el idioma del Mac, pero puedes elegir el idioma de visualización en cualquier momento. Se usa inglés para los idiomas del sistema no compatibles.", "Mac 시스템 설정": "Configuración del sistema del Mac" },
 };
