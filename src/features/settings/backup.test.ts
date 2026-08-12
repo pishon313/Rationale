@@ -92,6 +92,18 @@ describe("validateBackupPayload", () => {
     expect(validateBackupPayload(version5({ observations: [sampleObservations[0], stock, market] })).version).toBe(5);
   });
 
+  it("accepts Japanese and European market targets in version 5", () => {
+    const base = { ...sampleObservations[0], scope: "market", stockId: null, stockName: "" };
+    const japan = { ...base, id: "japan-market", marketTargets: ["nikkei225", "topix"] };
+    const europe = { ...base, id: "europe-market", marketTargets: ["stoxx600", "eurostoxx50", "dax"] };
+    expect(validateBackupPayload(version5({ observations: [japan, europe] })).version).toBe(5);
+  });
+
+  it("rejects unknown market target IDs", () => {
+    const base = { ...sampleObservations[0], scope: "market", stockId: null, stockName: "" };
+    for (const target of ["nikkei", "eurostoxx", "random-index"]) expect(() => validateBackupPayload(version5({ observations: [{ ...base, marketTargets: [target] }] }))).toThrow("시장 대상");
+  });
+
   it("rejects invalid observation scope combinations", () => {
     const observation = sampleObservations[0];
     const invalid = [

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider, resolveSystemLocale, useI18n } from "./i18n-provider";
 
@@ -26,10 +26,10 @@ describe("I18nProvider", () => {
     expect(document.documentElement.lang).toBe("ja");
 
     languages.mockReturnValue(["de-DE"]);
-    window.dispatchEvent(new Event("languagechange"));
+    act(() => window.dispatchEvent(new Event("languagechange")));
 
     await screen.findByText("Dashboard");
-    expect(document.documentElement.lang).toBe("en");
+    await waitFor(() => expect(document.documentElement.lang).toBe("en"));
   });
 
   it("keeps a saved manual language instead of the Mac language", async () => {

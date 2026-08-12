@@ -70,6 +70,39 @@ test("시장 관찰을 작성하고 종목 관찰과 같은 타임라인에서 �
   await expect(page.getByText("조건에 맞는 관찰 기록이 없습니다.")).toBeVisible();
 });
 
+test("일본과 유럽 시장 관찰을 지역별 선택하고 필터링한다", async ({ page }) => {
+  await page.goto("/observations");
+  await page.getByRole("button", { name: "새 기록" }).click();
+  let form = page.locator("form");
+  await form.getByRole("button", { name: "시장", exact: true }).click();
+  for (const heading of ["글로벌", "미국", "유럽", "일본", "한국", "매크로 / 기타"]) await expect(form.getByText(heading, { exact: true })).toBeVisible();
+  await form.getByRole("button", { name: "TOPIX", exact: true }).click();
+  await form.getByRole("button", { name: "Nikkei 225", exact: true }).click();
+  await page.getByLabel("제목").fill("일본은행 정책 변화");
+  await page.getByLabel("내용").fill("일본 주요 지수의 동반 약세를 기록한다.");
+  await page.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(page.getByText("Nikkei 225 · TOPIX")).toBeVisible();
+
+  await page.getByRole("button", { name: "새 기록" }).click();
+  form = page.locator("form");
+  await form.getByRole("button", { name: "시장", exact: true }).click();
+  for (const target of ["DAX", "CAC 40", "STOXX Europe 600"]) await form.getByRole("button", { name: target, exact: true }).click();
+  await page.getByLabel("제목").fill("유럽 경기 우려 확대");
+  await page.getByLabel("내용").fill("유럽 대표 지수의 하락을 기록한다.");
+  await page.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(page.getByText("STOXX Europe 600 · DAX · CAC 40")).toBeVisible();
+
+  await page.getByRole("button", { name: "시장", exact: true }).click();
+  const filter = page.getByLabel("시장 대상 필터");
+  await expect(filter.locator('optgroup[label="일본"]')).toHaveCount(1);
+  await expect(filter.locator('optgroup[label="유럽"]')).toHaveCount(1);
+  await filter.selectOption("nikkei225");
+  await expect(page.getByRole("heading", { name: "일본은행 정책 변화" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "유럽 경기 우려 확대" })).toHaveCount(0);
+  await filter.selectOption("dax");
+  await expect(page.getByRole("heading", { name: "유럽 경기 우려 확대" })).toBeVisible();
+});
+
 test("빈 종목 목록에서 새 종목을 등록하고 상세로 이동한다", async ({ page }) => {
   await page.goto("/stocks");
   await expect(page.getByRole("heading", { name: "종목", exact: true })).toBeVisible();

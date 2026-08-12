@@ -1,4 +1,4 @@
-import type { Observation } from "@/features/observations/types";
+import { isMarketTarget, type Observation } from "@/features/observations/types";
 import type { Note } from "@/features/notes/types";
 import type { Currency } from "@/domain/currency";
 import { conditionTypes, planStatuses, scenarioTypes, type BuyPlan } from "@/features/plans/types";
@@ -222,7 +222,7 @@ function validateObservationRecord(observation: Record<string, unknown>, index: 
   const scope = observation.scope ?? "stock";
   if (scope !== "stock" && scope !== "market") throw new Error(`${label}의 관찰 대상이 올바르지 않습니다.`);
   const targets = observation.marketTargets ?? [];
-  if (!Array.isArray(targets) || targets.some((target) => !["global", "nasdaq", "sp500", "dow", "kospi", "kosdaq", "fx", "rates", "commodities", "crypto", "other"].includes(String(target)))) throw new Error(`${label}의 시장 대상이 올바르지 않습니다.`);
+  if (!Array.isArray(targets) || targets.some((target) => !isMarketTarget(target))) throw new Error(`${label}의 시장 대상이 올바르지 않습니다.`);
   if (scope === "stock" && (typeof observation.stockId !== "string" || !observation.stockId.trim())) throw new Error(`${label}의 종목 연결이 올바르지 않습니다.`);
   if (scope === "stock" && targets.length > 0) throw new Error(`${label}의 시장 대상이 올바르지 않습니다.`);
   if (scope === "market" && observation.stockId !== null) throw new Error(`${label}의 종목 연결이 올바르지 않습니다.`);

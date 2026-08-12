@@ -8,7 +8,7 @@ import type { Stock } from "@/features/stocks/types";
 import { useI18n } from "@/i18n/i18n-provider";
 import { localDateTimeValue } from "@/lib/local-date";
 import { useLocalCollection } from "@/lib/use-local-collection";
-import { filterObservations, marketTargetLabels, marketTargets, normalizeObservation, type MarketTarget, type Observation, type ObservationScope } from "./types";
+import { filterObservations, marketTargetGroups, marketTargetLabels, normalizeMarketTargets, normalizeObservation, type MarketTarget, type Observation, type ObservationScope } from "./types";
 
 const stockViews: Observation["stockView"][] = ["강세", "중립", "약세", "판단 보류"];
 
@@ -44,7 +44,7 @@ export function ObservationsPageClient() {
         <option value="all">{t("전체 종목")}</option>
         {stocks.items.map((stock) => <option key={stock.id} value={stock.id}>{stock.name}</option>)}
       </select></>}
-      {scopeFilter === "market" && <><label className="text-sm text-[var(--muted)]">{t("시장 / 지수")}</label><select aria-label={t("시장 대상 필터")} value={targetFilter} onChange={(event) => setTargetFilter(event.target.value)} className="h-9 rounded-lg border bg-[var(--surface)] px-3 text-sm"><option value="all">{t("전체 시장 대상")}</option>{marketTargets.map((target) => <option key={target} value={target}>{t(marketTargetLabels[target])}</option>)}</select></>}
+      {scopeFilter === "market" && <><label className="text-sm text-[var(--muted)]">{t("시장 / 지수")}</label><select aria-label={t("시장 대상 필터")} value={targetFilter} onChange={(event) => setTargetFilter(event.target.value)} className="h-9 rounded-lg border bg-[var(--surface)] px-3 text-sm"><option value="all">{t("전체 시장 대상")}</option>{marketTargetGroups.map((group) => <optgroup key={group.id} label={t(group.label)}>{group.targets.map((target) => <option key={target.id} value={target.id}>{t(target.label)}</option>)}</optgroup>)}</select></>}
     </div>
     <section className="relative mt-6 space-y-4 before:absolute before:bottom-4 before:left-[19px] before:top-4 before:w-px before:bg-[var(--border)]">
       {items.map((item) => <article key={item.id} className="relative pl-12">
@@ -128,11 +128,11 @@ export function ObservationForm({ value, stocks, initialStockId, lockScope = fal
     const stock = form.scope === "stock" ? stocks.find((item) => item.id === form.stockId) : null;
     if (form.scope === "stock" && !stock || form.scope === "market" && form.marketTargets.length === 0) return;
     const now = new Date().toISOString();
-    onSave({ ...form, id: value?.id ?? crypto.randomUUID(), stockId: stock?.id ?? null, stockName: stock?.name ?? "", marketTargets: form.scope === "market" ? form.marketTargets : [], tags: splitTags(tags), attachmentUrls: form.attachmentUrls ?? [], createdAt: value?.createdAt ?? now, updatedAt: now, deletedAt: null });
+    onSave({ ...form, id: value?.id ?? crypto.randomUUID(), stockId: stock?.id ?? null, stockName: stock?.name ?? "", marketTargets: form.scope === "market" ? normalizeMarketTargets(form.marketTargets) : [], tags: splitTags(tags), attachmentUrls: form.attachmentUrls ?? [], createdAt: value?.createdAt ?? now, updatedAt: now, deletedAt: null });
   }
 
   function changeScope(scope: ObservationScope) { setForm((current) => ({ ...current, scope, stockId: scope === "stock" ? initialStock?.id ?? "" : null, stockName: scope === "stock" ? initialStock?.name ?? "" : "", marketTargets: [] })); }
-  function toggleTarget(target: MarketTarget) { setForm((current) => ({ ...current, marketTargets: current.marketTargets.includes(target) ? current.marketTargets.filter((item) => item !== target) : [...current.marketTargets, target] })); }
+  function toggleTarget(target: MarketTarget) { setForm((current) => ({ ...current, marketTargets: normalizeMarketTargets(current.marketTargets.includes(target) ? current.marketTargets.filter((item) => item !== target) : [...current.marketTargets, target]) })); }
 
   return <div className="fixed inset-0 z-50 flex justify-end bg-black/35">
     <form className="h-full w-full max-w-xl overflow-y-auto bg-[var(--surface)]" onSubmit={submit}>
@@ -144,7 +144,7 @@ export function ObservationForm({ value, stocks, initialStockId, lockScope = fal
             <option value="">{t("종목 선택")}</option>
             {stocks.map((stock) => <option key={stock.id} value={stock.id}>{stock.name}</option>)}
           </select>
-        </Field> : <Field label={t("시장 / 지수")}><div className="mt-2 flex flex-wrap gap-2">{marketTargets.map((target) => { const label = t(marketTargetLabels[target]); return <button key={target} type="button" aria-label={label} aria-pressed={form.marketTargets.includes(target)} onClick={() => toggleTarget(target)} className={`rounded-full border px-3 py-2 text-sm ${form.marketTargets.includes(target) ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]" : "text-[var(--muted)]"}`}>{form.marketTargets.includes(target) ? "✓ " : ""}{label}</button>; })}</div>{form.marketTargets.length === 0 && <p className="mt-2 text-xs text-[var(--muted)]">{t("시장 또는 지수를 하나 이상 선택해 주세요.")}</p>}</Field>}
+        </Field> : <Field label={t("시장 / 지수")}><div className="mt-3 space-y-3">{marketTargetGroups.map((group) => <div key={group.id}><p className="mb-1.5 text-xs font-medium text-[var(--muted)]">{t(group.label)}</p><div className="flex flex-wrap gap-2">{group.targets.map((target) => { const label = t(target.label); return <button key={target.id} type="button" aria-label={label} aria-pressed={form.marketTargets.includes(target.id)} onClick={() => toggleTarget(target.id)} className={`min-h-9 max-w-full whitespace-normal rounded-full border px-3 py-1.5 text-sm leading-5 ${form.marketTargets.includes(target.id) ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]" : "text-[var(--muted)]"}`}>{form.marketTargets.includes(target.id) ? "✓ " : ""}{label}</button>; })}</div></div>)}</div>{form.marketTargets.length === 0 && <p className="mt-2 text-xs text-[var(--muted)]">{t("시장 또는 지수를 하나 이상 선택해 주세요.")}</p>}</Field>}
         <Field label={t("관찰 시각")}>
           <input required type="datetime-local" className={input} value={form.observedAt} onChange={(event) => set("observedAt", event.target.value)} />
         </Field>
