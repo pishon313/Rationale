@@ -50,6 +50,15 @@ describe("trade mutations", () => {
     expect(result.ok).toBe(false);
     expect(replaceTrades).not.toHaveBeenCalled();
   });
+
+  it("rejects duplicate IDs across active and deleted records before persistence", async () => {
+    const active = trade("duplicate", "매수", 1);
+    const deleted = { ...active, deletedAt: "2026-01-02T00:00:00.000Z" };
+    const replaceTrades = vi.fn().mockResolvedValue(undefined);
+    const result = await commitTradeMutation({ currentTrades: [], nextTrades: [active, deleted], accounts: [account], replaceTrades });
+    expect(result).toEqual({ ok: false, error: "중복된 거래 ID가 있어 저장할 수 없습니다." });
+    expect(replaceTrades).not.toHaveBeenCalled();
+  });
 });
 
 function trade(id: string, tradeType: "매수" | "매도", quantity: number): Trade {

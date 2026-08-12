@@ -25,6 +25,7 @@ export async function commitTradeMutation({ currentTrades, nextTrades, accounts,
 }
 
 export function validateTradeMutation(currentTrades: Trade[], nextTrades: Trade[], accounts: InvestmentAccount[], changedId?: string): TradeMutationResult {
+  if (new Set(nextTrades.map((trade) => trade.id)).size !== nextTrades.length) return { ok: false, error: "중복된 거래 ID가 있어 저장할 수 없습니다." };
   try {
     validateTransferPairs(nextTrades);
   } catch (error) {

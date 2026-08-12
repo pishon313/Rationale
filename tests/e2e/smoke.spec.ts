@@ -195,10 +195,10 @@ test("거래 파일 후보를 검토하고 원자적으로 가져온 뒤 재가�
   const possible = dialog.getByLabel("행 2 선택");
   await expect(possible).not.toBeChecked();
   await possible.check();
-  await expect(dialog.getByRole("button", { name: "2건 가져오기" })).toBeEnabled();
+  await expect(dialog.getByRole("button", { name: "2건 추가 · 0건 복원" })).toBeEnabled();
   await possible.uncheck();
-  await dialog.getByRole("button", { name: "1건 가져오기" }).click();
-  await expect(page.getByText("1건의 거래 내역을 원장에 추가했습니다.")).toBeVisible();
+  await dialog.getByRole("button", { name: "1건 추가 · 0건 복원" }).click();
+  await expect(page.getByText("1건의 거래 내역을 추가하고 0건을 복원했습니다.")).toBeVisible();
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]").length)).toBe(2);
   await page.reload();
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]"))).toHaveLength(2);
@@ -210,8 +210,73 @@ test("거래 파일 후보를 검토하고 원자적으로 가져온 뒤 재가�
     buffer: Buffer.from("거래일시,종목코드,구분,수량,가격,수수료,세금\n2026-08-12T10:00:02,IMPT,매수,1,1000,0,0"),
   });
   await expect(dialog.getByText("정확한 중복 1")).toBeVisible();
-  await expect(dialog.getByRole("button", { name: "0건 가져오기" })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "0건 추가 · 0건 복원" })).toBeDisabled();
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]"))).toHaveLength(2);
+});
+
+test("삭제한 가져오기 거래를 중복 ID 없이 명시적으로 복원한다", async ({ page }) => {
+  const account = e2eAccount("restore-account", "복원 계좌");
+  const stock = { id: "restore-stock", ticker: "RSTR", name: "복원 종목", market: "한국", currency: "KRW", assetType: "주식", sector: "테스트", status: "보유", investmentType: "장기 코어", currentPrice: 1000, targetPrice: null, averagePrice: 0, quantity: 0, thesisSummary: "", currentView: "중립", currentViewMemo: "", nextReviewDate: null, reviewNote: "", nextEarningsDate: null, ledgerInitializedAt: "2026-08-01T00:00:00.000Z", tags: [], createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", deletedAt: null };
+  await page.addInitScript(({ account, stock }) => {
+    if (localStorage.getItem("tradejournal.accounts.v1") === null) localStorage.setItem("tradejournal.accounts.v1", JSON.stringify([account]));
+    if (localStorage.getItem("tradejournal.stocks.v1") === null) localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([stock]));
+    if (localStorage.getItem("tradejournal.trades.v1") === null) localStorage.setItem("tradejournal.trades.v1", "[]");
+  }, { account, stock });
+  const csv = "거래일시,종목코드,구분,수량,가격,체결 ID\n2026-08-12T10:00:01,RSTR,매수,1,1000,restore-exec";
+
+  await page.goto("/trades");
+  await page.getByRole("button", { name: "파일 가져오기" }).click();
+  let dialog = page.getByRole("dialog", { name: "증권사 거래 내역 가져오기" });
+  await dialog.locator('input[type="file"]').setInputFiles({ name: "restore.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  await dialog.getByRole("button", { name: "1건 추가 · 0건 복원" }).click();
+  await expect(page.getByText("1건의 거래 내역을 추가하고 0건을 복원했습니다.")).toBeVisible();
+  const original = await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]")[0]);
+
+  page.once("dialog", (confirmation) => confirmation.accept());
+  await page.getByRole("row").filter({ hasText: "복원 종목" }).getByRole("button", { name: "기록 삭제" }).click();
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]")[0]?.deletedAt)).not.toBeNull();
+
+  await page.getByRole("button", { name: "파일 가져오기" }).click();
+  dialog = page.getByRole("dialog", { name: "증권사 거래 내역 가져오기" });
+  await dialog.locator('input[type="file"]').setInputFiles({ name: "restore-again.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  await expect(dialog.getByText("삭제된 기록 1")).toBeVisible();
+  const restoreSelection = dialog.getByLabel("행 2 선택");
+  await expect(restoreSelection).not.toBeChecked();
+  await restoreSelection.check();
+  await dialog.getByRole("button", { name: "0건 추가 · 1건 복원" }).click();
+  await page.reload();
+  const restored = await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]"));
+  expect(restored).toHaveLength(1);
+  expect(restored[0]).toMatchObject({ id: original.id, createdAt: original.createdAt, origin: original.origin, journalStatus: original.journalStatus, deletedAt: null });
+  expect(await page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("tradejournal.corrupt.trades.")))).toHaveLength(0);
+});
+
+test("101개 후보를 페이지별로 검토하고 숨겨진 행을 자동 선택하지 않는다", async ({ page }) => {
+  const account = e2eAccount("large-account", "대량 계좌");
+  const stock = { id: "large-stock", ticker: "LARG", name: "대량 종목", market: "한국", currency: "KRW", assetType: "주식", sector: "테스트", status: "보유", investmentType: "장기 코어", currentPrice: 1000, targetPrice: null, averagePrice: 0, quantity: 0, thesisSummary: "", currentView: "중립", currentViewMemo: "", nextReviewDate: null, reviewNote: "", nextEarningsDate: null, ledgerInitializedAt: "2026-08-01T00:00:00.000Z", tags: [], createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", deletedAt: null };
+  await page.addInitScript(({ account, stock }) => {
+    localStorage.setItem("tradejournal.accounts.v1", JSON.stringify([account])); localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([stock])); localStorage.setItem("tradejournal.trades.v1", "[]");
+  }, { account, stock });
+  const rows = Array.from({ length: 101 }, (_, index) => `2026-08-${String(1 + Math.floor(index / 24)).padStart(2, "0")}T${String(index % 24).padStart(2, "0")}:00:00,LARG,매수,1,${1000 + index},bulk-${index + 1}`);
+  const csv = ["거래일시,종목코드,구분,수량,가격,체결 ID", ...rows].join("\n");
+  await page.goto("/trades");
+  await page.getByRole("button", { name: "파일 가져오기" }).click();
+  const dialog = page.getByRole("dialog", { name: "증권사 거래 내역 가져오기" });
+  await dialog.locator('input[type="file"]').setInputFiles({ name: "large.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  await expect(dialog.getByText("현재 페이지 1 / 2")).toBeVisible();
+  await expect(dialog.getByText("전체 선택 100건")).toBeVisible();
+  await dialog.getByRole("button", { name: "다음" }).click();
+  await expect(dialog.getByText("현재 페이지 2 / 2")).toBeVisible();
+  await expect(dialog.getByText("다른 페이지 선택 100건")).toBeVisible();
+  await expect(dialog.getByLabel("행 102 선택")).not.toBeChecked();
+  await dialog.getByRole("button", { name: "이 페이지의 추가 가능 항목 선택" }).click();
+  await expect(dialog.getByText("전체 선택 101건")).toBeVisible();
+  await dialog.getByRole("button", { name: "이 페이지 선택 해제" }).click();
+  await expect(dialog.getByText("전체 선택 100건")).toBeVisible();
+  await dialog.getByRole("button", { name: "전체 선택 해제" }).click();
+  await expect(dialog.getByRole("button", { name: "0건 추가 · 0건 복원" })).toBeDisabled();
+  await dialog.getByRole("button", { name: "모든 추가 가능 항목 선택" }).click();
+  await expect(dialog.getByRole("button", { name: "101건 추가 · 0건 복원" })).toBeEnabled();
 });
 
 test("현금 기록을 저장하고 다시 열어 수정·삭제한다", async ({ page }) => {

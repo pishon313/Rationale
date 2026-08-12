@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { InvestmentAccount } from "@/features/accounts/types";
 import type { Stock } from "@/features/stocks/types";
 import type { Trade } from "@/features/trades/types";
-import { buildTabularColumns, detectImportMapping, exactProfileToAutoApply, headerSignature, profileMatch, validateImportMapping } from "./column-mapping";
+import { buildTabularColumns, detectImportMapping, exactProfileToAutoApply, hasDuplicateMappingProfileName, headerSignature, profileMatch, updatedMappingProfile, validateImportMapping } from "./column-mapping";
 import { adaptTabularRow, buildImportPreview, parseExecutionDateTime, parseOptionalNumber, preflightImport } from "./import-pipeline";
 import type { ImportContext, ImportMappingProfile, ParsedTabularFile } from "./import-types";
 import { parseDelimitedImport } from "./tabular-parser";
@@ -34,6 +34,15 @@ describe("Import Pipeline v1", () => {
     expect(parseExecutionDateTime("2026-08-12")).toMatchObject({ value: "2026-08-12T09:00:00", timePrecision: "date" });
     expect(parseExecutionDateTime("20260812", "101113").value).toBe("2026-08-12T10:11:13");
     expect(parseExecutionDateTime("20260812", "1011")).toMatchObject({ value: "2026-08-12T10:11:00", timePrecision: "minute" });
+  });
+
+  it("reconciles embedded and separate time without silently choosing a conflict", () => {
+    expect(parseExecutionDateTime("2026-08-12T10:30", "10:30:00")).toMatchObject({ value: "2026-08-12T10:30:00", timePrecision: "second" });
+    expect(parseExecutionDateTime("2026-08-12", "10:30")).toMatchObject({ value: "2026-08-12T10:30:00", timePrecision: "minute" });
+    expect(() => parseExecutionDateTime("2026-08-12T10:30:00", "10:31:00")).toThrow("IMPORT_TIME_CONFLICT");
+    expect(() => parseExecutionDateTime("2026-08-12T10:30:01", "10:30:02")).toThrow("IMPORT_TIME_CONFLICT");
+    expect(() => parseExecutionDateTime("2026-08-12T10:30:00Z", "10:30:00")).toThrow("IMPORT_UNSUPPORTED_TIMEZONE");
+    expect(() => parseExecutionDateTime("2026-08-12T10:30:00", "10:30:00+09:00")).toThrow("IMPORT_UNSUPPORTED_TIMEZONE");
   });
 
   it("rejects ambiguous dates instead of guessing", () => {
@@ -87,6 +96,39 @@ describe("Import Pipeline v1", () => {
     expect(conflict.candidates[0]).toMatchObject({ status: "source_conflict", selectedByDefault: false });
   });
 
+  it("uses provider-independent v2 external execution identity", async () => {
+    const first = await preview(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,CaseSensitive-1,"], []);
+    const sourceKey = first.candidates[0].trade?.origin?.sourceKey;
+    expect(sourceKey).toMatch(/^file:v2:/);
+    const parsed = table(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,CaseSensitive-1,"]);
+    const changedProvider = await buildImportPreview(parsed, detectImportMapping(parsed.columns).mapping, { stocks, accounts, existingTrades: [], targetAccountId: "a1", provider: "다른 표시 이름", importedAt: now });
+    expect(changedProvider.candidates[0].trade?.origin?.sourceKey).toBe(sourceKey);
+  });
+
+  it("detects one legacy v1 execution across provider label changes", async () => {
+    const first = await preview(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,exec-v1,"]);
+    const legacy = { ...(first.candidates[0].trade as Trade), origin: { ...(first.candidates[0].trade as Trade).origin!, sourceKey: "file:v1:legacy-provider-dependent" } };
+    const parsed = table(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,exec-v1,"]);
+    const result = await buildImportPreview(parsed, detectImportMapping(parsed.columns).mapping, { stocks, accounts, existingTrades: [legacy], targetAccountId: "a1", provider: "renamed", importedAt: now });
+    expect(result.candidates[0]).toMatchObject({ status: "exact_duplicate", matchedTradeIds: [legacy.id] });
+  });
+
+  it("keeps the same external execution ID distinct across accounts", async () => {
+    const secondAccount = { ...accounts[0], id: "a2", name: "두 번째 계좌", isDefault: false };
+    const first = await preview(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,same-exec,"]);
+    const parsed = table(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,same-exec,"]);
+    const result = await buildImportPreview(parsed, detectImportMapping(parsed.columns).mapping, { stocks, accounts: [...accounts, secondAccount], existingTrades: [first.candidates[0].trade as Trade], targetAccountId: "a2", provider: "broker", importedAt: now });
+    expect(result.candidates[0].status).toBe("ready");
+  });
+
+  it("blocks ambiguous trusted external identities instead of choosing the first", async () => {
+    const first = await preview(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,ambiguous-exec,"]);
+    const trade = first.candidates[0].trade as Trade;
+    const result = await preview(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,ambiguous-exec,"], [trade, { ...trade, id: "another-id" }]);
+    expect(result.candidates[0]).toMatchObject({ status: "source_conflict", action: "none" });
+    expect(result.candidates[0].issues).toContainEqual(expect.objectContaining({ code: "IMPORT_SOURCE_IDENTITY_AMBIGUOUS" }));
+  });
+
   it("does not treat an order ID alone as execution identity", async () => {
     const result = await preview(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,,order-1", "2026-08-12T10:00:02,005930,매수,1,70000,0,0,,order-1"]);
     expect(result.summary.ready).toBe(2);
@@ -102,6 +144,36 @@ describe("Import Pipeline v1", () => {
   it("stores imported executions as unreviewed file imports", async () => {
     const result = await preview(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,exec-1,"]);
     expect(result.candidates[0].trade).toMatchObject({ journalStatus: "unreviewed", memo: "", origin: { kind: "fileImport", provider: "broker", externalExecutionId: "exec-1", importedAt: now } });
+  });
+
+  it("classifies a deleted exact import as an explicit restore and preserves its journal data", async () => {
+    const first = await preview(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,restore-exec,"]);
+    const original = { ...(first.candidates[0].trade as Trade), planId: "plan-1", memo: "사용자 메모", emotion: "확신", emotionIntensity: 4, confidenceScore: 5, ruleComplianceScore: 4, ruleViolations: [{ ruleId: "r", title: "규칙", severity: "주의" as const, message: "메모" }], journalStatus: "recorded" as const, deletedAt: "2026-08-13T00:00:00Z" };
+    const result = await preview(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,restore-exec,"], [original]);
+    const candidate = result.candidates[0];
+    expect(candidate).toMatchObject({ status: "previously_deleted", action: "restore", selectedByDefault: false, matchedTradeIds: [original.id] });
+    const selected = new Set([candidate.id]);
+    const preflight = preflightImport(result, selected, { existingTrades: [original], accounts });
+    expect(preflight.ok).toBe(true);
+    if (!preflight.ok) throw new Error("expected restore plan");
+    expect(preflight.plan.insertedTrades).toHaveLength(0);
+    expect(preflight.plan.restoredTradeIds).toEqual([original.id]);
+    expect(preflight.plan.nextTrades).toHaveLength(1);
+    expect(preflight.plan.nextTrades[0]).toMatchObject({ id: original.id, createdAt: original.createdAt, origin: original.origin, journalStatus: "recorded", planId: "plan-1", memo: "사용자 메모", emotion: "확신", deletedAt: null });
+  });
+
+  it("blocks a deleted source conflict and stale preview changes", async () => {
+    const first = await preview(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,stale-exec,"]);
+    const deleted = { ...(first.candidates[0].trade as Trade), deletedAt: "2026-08-13T00:00:00Z" };
+    const conflict = await preview(["2026-08-12T10:00:01,005930,매수,2,70000,0,0,stale-exec,"], [deleted]);
+    expect(conflict.candidates[0].status).toBe("source_conflict");
+
+    const fresh = await preview(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,new-after-preview,"]);
+    const selected = new Set([fresh.candidates[0].id]);
+    const addedElsewhere = fresh.candidates[0].trade as Trade;
+    const stale = preflightImport(fresh, selected, { existingTrades: [addedElsewhere], accounts });
+    expect(stale.ok).toBe(false);
+    expect(stale.issues).toContainEqual(expect.objectContaining({ code: "IMPORT_PREVIEW_STALE" }));
   });
 
   it("blocks atomic commit when selected candidates violate the ledger", async () => {
@@ -129,6 +201,15 @@ describe("Import Pipeline v1", () => {
     const profile: ImportMappingProfile = { id: "p", name: "Broker", version: 1, bindings: detectImportMapping(first).mapping, headerSignature: headerSignature(first), createdAt: now, updatedAt: now };
     expect(profileMatch(profile, buildTabularColumns(["가격", "수량", "구분", "종목코드", "거래일"]))).toBe("exact");
     expect(profileMatch(profile, buildTabularColumns(["가격", "수량", "구분", "종목코드", "거래일", "세금"]))).toBe("compatible");
+    expect(profileMatch(profile, buildTabularColumns(["가격", "가격", "수량", "구분", "종목코드", "거래일"]))).toBe("incompatible");
+  });
+
+  it("rejects changed duplicate-header cardinality and malformed signatures", () => {
+    const duplicated = buildTabularColumns(["거래일", "종목코드", "구분", "수량", "가격", "가격"]);
+    const profile: ImportMappingProfile = { id: "p", name: "Duplicate prices", version: 1, bindings: { ...detectImportMapping(duplicated).mapping, price: duplicated[5].reference }, headerSignature: headerSignature(duplicated), createdAt: now, updatedAt: now };
+    expect(profileMatch(profile, buildTabularColumns(["가격", "거래일", "종목코드", "구분", "수량", "가격"]))).toBe("exact");
+    expect(profileMatch(profile, buildTabularColumns(["거래일", "종목코드", "구분", "수량", "가격"]))).toBe("incompatible");
+    expect(profileMatch({ ...profile, headerSignature: "malformed" }, buildTabularColumns(["거래일", "종목코드", "구분", "수량", "가격", "세금"]))).toBe("incompatible");
   });
 
   it("does not silently auto-apply when multiple profiles match equally", () => {
@@ -136,6 +217,16 @@ describe("Import Pipeline v1", () => {
     const base: ImportMappingProfile = { id: "p1", name: "One", version: 1, bindings: detectImportMapping(columns).mapping, headerSignature: headerSignature(columns), createdAt: now, updatedAt: now };
     expect(exactProfileToAutoApply([base, { ...base, id: "p2", name: "Two" }], columns)).toBeUndefined();
     expect(Object.keys(base)).not.toContain("rows");
+  });
+
+  it("updates a selected profile in place and detects normalized duplicate names", () => {
+    const columns = buildTabularColumns(["거래일", "종목코드", "구분", "수량", "가격"]);
+    const original: ImportMappingProfile = { id: "p1", name: "Broker", version: 1, bindings: detectImportMapping(columns).mapping, headerSignature: headerSignature(columns), createdAt: now, updatedAt: now };
+    const updatedAt = "2026-08-13T00:00:00Z";
+    const updated = updatedMappingProfile(original, "Broker Updated", original.bindings, columns, updatedAt);
+    expect(updated).toMatchObject({ id: original.id, createdAt: original.createdAt, name: "Broker Updated", updatedAt });
+    expect(hasDuplicateMappingProfileName([original], "  BROKER  ")).toBe(true);
+    expect(hasDuplicateMappingProfileName([original], "broker", original.id)).toBe(false);
   });
 
   it("fails a saved profile safely when a required header disappears", () => {
@@ -229,7 +320,7 @@ describe("Import Pipeline v1", () => {
 
   it("blocks a date-only execution when a timed candidate or existing event shares its day", async () => {
     const mixed = await preview(["2026-08-12,005930,매수,1,70000,0,0,,", "2026-08-12T10:00:01,005930,매수,1,70000,0,0,,"]);
-    expect(mixed.candidates[0]).toMatchObject({ status: "rejected", issues: expect.arrayContaining([expect.objectContaining({ code: "IMPORT_AMBIGUOUS_INTRADAY_ORDER" })]) });
+    expect(mixed.candidates[0]).toMatchObject({ status: "rejected", action: "none", issues: expect.arrayContaining([expect.objectContaining({ code: "IMPORT_AMBIGUOUS_INTRADAY_ORDER" })]) });
     const existingPreview = await preview(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,,"]);
     const withExisting = await preview(["2026-08-12,005930,매수,1,70000,0,0,,"], [existingPreview.candidates[0].trade as Trade]);
     expect(withExisting.candidates[0]).toMatchObject({ status: "rejected", issues: expect.arrayContaining([expect.objectContaining({ code: "IMPORT_AMBIGUOUS_INTRADAY_ORDER" })]) });

@@ -20,6 +20,7 @@ import { journalStatusOf, type Trade } from "./types";
 import type { InvestmentAccount } from "@/features/accounts/types";
 import { buildAccountTransfer, getTransferPair, updateAccountTransfer, type AccountTransferInput } from "@/features/accounts/account-transfer";
 import { buildSoftDeletedTrades, commitTradeMutation } from "./trade-mutations";
+import type { ImportMutationPlan } from "@/features/import/import-types";
 
 export function TradesPageClient() {
   const { t, formatDate, formatNumber } = useI18n();
@@ -130,11 +131,11 @@ export function TradesPageClient() {
     }
   }
 
-  async function importCsv(imported: Trade[]) {
-    const saved = await validateAndCommit([...imported, ...allTrades]);
+  async function importCsv(plan: ImportMutationPlan) {
+    const saved = await validateAndCommit(plan.nextTrades);
     if (saved) {
       setCsvOpen(false);
-      setMessage(`${imported.length}건의 거래 내역을 원장에 추가했습니다.`);
+      setMessage(`${plan.insertedTrades.length}건의 거래 내역을 추가하고 ${plan.restoredTradeIds.length}건을 복원했습니다.`);
     }
     return saved;
   }

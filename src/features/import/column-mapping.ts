@@ -90,10 +90,45 @@ export function headerSignature(columns: TabularColumn[]) {
 export function profileMatch(profile: ImportMappingProfile, columns: TabularColumn[]): "exact" | "compatible" | "incompatible" {
   if (profile.version !== 1) return "incompatible";
   if (profile.headerSignature === headerSignature(columns)) return validateImportMapping(profile.bindings, columns).some((issue) => issue.severity === "error") ? "incompatible" : "exact";
-  return Object.values(profile.bindings).every((reference) => resolveColumnIndex(columns, reference) !== undefined) ? "compatible" : "incompatible";
+  const savedCounts = signatureHeaderCounts(profile.headerSignature);
+  if (!savedCounts) return "incompatible";
+  const currentCounts = columnHeaderCounts(columns);
+  const mappingErrors = validateImportMapping(profile.bindings, columns).some((issue) => issue.severity === "error");
+  const boundHeadersStable = Object.values(profile.bindings).every((reference) => savedCounts.get(reference.normalizedHeader) === currentCounts.get(reference.normalizedHeader));
+  return !mappingErrors && boundHeadersStable ? "compatible" : "incompatible";
 }
 
 export function exactProfileToAutoApply(profiles: ImportMappingProfile[], columns: TabularColumn[]) {
   const exact = profiles.filter((profile) => profileMatch(profile, columns) === "exact");
   return exact.length === 1 ? exact[0] : undefined;
+}
+
+export function normalizeMappingProfileName(value: string) { return value.trim().toLocaleLowerCase(); }
+
+export function hasDuplicateMappingProfileName(profiles: ImportMappingProfile[], name: string, excludingId?: string) {
+  const normalized = normalizeMappingProfileName(name);
+  return profiles.some((profile) => profile.id !== excludingId && normalizeMappingProfileName(profile.name) === normalized);
+}
+
+export function updatedMappingProfile(profile: ImportMappingProfile, name: string, bindings: ImportMapping, columns: TabularColumn[], updatedAt: string): ImportMappingProfile {
+  return { ...profile, name: name.trim(), bindings, headerSignature: headerSignature(columns), updatedAt };
+}
+
+function columnHeaderCounts(columns: TabularColumn[]) {
+  const counts = new Map<string, number>();
+  for (const column of columns) counts.set(column.reference.normalizedHeader, (counts.get(column.reference.normalizedHeader) ?? 0) + 1);
+  return counts;
+}
+
+function signatureHeaderCounts(signature: string) {
+  if (!signature) return null;
+  const counts = new Map<string, number>();
+  for (const item of signature.split("|")) {
+    const match = item.match(/^(.+)#(\d+)$/);
+    if (!match) return null;
+    const occurrence = Number(match[2]);
+    if (occurrence !== (counts.get(match[1]) ?? 0)) return null;
+    counts.set(match[1], occurrence + 1);
+  }
+  return counts;
 }

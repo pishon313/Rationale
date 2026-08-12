@@ -32,6 +32,7 @@ const patterns: Pattern[] = [
   { expression: /^거래일 형식을 확인해 주세요: (.*)$/, key: "거래일 형식을 확인해 주세요: {value}", params: (match) => ({ value: match[1] }) },
   { expression: /^거래 시간을 확인해 주세요: (.*)$/, key: "거래 시간을 확인해 주세요: {value}", params: (match) => ({ value: match[1] }) },
   { expression: /^(\d+)건의 거래 내역을 원장에 추가했습니다\.$/, key: "{count}건의 거래 내역을 원장에 추가했습니다.", params: (match) => ({ count: match[1] }) },
+  { expression: /^(\d+)건의 거래 내역을 추가하고 (\d+)건을 복원했습니다\.$/, key: "{inserted}건의 거래 내역을 추가하고 {restored}건을 복원했습니다.", params: (match) => ({ inserted: match[1], restored: match[2] }) },
 ];
 
 export function translateTradeText(value: string, t: TradeTranslator, formatNumber?: TradeNumberFormatter): string {
@@ -41,7 +42,7 @@ export function translateTradeText(value: string, t: TradeTranslator, formatNumb
       const params = pattern.params(match);
       if (typeof params.value === "string") params.value = t(params.value);
       if (formatNumber) {
-        for (const name of ["count", "amount", "limit", "percent", "stockQuantity", "ledgerQuantity", "stockPrice", "ledgerPrice"]) {
+        for (const name of ["count", "inserted", "restored", "amount", "limit", "percent", "stockQuantity", "ledgerQuantity", "stockPrice", "ledgerPrice"]) {
           const raw = params[name];
           if (typeof raw !== "string") continue;
           const numeric = Number(raw.replaceAll(",", ""));

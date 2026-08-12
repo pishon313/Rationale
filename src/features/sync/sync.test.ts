@@ -25,9 +25,9 @@ describe("Sync Contract v1", () => {
   });
 
   it("preserves journal status and import provenance in the whole Trade payload", () => {
-    const imported = { ...trade("imported", 0.35), journalStatus: "unreviewed" as const, origin: { kind: "fileImport" as const, sourceKey: "file:v1:abc", importBatchId: "file:v1:batch:abc", provider: "broker", externalExecutionId: "exec-1", importedAt: at, sourceRow: 2, timePrecision: "second" as const } };
-    expect(toTradeSyncPayload(imported)).toMatchObject({ journalStatus: "unreviewed", origin: imported.origin });
-    expect(toSyncEnvelope("trades", imported).payload).toMatchObject({ origin: imported.origin });
+    const imported = { ...trade("imported", 0.35), journalStatus: "recorded" as const, memo: "restored journal", deletedAt: null, origin: { kind: "fileImport" as const, sourceKey: "file:v2:abc", importBatchId: "file:v1:batch:abc", provider: "broker-renamed", externalExecutionId: "exec-1", importedAt: at, sourceRow: 2, timePrecision: "second" as const } };
+    expect(toTradeSyncPayload(imported)).toMatchObject({ journalStatus: "recorded", memo: "restored journal", deletedAt: null, origin: imported.origin });
+    expect(toSyncEnvelope("trades", imported).payload).toMatchObject({ journalStatus: "recorded", origin: imported.origin });
   });
 
   it("accepts old Trade payloads and rejects malformed additive metadata", () => {

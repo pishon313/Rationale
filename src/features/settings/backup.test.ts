@@ -88,9 +88,9 @@ describe("validateBackupPayload", () => {
 
   it("preserves imported Trade provenance and journal status in Backup V5", () => {
     const backup = version5();
-    const imported = { ...backup.trades[0], journalStatus: "unreviewed" as const, origin: { kind: "fileImport" as const, sourceKey: "file:v1:abc", importBatchId: "file:v1:batch:abc", provider: "broker", externalExecutionId: "exec-1", importedAt: valid.exportedAt, sourceRow: 2, timePrecision: "second" as const } };
+    const imported = { ...backup.trades[0], journalStatus: "recorded" as const, memo: "restored journal", deletedAt: null, origin: { kind: "fileImport" as const, sourceKey: "file:v2:abc", importBatchId: "file:v1:batch:abc", provider: "broker-renamed", externalExecutionId: "exec-1", importedAt: valid.exportedAt, sourceRow: 2, timePrecision: "second" as const } };
     const parsed = validateBackupPayload({ ...backup, trades: [imported, ...backup.trades.slice(1)] });
-    expect(parsed.trades[0]).toMatchObject({ journalStatus: "unreviewed", origin: imported.origin });
+    expect(parsed.trades[0]).toMatchObject({ journalStatus: "recorded", memo: "restored journal", deletedAt: null, origin: imported.origin });
   });
 
   it("rejects malformed provided import metadata while accepting old V5 Trades", () => {

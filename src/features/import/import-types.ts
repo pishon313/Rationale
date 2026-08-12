@@ -18,9 +18,10 @@ export type ImportIssueSeverity = "info" | "warning" | "error";
 export const importIssueCodes = [
   "IMPORT_AMBIGUOUS_COLUMN", "IMPORT_COLUMN_MISSING", "IMPORT_COLUMN_COLLISION", "IMPORT_REQUIRED_COLUMN", "IMPORT_INSTRUMENT_COLUMN",
   "IMPORT_DATE_MISSING", "IMPORT_AMBIGUOUS_DATE", "IMPORT_INVALID_DATE", "IMPORT_INVALID_TIME", "IMPORT_UNSUPPORTED_TIMEZONE", "IMPORT_TIME_MISSING", "IMPORT_AMBIGUOUS_INTRADAY_ORDER",
+  "IMPORT_TIME_CONFLICT",
   "IMPORT_INVALID_NUMBER", "IMPORT_NON_POSITIVE_NUMBER", "IMPORT_NEGATIVE_NUMBER", "IMPORT_INVALID_SIDE", "IMPORT_INVALID_CURRENCY", "IMPORT_CURRENCY_CONFLICT", "IMPORT_CURRENCY_FALLBACK", "IMPORT_EXCHANGE_RATE_FALLBACK",
   "IMPORT_AMBIGUOUS_INSTRUMENT", "IMPORT_INSTRUMENT_CONFLICT", "IMPORT_INSTRUMENT_NOT_FOUND", "IMPORT_AMBIGUOUS_ACCOUNT", "IMPORT_ACCOUNT_NOT_FOUND", "IMPORT_ARCHIVED_ACCOUNT", "IMPORT_ACCOUNT_REQUIRED",
-  "IMPORT_EXACT_DUPLICATE", "IMPORT_POSSIBLE_DUPLICATE", "IMPORT_AMBIGUOUS_IDENTICAL_ROW", "IMPORT_SOURCE_CONFLICT", "IMPORT_ROW_REJECTED", "IMPORT_NOTHING_SELECTED", "IMPORT_LEDGER_CONFLICT",
+  "IMPORT_EXACT_DUPLICATE", "IMPORT_POSSIBLE_DUPLICATE", "IMPORT_PREVIOUSLY_DELETED", "IMPORT_AMBIGUOUS_IDENTICAL_ROW", "IMPORT_SOURCE_CONFLICT", "IMPORT_SOURCE_IDENTITY_AMBIGUOUS", "IMPORT_PREVIEW_STALE", "IMPORT_ROW_REJECTED", "IMPORT_NOTHING_SELECTED", "IMPORT_LEDGER_CONFLICT",
 ] as const;
 export type ImportIssueCode = (typeof importIssueCodes)[number];
 export type ImportIssue = {
@@ -56,16 +57,24 @@ export type CanonicalExecution = {
   externalOrderId: string | null;
 };
 
-export type ImportCandidateStatus = "ready" | "exact_duplicate" | "possible_duplicate" | "source_conflict" | "rejected";
+export type ImportCandidateStatus = "ready" | "exact_duplicate" | "possible_duplicate" | "previously_deleted" | "source_conflict" | "rejected";
+export type ImportCandidateAction = "insert" | "restore" | "none";
 export type ImportCandidate = {
   id: string;
   row: number;
   status: ImportCandidateStatus;
+  action: ImportCandidateAction;
   selectedByDefault: boolean;
   execution?: CanonicalExecution;
   trade?: Trade;
   matchedTradeIds: string[];
   issues: ImportIssue[];
+};
+
+export type ImportMutationPlan = {
+  insertedTrades: Trade[];
+  restoredTradeIds: string[];
+  nextTrades: Trade[];
 };
 
 export type ImportPreview = {
