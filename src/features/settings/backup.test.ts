@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fallbackCurrencyPreference } from "@/domain/currency";
 import { emptyDashboardNote } from "@/features/dashboard/dashboard-note";
 import { sampleObservations } from "@/features/observations/sample-data";
+import { normalizeObservation } from "@/features/observations/types";
 import { samplePlans } from "@/features/plans/sample-data";
 import { sampleReviews } from "@/features/reviews/sample-data";
 import { sampleRules } from "@/features/rules/sample-data";
@@ -85,6 +86,23 @@ describe("validateBackupPayload", () => {
     expect(parsed.trades.every((trade) => parsed.accounts.some((account) => account.id === trade.accountId))).toBe(true);
   });
 
+  it("accepts legacy, stock, and market observation shapes in version 5", () => {
+    const stock = { ...sampleObservations[0], id: "new-stock-observation", scope: "stock", marketTargets: [] };
+    const market = { ...sampleObservations[0], id: "market-observation", scope: "market", stockId: null, stockName: "", marketTargets: ["nasdaq", "sp500"] };
+    expect(validateBackupPayload(version5({ observations: [sampleObservations[0], stock, market] })).version).toBe(5);
+  });
+
+  it("rejects invalid observation scope combinations", () => {
+    const observation = sampleObservations[0];
+    const invalid = [
+      { ...observation, scope: "stock", stockId: null, marketTargets: [] },
+      { ...observation, scope: "stock", marketTargets: ["nasdaq"] },
+      { ...observation, scope: "market", marketTargets: ["nasdaq"] },
+      { ...observation, scope: "market", stockId: null, stockName: "", marketTargets: [] },
+    ];
+    for (const value of invalid) expect(() => validateBackupPayload(version5({ observations: [value] }))).toThrow();
+  });
+
   it("rejects a version 5 trade that references an unknown account", () => {
     const backup = version5();
     expect(() => validateBackupPayload({ ...backup, trades: backup.trades.map((trade, index) => index === 0 ? { ...trade, accountId: "missing" } : trade) })).toThrow("존재하지 않는 계좌");
@@ -155,7 +173,7 @@ describe("validateBackupPayload", () => {
     const byCollection = writesByCollection(parsed);
 
     expect(byCollection.size).toBe(12);
-    expect(byCollection.get("observations")).toEqual(sampleObservations);
+    expect(byCollection.get("observations")).toEqual(sampleObservations.map(normalizeObservation));
     expect(byCollection.get("reviews")).toEqual(sampleReviews);
     expect(byCollection.get("rules")).toEqual(sampleRules);
     expect(byCollection.get("notes")).toEqual([]);

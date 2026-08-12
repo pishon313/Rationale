@@ -218,7 +218,16 @@ function validatePlanRecord(plan: Record<string, unknown>, index: number) {
 
 function validateObservationRecord(observation: Record<string, unknown>, index: number) {
   const label = `관찰 기록 ${index + 1}번째 항목`;
-  requireStrings(observation, ["stockId", "stockName", "observedAt", "title", "content", "marketCondition", "stockView", "createdAt", "updatedAt"], label);
+  requireStrings(observation, ["stockName", "observedAt", "title", "content", "marketCondition", "stockView", "createdAt", "updatedAt"], label);
+  const scope = observation.scope ?? "stock";
+  if (scope !== "stock" && scope !== "market") throw new Error(`${label}의 관찰 대상이 올바르지 않습니다.`);
+  const targets = observation.marketTargets ?? [];
+  if (!Array.isArray(targets) || targets.some((target) => !["global", "nasdaq", "sp500", "dow", "kospi", "kosdaq", "fx", "rates", "commodities", "crypto", "other"].includes(String(target)))) throw new Error(`${label}의 시장 대상이 올바르지 않습니다.`);
+  if (scope === "stock" && (typeof observation.stockId !== "string" || !observation.stockId.trim())) throw new Error(`${label}의 종목 연결이 올바르지 않습니다.`);
+  if (scope === "stock" && targets.length > 0) throw new Error(`${label}의 시장 대상이 올바르지 않습니다.`);
+  if (scope === "market" && observation.stockId !== null) throw new Error(`${label}의 종목 연결이 올바르지 않습니다.`);
+  if (scope === "market" && observation.stockName !== "") throw new Error(`${label}의 종목명이 올바르지 않습니다.`);
+  if (scope === "market" && targets.length === 0) throw new Error(`${label}의 시장 대상을 하나 이상 선택해야 합니다.`);
   requireEnum(observation.stockView, stockViews, label, "종목 판단");
   requireStringArray(observation.tags, label, "태그");
   requireStringArray(observation.attachmentUrls, label, "첨부 파일");

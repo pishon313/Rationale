@@ -4,7 +4,7 @@ import Link from "next/link";
 import { ArrowLeft, CalendarClock, CalendarDays, Edit3, Lightbulb, MessageSquareText, Pencil, Plus, Target, Trash2, TrendingUp, WalletCards } from "lucide-react";
 import { useState } from "react";
 import { ObservationForm } from "@/features/observations/observations-page-client";
-import type { Observation } from "@/features/observations/types";
+import { stockObservationsFor, type Observation } from "@/features/observations/types";
 import { ReviewForm } from "@/features/reviews/reviews-page-client";
 import type { Review } from "@/features/reviews/types";
 import type { Trade } from "@/features/trades/types";
@@ -60,7 +60,7 @@ export function StockDetailClient({ stockId }: { stockId: string }) {
     [t("미실현손익"), `${computed.unrealizedProfit >= 0 ? "+" : ""}${price(computed.unrealizedProfit)}`],
     [t("검토할 사항"), stock.reviewNote || t("미설정")],
   ];
-  const stockObservations = observations.items.filter((observation) => observation.stockId === stock.id).sort((a, b) => b.observedAt.localeCompare(a.observedAt));
+  const stockObservations = stockObservationsFor(observations.items, stock.id);
   const stockReviews = reviews.items.filter((review) => review.stockId === stock.id).sort((a, b) => b.reviewedAt.localeCompare(a.reviewedAt));
   const activeTrades = trades.filter((trade) => !trade.deletedAt);
   const stockTrades = activeTrades.filter((trade) => trade.stockId === stock.id).sort((a, b) => b.tradedAt.localeCompare(a.tradedAt));
@@ -138,7 +138,7 @@ export function StockDetailClient({ stockId }: { stockId: string }) {
     </section>
     {editing && <StockForm stock={stock} holdings={holdings} trades={storedTrades.filter((trade) => trade.stockId === stock.id)} onCancel={() => setEditing(false)} onSave={async (next) => { if (stock.currency !== next.currency) await correctStockCurrency(next); else updateStock(next); setEditing(false); }} />}
     {tradeContext && <TradeForm trade={tradeContext.trade} initialType={tradeContext.initialType} lockedStockId={stock.id} initialAccountId={tradeContext.initialAccountId} lockedAccountId={tradeContext.lockedAccountId} allowedTypes={["매수", "매도", "배당"]} stocks={stocks} plans={plans.items} rules={rules.items} ledger={formLedger} accounts={accounts} formError={tradeError} onCancel={() => { setTradeContext(null); setTradeError(""); }} onSave={saveTrade} />}
-    {observing && <ObservationForm stocks={stocks} initialStockId={stock.id} onCancel={() => setObserving(false)} onSave={(observation) => { observations.add(observation); setObserving(false); }} />}
+    {observing && <ObservationForm stocks={stocks} initialStockId={stock.id} lockScope onCancel={() => setObserving(false)} onSave={(observation) => { observations.add(observation); setObserving(false); }} />}
     {reviewing && <ReviewForm stocks={stocks} initialStockId={stock.id} cancel={() => setReviewing(false)} save={(review) => { reviews.add(review); setReviewing(false); }} />}
   </>;
 }

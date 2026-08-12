@@ -2,7 +2,7 @@ import { fallbackCurrencyPreference, type CurrencyPreference } from "@/domain/cu
 import { normalizeTrade } from "@/domain/trading-ledger";
 import { emptyDashboardNote } from "@/features/dashboard/dashboard-note";
 import type { Note } from "@/features/notes/types";
-import type { Observation } from "@/features/observations/types";
+import { normalizeObservation, type Observation } from "@/features/observations/types";
 import type { BuyPlan } from "@/features/plans/types";
 import type { Review } from "@/features/reviews/types";
 import type { InvestmentRule } from "@/features/rules/types";
@@ -63,7 +63,7 @@ export async function createBackupPayload(localeOverride?: Locale, options: { al
     stocks,
     plans,
     trades: migrated.trades.map(normalizeTrade),
-    observations,
+    observations: observations.map(normalizeObservation),
     reviews,
     rules,
     notes,
@@ -85,7 +85,7 @@ export function backupWrites(parsed: ValidatedBackup): CollectionWrite[] {
     { collection: "stocks", values: parsed.stocks },
     { collection: "plans", values: parsed.plans },
     { collection: "trades", values: migrated.trades.map(normalizeTrade) },
-    { collection: "observations", values: extended?.observations ?? [] },
+    { collection: "observations", values: (extended?.observations ?? []).map(normalizeObservation) },
     { collection: "reviews", values: extended?.reviews ?? [] },
     { collection: "rules", values: extended?.rules ?? [] },
     { collection: "notes", values: current?.notes ?? [] },

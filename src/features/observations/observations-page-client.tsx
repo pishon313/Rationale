@@ -1,14 +1,14 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 
-import { Calendar, Pencil, Plus, Tag, Trash2, X } from "lucide-react";
+import { Calendar, Globe2, Pencil, Plus, Tag, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { ImageAttachments } from "@/components/image-attachments";
 import type { Stock } from "@/features/stocks/types";
 import { useI18n } from "@/i18n/i18n-provider";
 import { localDateTimeValue } from "@/lib/local-date";
 import { useLocalCollection } from "@/lib/use-local-collection";
-import type { Observation } from "./types";
+import { filterObservations, marketTargetLabels, marketTargets, normalizeObservation, type MarketTarget, type Observation, type ObservationScope } from "./types";
 
 const stockViews: Observation["stockView"][] = ["강세", "중립", "약세", "판단 보류"];
 
@@ -17,13 +17,10 @@ export function ObservationsPageClient() {
   const store = useLocalCollection<Observation>("observations", []);
   const stocks = useLocalCollection<Stock>("stocks", []);
   const [editing, setEditing] = useState<Observation | "new" | null>(null);
-  const [stockFilter, setStockFilter] = useState("전체");
-  const items = useMemo(
-    () => [...store.items]
-      .filter((item) => stockFilter === "전체" || item.stockId === stockFilter)
-      .sort((a, b) => b.observedAt.localeCompare(a.observedAt)),
-    [store.items, stockFilter],
-  );
+  const [scopeFilter, setScopeFilter] = useState<"all" | ObservationScope>("all");
+  const [stockFilter, setStockFilter] = useState("all");
+  const [targetFilter, setTargetFilter] = useState("all");
+  const items = useMemo(() => filterObservations(store.items, scopeFilter, targetFilter, stockFilter), [scopeFilter, stockFilter, store.items, targetFilter]);
   const formatObservedAt = (value: string) => {
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? value : formatDate(date, { dateStyle: "medium", timeStyle: "short" });
@@ -35,17 +32,19 @@ export function ObservationsPageClient() {
       subtitle={t("시장과 종목의 변화를 시간순으로 기록")}
       action={() => setEditing("new")}
     />
-    <div className="mt-5 flex items-center gap-2">
-      <label className="text-sm text-[var(--muted)]">{t("종목")}</label>
+    <div className="mt-5 flex flex-wrap items-center gap-3">
+      <div className="flex rounded-lg bg-[var(--surface-muted)] p-1" aria-label={t("관찰 대상 필터")}>{(["all", "market", "stock"] as const).map((scope) => <button key={scope} type="button" aria-pressed={scopeFilter === scope} onClick={() => setScopeFilter(scope)} className={`rounded-md px-3 py-1.5 text-sm ${scopeFilter === scope ? "bg-[var(--surface)] font-medium text-[var(--accent)] shadow-sm" : "text-[var(--muted)]"}`}>{t(scope === "all" ? "전체" : scope === "market" ? "시장" : "종목")}</button>)}</div>
+      {scopeFilter === "stock" && <><label className="text-sm text-[var(--muted)]">{t("종목")}</label>
       <select
         aria-label={t("관찰 종목 필터")}
         value={stockFilter}
         onChange={(event) => setStockFilter(event.target.value)}
         className="h-9 rounded-lg border bg-[var(--surface)] px-3 text-sm"
       >
-        <option value="전체">{t("전체")}</option>
+        <option value="all">{t("전체 종목")}</option>
         {stocks.items.map((stock) => <option key={stock.id} value={stock.id}>{stock.name}</option>)}
-      </select>
+      </select></>}
+      {scopeFilter === "market" && <><label className="text-sm text-[var(--muted)]">{t("시장 / 지수")}</label><select aria-label={t("시장 대상 필터")} value={targetFilter} onChange={(event) => setTargetFilter(event.target.value)} className="h-9 rounded-lg border bg-[var(--surface)] px-3 text-sm"><option value="all">{t("전체 시장 대상")}</option>{marketTargets.map((target) => <option key={target} value={target}>{t(marketTargetLabels[target])}</option>)}</select></>}
     </div>
     <section className="relative mt-6 space-y-4 before:absolute before:bottom-4 before:left-[19px] before:top-4 before:w-px before:bg-[var(--border)]">
       {items.map((item) => <article key={item.id} className="relative pl-12">
@@ -54,9 +53,10 @@ export function ObservationsPageClient() {
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-medium text-[var(--accent)]">{item.stockName}</span>
+                <span className="flex items-center gap-1 text-xs font-medium text-[var(--accent)]">{item.scope === "market" && <Globe2 size={13} />}{item.scope === "market" ? t("시장 관찰") : item.stockName}</span>
                 <span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-xs">{t(item.stockView)}</span>
               </div>
+              {item.scope === "market" && <p className="mt-1 text-xs text-[var(--muted)]">{item.marketTargets.map((target) => t(marketTargetLabels[target])).join(" · ")}</p>}
               <h2 className="mt-2 font-semibold">{item.title}</h2>
               <p className="mt-1 flex items-center gap-1 text-xs text-[var(--muted)]">
                 <Calendar size={13} />
@@ -100,7 +100,7 @@ export function ObservationsPageClient() {
           </div>
         </div>
       </article>)}
-      {!items.length && <div className="rounded-xl border bg-[var(--surface)] p-12 text-center text-sm text-[var(--muted)]">{t("아직 관찰 기록이 없습니다.")}</div>}
+      {!items.length && <div className="rounded-xl border bg-[var(--surface)] p-12 text-center text-sm text-[var(--muted)]">{t(emptyMessage(scopeFilter, stockFilter, targetFilter))}</div>}
     </section>
     {editing && <ObservationForm
       stocks={stocks.items}
@@ -115,32 +115,36 @@ export function ObservationsPageClient() {
   </>;
 }
 
-export function ObservationForm({ value, stocks, initialStockId, onCancel, onSave }: { value?: Observation; stocks: Stock[]; initialStockId?: string; onCancel: () => void; onSave: (value: Observation) => void }) {
+export function ObservationForm({ value, stocks, initialStockId, lockScope = false, onCancel, onSave }: { value?: Observation; stocks: Stock[]; initialStockId?: string; lockScope?: boolean; onCancel: () => void; onSave: (value: Observation) => void }) {
   const { t } = useI18n();
   const initialStock = stocks.find((stock) => stock.id === initialStockId) ?? stocks[0];
-  const [form, setForm] = useState(() => value ?? ({ stockId: initialStock?.id ?? "", observedAt: localDateTimeValue(), title: "", content: "", marketCondition: "", stockView: "판단 보류", tags: [], attachmentUrls: [] } as unknown as Observation));
+  const [form, setForm] = useState(() => value ? normalizeObservation(value) : normalizeObservation({ id: "", scope: "stock", stockId: initialStock?.id ?? "", stockName: initialStock?.name ?? "", marketTargets: [], observedAt: localDateTimeValue(), title: "", content: "", marketCondition: "", stockView: "판단 보류", tags: [], attachmentUrls: [], createdAt: "", updatedAt: "", deletedAt: null }));
   const [tags, setTags] = useState(value?.tags.join(", ") ?? "");
   const set = (key: keyof Observation, next: unknown) => setForm((old) => ({ ...old, [key]: next }));
   const input = "mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3 text-sm";
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
-    const stock = stocks.find((item) => item.id === form.stockId);
-    if (!stock) return;
+    const stock = form.scope === "stock" ? stocks.find((item) => item.id === form.stockId) : null;
+    if (form.scope === "stock" && !stock || form.scope === "market" && form.marketTargets.length === 0) return;
     const now = new Date().toISOString();
-    onSave({ ...form, id: value?.id ?? crypto.randomUUID(), stockName: stock.name, tags: splitTags(tags), attachmentUrls: form.attachmentUrls ?? [], createdAt: value?.createdAt ?? now, updatedAt: now, deletedAt: null });
+    onSave({ ...form, id: value?.id ?? crypto.randomUUID(), stockId: stock?.id ?? null, stockName: stock?.name ?? "", marketTargets: form.scope === "market" ? form.marketTargets : [], tags: splitTags(tags), attachmentUrls: form.attachmentUrls ?? [], createdAt: value?.createdAt ?? now, updatedAt: now, deletedAt: null });
   }
+
+  function changeScope(scope: ObservationScope) { setForm((current) => ({ ...current, scope, stockId: scope === "stock" ? initialStock?.id ?? "" : null, stockName: scope === "stock" ? initialStock?.name ?? "" : "", marketTargets: [] })); }
+  function toggleTarget(target: MarketTarget) { setForm((current) => ({ ...current, marketTargets: current.marketTargets.includes(target) ? current.marketTargets.filter((item) => item !== target) : [...current.marketTargets, target] })); }
 
   return <div className="fixed inset-0 z-50 flex justify-end bg-black/35">
     <form className="h-full w-full max-w-xl overflow-y-auto bg-[var(--surface)]" onSubmit={submit}>
       <ModalHeader title={t(value ? "관찰 기록 수정" : "새 관찰 기록")} close={onCancel} />
       <div className="space-y-5 p-5">
-        <Field label={t("종목")}>
-          <select required className={input} value={form.stockId} onChange={(event) => set("stockId", event.target.value)}>
+        {!lockScope && <Field label={t("관찰 대상")}><div className="mt-2 grid grid-cols-2 rounded-lg bg-[var(--surface-muted)] p-1">{(["market", "stock"] as const).map((scope) => { const label = t(scope === "market" ? "시장" : "종목"); return <button key={scope} type="button" aria-label={label} aria-pressed={form.scope === scope} onClick={() => changeScope(scope)} className={`rounded-md px-3 py-2 text-sm ${form.scope === scope ? "bg-[var(--surface)] font-medium text-[var(--accent)] shadow-sm" : "text-[var(--muted)]"}`}>{label}</button>; })}</div></Field>}
+        {form.scope === "stock" ? <Field label={t("종목")}>
+          <select required className={input} value={form.stockId ?? ""} onChange={(event) => set("stockId", event.target.value)}>
             <option value="">{t("종목 선택")}</option>
             {stocks.map((stock) => <option key={stock.id} value={stock.id}>{stock.name}</option>)}
           </select>
-        </Field>
+        </Field> : <Field label={t("시장 / 지수")}><div className="mt-2 flex flex-wrap gap-2">{marketTargets.map((target) => { const label = t(marketTargetLabels[target]); return <button key={target} type="button" aria-label={label} aria-pressed={form.marketTargets.includes(target)} onClick={() => toggleTarget(target)} className={`rounded-full border px-3 py-2 text-sm ${form.marketTargets.includes(target) ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]" : "text-[var(--muted)]"}`}>{form.marketTargets.includes(target) ? "✓ " : ""}{label}</button>; })}</div>{form.marketTargets.length === 0 && <p className="mt-2 text-xs text-[var(--muted)]">{t("시장 또는 지수를 하나 이상 선택해 주세요.")}</p>}</Field>}
         <Field label={t("관찰 시각")}>
           <input required type="datetime-local" className={input} value={form.observedAt} onChange={(event) => set("observedAt", event.target.value)} />
         </Field>
@@ -154,7 +158,7 @@ export function ObservationForm({ value, stocks, initialStockId, onCancel, onSav
           <Field label={t("시장 상황")}>
             <input className={input} value={form.marketCondition} onChange={(event) => set("marketCondition", event.target.value)} />
           </Field>
-          <Field label={t("현재 판단")}>
+          <Field label={t(form.scope === "market" ? "시장 판단" : "현재 판단")}>
             <select className={input} value={form.stockView} onChange={(event) => set("stockView", event.target.value)}>
               {stockViews.map((item) => <option key={item} value={item}>{t(item)}</option>)}
             </select>
@@ -202,4 +206,10 @@ export function Field({ label, children }: { label: string; children: React.Reac
 
 function splitTags(value: string) {
   return [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))];
+}
+
+function emptyMessage(scope: "all" | ObservationScope, stockFilter: string, targetFilter: string) {
+  if (scope === "all") return "아직 관찰 기록이 없습니다.";
+  if (scope === "market") return targetFilter === "all" ? "아직 시장 관찰 기록이 없습니다." : "조건에 맞는 관찰 기록이 없습니다.";
+  return stockFilter === "all" ? "아직 종목 관찰 기록이 없습니다." : "조건에 맞는 관찰 기록이 없습니다.";
 }

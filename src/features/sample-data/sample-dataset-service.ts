@@ -55,7 +55,7 @@ function findUserDependencies(current: SampleCollections, known: ReturnType<type
   const summary: SampleDependencySummary = {
     trades: count("trades", (item: Trade) => Boolean(item.accountId && known.accounts.has(item.accountId) || item.stockId && known.stocks.has(item.stockId) || item.planId && known.plans.has(item.planId))),
     plans: count("plans", (item: BuyPlan) => known.stocks.has(item.stockId)),
-    observations: count("observations", (item: Observation) => known.stocks.has(item.stockId)),
+    observations: count("observations", (item: Observation) => Boolean(item.stockId && known.stocks.has(item.stockId))),
     reviews: count("reviews", (item: Review) => Boolean(item.stockId && known.stocks.has(item.stockId) || item.tradeId && known.trades.has(item.tradeId))),
   };
   return Object.fromEntries(Object.entries(summary).filter(([, value]) => value)) as SampleDependencySummary;

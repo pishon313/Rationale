@@ -8,13 +8,21 @@ test("대시보드 앱 셸을 표시한다", async ({ page }) => {
   await expect(page.getByRole("navigation", { name: "주요 메뉴" })).toBeVisible();
 });
 
-test("Mac 설정 언어를 따르고 수동 언어 선택을 표시하지 않는다", async ({ page }) => {
+test("Mac 설정 언어를 따르다가 선택한 언어를 저장한다", async ({ page }) => {
   await page.goto("/settings");
+  const language = page.getByLabel("표시 언어");
   await expect(page.locator("html")).toHaveAttribute("lang", "ko");
   await expect(page.getByRole("heading", { name: "설정", exact: true })).toBeVisible();
-  await expect(page.getByText("앱의 언어는 Mac의 언어 설정을 따릅니다. 지원하지 않는 언어에서는 English로 표시됩니다.")).toBeVisible();
-  await expect(page.getByText("한국어", { exact: true })).toBeVisible();
-  await expect(page.locator('select:has(option[value="ko"])')).toHaveCount(0);
+  await expect(language).toHaveValue("system");
+
+  await language.selectOption("en");
+  await expect(page.locator("html")).toHaveAttribute("lang", "en");
+  await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel("Display language")).toHaveValue("en");
+
+  await page.getByLabel("Display language").selectOption("system");
+  await expect(page.locator("html")).toHaveAttribute("lang", "ko");
 });
 
 test("지원하지 않는 Mac 언어는 English로 표시한다", async ({ page }) => {
@@ -26,6 +34,40 @@ test("지원하지 않는 Mac 언어는 English로 표시한다", async ({ page 
 
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+});
+
+test("시장 관찰을 작성하고 종목 관찰과 같은 타임라인에서 필터링한다", async ({ page }) => {
+  await page.goto("/observations");
+  await page.getByRole("button", { name: "새 기록" }).click();
+  const form = page.locator("form");
+  await expect(form.getByRole("button", { name: "종목", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await form.getByRole("button", { name: "시장", exact: true }).click();
+  await expect(page.locator('select option[value=""]')).toHaveCount(0);
+  await form.getByRole("button", { name: "NASDAQ", exact: true }).click();
+  await form.getByRole("button", { name: "KOSPI", exact: true }).click();
+  await form.getByRole("button", { name: "종목", exact: true }).click();
+  await expect(form.getByRole("combobox", { name: "종목" })).toBeVisible();
+  await form.getByRole("button", { name: "시장", exact: true }).click();
+  await expect(form.getByRole("button", { name: "NASDAQ", exact: true })).toHaveAttribute("aria-pressed", "false");
+  await form.getByRole("button", { name: "NASDAQ", exact: true }).click();
+  await form.getByRole("button", { name: "KOSPI", exact: true }).click();
+  await page.getByLabel("제목").fill("지정학적 위험으로 시장 급락");
+  await page.getByLabel("내용").fill("시장 전체의 위험 회피 흐름을 기록한다.");
+  await page.getByLabel("시장 상황").fill("변동성 확대");
+  await page.getByLabel("시장 판단").selectOption("약세");
+  await page.getByRole("button", { name: "저장", exact: true }).click();
+
+  await expect(page.getByText("시장 관찰")).toBeVisible();
+  await expect(page.getByText("NASDAQ · KOSPI")).toBeVisible();
+  await page.getByLabel("지정학적 위험으로 시장 급락 수정").click();
+  await expect(page.getByRole("heading", { name: "관찰 기록 수정" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "NASDAQ", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "취소", exact: true }).click();
+  await page.getByRole("button", { name: "시장", exact: true }).click();
+  await page.getByLabel("시장 대상 필터").selectOption("nasdaq");
+  await expect(page.getByRole("heading", { name: "지정학적 위험으로 시장 급락" })).toBeVisible();
+  await page.getByLabel("시장 대상 필터").selectOption("dow");
+  await expect(page.getByText("조건에 맞는 관찰 기록이 없습니다.")).toBeVisible();
 });
 
 test("빈 종목 목록에서 새 종목을 등록하고 상세로 이동한다", async ({ page }) => {
