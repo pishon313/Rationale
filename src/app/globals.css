@@ -124,7 +124,9 @@ thead { letter-spacing: 0.015em; }
 .app-brand b { display: block; font-family: var(--font-wordmark); font-size: var(--text-md); letter-spacing: -0.035em; }
 .app-brand small { display: block; margin-block-start: var(--space-3xs); color: var(--color-muted); font-size: var(--text-xs); }
 
-.app-nav { display: grid; gap: var(--space-2xs); padding: var(--space-md); }
+.app-nav { display: grid; padding: var(--space-md); }
+.app-nav-group { display: grid; gap: var(--space-2xs); }
+.app-nav-group + .app-nav-group { margin-block-start: var(--space-sm); }
 .app-nav-link {
   position: relative;
   display: flex;

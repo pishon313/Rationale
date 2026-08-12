@@ -4,19 +4,20 @@ import { usePathname } from "next/navigation";
 import { BarChart3, BookOpen, ChevronUp, ClipboardCheck, Eye, FileText, Gauge, Lightbulb, ListChecks, MoreHorizontal, Settings, Tags, WalletCards, Landmark } from "lucide-react";
 import { useI18n } from "@/i18n/i18n-provider";
 
-const nav = [
-  ["대시보드", "/dashboard", Gauge], ["종목", "/stocks", Tags], ["매수 계획", "/plans", Lightbulb],
-  ["관찰 기록", "/observations", Eye], ["회고", "/reviews", BookOpen],
-  ["분석", "/analytics", BarChart3], ["투자 원칙", "/rules", ClipboardCheck], ["Note", "/notes", FileText],
-  ["매매", "/trades", WalletCards], ["계좌", "/accounts", Landmark], ["설정", "/settings", Settings],
+const navGroups = [
+  [["대시보드", "/dashboard", Gauge], ["종목", "/stocks", Tags]],
+  [["관찰 기록", "/observations", Eye], ["매수 계획", "/plans", Lightbulb], ["매매", "/trades", WalletCards], ["회고", "/reviews", BookOpen], ["분석", "/analytics", BarChart3]],
+  [["계좌", "/accounts", Landmark], ["투자 원칙", "/rules", ClipboardCheck], ["Note", "/notes", FileText], ["설정", "/settings", Settings]],
 ] as const;
+const nav = navGroups.flat();
+const mobilePrimaryHrefs = new Set(["/dashboard", "/stocks", "/observations", "/plans"]);
 
 export function AppSidebar() {
   const pathname = usePathname();
   const { t } = useI18n();
   const isActive = (href: string) => pathname === href || (href !== "/dashboard" && pathname.startsWith(`${href}/`));
-  const primary = nav.slice(0, 4);
-  const secondary = nav.slice(4);
+  const primary = nav.filter(([, href]) => mobilePrimaryHrefs.has(href));
+  const secondary = nav.filter(([, href]) => !mobilePrimaryHrefs.has(href));
   return <>
     <aside className="app-sidebar">
       <Link href="/dashboard" className="app-brand" aria-label={t("대시보드")}>
@@ -24,7 +25,7 @@ export function AppSidebar() {
         <span><b>Rationale</b><small>{t("투자 의사결정 노트")}</small></span>
       </Link>
       <nav aria-label={t("주요 메뉴")} className="app-nav">
-        {nav.map(([label, href, Icon]) => <Link key={href} href={href} aria-current={isActive(href) ? "page" : undefined} className="app-nav-link"><Icon size={18} strokeWidth={1.8} /><span>{t(label)}</span></Link>)}
+        {navGroups.map((group, index) => <div key={index} className="app-nav-group">{group.map(([label, href, Icon]) => <Link key={href} href={href} aria-current={isActive(href) ? "page" : undefined} className="app-nav-link"><Icon size={18} strokeWidth={1.8} /><span>{t(label)}</span></Link>)}</div>)}
       </nav>
       <div className="app-local-note"><ListChecks size={17} /><p>{t("로그인 없는 개인용 로컬 앱")}<br />{t("모든 기록은 이 Mac에 저장됩니다.")}</p></div>
     </aside>
