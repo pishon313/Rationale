@@ -4,7 +4,7 @@ import { useState, useSyncExternalStore } from "react";
 import { AlertTriangle, BarChart3, ChartPie as CirclePie, ArrowUpRight, CalendarClock, CalendarDays, ClipboardCheck, Eye, Plus, StickyNote, Trash2, Wallet } from "lucide-react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { buildAnalytics } from "@/domain/analytics";
-import { currencies, fromKrw, toKrw as convertToKrw, type Currency } from "@/domain/currency";
+import { currencies, fromKrw, toKrw as convertToKrw, type Currency, type RatesToKrw } from "@/domain/currency";
 import { formatCurrency } from "@/domain/money";
 import { useLocalCollection } from "@/lib/use-local-collection";
 import type { Observation } from "@/features/observations/types";
@@ -83,16 +83,20 @@ function AssetAllocation({ holdings, total }: { holdings: StockComputed[]; total
   const rates = exchangeRates.snapshot.ratesToKrw;
   const displayCurrency = currencyPreference.displayCurrency;
   const view = useSyncExternalStore(subscribeView, getView, () => "bar");
-  const data = holdings.map((stock) => {
-    const value = convertToKrw(stock.marketValue, stock.currency, rates);
-    return { name: stock.name, value, share: total ? value / total * 100 : 0 };
-  });
+  const data = buildAssetAllocationData(holdings, total, rates);
   const displayShare = (share: number) => formatNumber(share / 100, { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1 });
-  return <section className="rounded-xl border bg-[var(--surface)] p-5"><div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2"><Wallet size={19} className="text-[var(--muted)]" /><h2 className="font-semibold">{t("보유 자산")}</h2></div><div className="flex rounded-lg bg-[var(--surface-muted)] p-0.5" aria-label={t("자산 차트 보기")}><ViewButton active={view === "bar"} label={t("막대형")} onClick={() => setView("bar")}><BarChart3 size={15} /></ViewButton><ViewButton active={view === "donut"} label={t("도넛형")} onClick={() => setView("donut")}><CirclePie size={15} /></ViewButton></div></div>{!holdings.length ? <Empty text={t("보유 종목이 없습니다.")} /> : view === "bar" ? <div className="mt-4 space-y-3">{data.map((item, index) => <div key={item.name}><div className="mb-1.5 flex justify-between text-sm"><span>{item.name}</span><span>{displayShare(item.share)}</span></div><div className="h-2 rounded-full bg-[var(--surface-muted)]"><div className="h-full rounded-full" style={{ width: `${item.share}%`, backgroundColor: COLORS[index % COLORS.length] }} /></div></div>)}</div> : <DonutAllocation data={data} displayShare={displayShare} formatValue={(value) => formatCurrency(fromKrw(value, displayCurrency, rates), displayCurrency, localeTag)} />}</section>;
+  return <section className="rounded-xl border bg-[var(--surface)] p-5"><div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2"><Wallet size={19} className="text-[var(--muted)]" /><h2 className="font-semibold">{t("보유 자산")}</h2></div><div className="flex rounded-lg bg-[var(--surface-muted)] p-0.5" aria-label={t("자산 차트 보기")}><ViewButton active={view === "bar"} label={t("막대형")} onClick={() => setView("bar")}><BarChart3 size={15} /></ViewButton><ViewButton active={view === "donut"} label={t("도넛형")} onClick={() => setView("donut")}><CirclePie size={15} /></ViewButton></div></div>{!holdings.length ? <Empty text={t("보유 종목이 없습니다.")} /> : view === "bar" ? <div className="mt-4 space-y-3">{data.map((item, index) => <div key={item.id}><div className="mb-1.5 flex justify-between text-sm"><span>{item.name}</span><span>{displayShare(item.share)}</span></div><div className="h-2 rounded-full bg-[var(--surface-muted)]"><div className="h-full rounded-full" style={{ width: `${item.share}%`, backgroundColor: COLORS[index % COLORS.length] }} /></div></div>)}</div> : <DonutAllocation data={data} displayShare={displayShare} formatValue={(value) => formatCurrency(fromKrw(value, displayCurrency, rates), displayCurrency, localeTag)} />}</section>;
 }
 
-function DonutAllocation({ data, displayShare, formatValue }: { data: { name: string; value: number; share: number }[]; displayShare: (share: number) => string; formatValue: (value: number) => string }) {
-  return <div className="mt-4 grid items-center gap-5 sm:grid-cols-[minmax(0,11fr)_minmax(0,9fr)]"><div className="h-48 min-w-0" aria-label="asset-allocation-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={data} dataKey="value" nameKey="name" innerRadius={52} outerRadius={82} paddingAngle={2}>{data.map((item, index) => <Cell key={item.name} fill={COLORS[index % COLORS.length]} />)}</Pie><Tooltip formatter={(value) => formatValue(Number(value))} /></PieChart></ResponsiveContainer></div><div className="grid min-w-0 grid-cols-1 gap-y-2.5">{data.map((item, index) => <div key={item.name} className="flex min-w-0 items-center gap-2 text-sm"><span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} /><span className="truncate">{item.name}</span><span className="ml-auto shrink-0 tabular-nums text-[var(--muted)]">{displayShare(item.share)}</span></div>)}</div></div>;
+export function buildAssetAllocationData(holdings: StockComputed[], total: number, rates: RatesToKrw) {
+  return holdings.map((stock) => {
+    const value = convertToKrw(stock.marketValue, stock.currency, rates);
+    return { id: stock.id, name: stock.name, value, share: total ? value / total * 100 : 0 };
+  });
+}
+
+function DonutAllocation({ data, displayShare, formatValue }: { data: { id: string; name: string; value: number; share: number }[]; displayShare: (share: number) => string; formatValue: (value: number) => string }) {
+  return <div className="mt-4 grid items-center gap-5 sm:grid-cols-[minmax(0,11fr)_minmax(0,9fr)]"><div className="h-48 min-w-0" aria-label="asset-allocation-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={data} dataKey="value" nameKey="name" innerRadius={52} outerRadius={82} paddingAngle={2}>{data.map((item, index) => <Cell key={item.id} fill={COLORS[index % COLORS.length]} />)}</Pie><Tooltip formatter={(value) => formatValue(Number(value))} /></PieChart></ResponsiveContainer></div><div className="grid min-w-0 grid-cols-1 gap-y-2.5">{data.map((item, index) => <div key={item.id} className="flex min-w-0 items-center gap-2 text-sm"><span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} /><span className="truncate">{item.name}</span><span className="ml-auto shrink-0 tabular-nums text-[var(--muted)]">{displayShare(item.share)}</span></div>)}</div></div>;
 }
 
 function ViewButton({ active, label, onClick, children }: { active: boolean; label: string; onClick: () => void; children: React.ReactNode }) { return <button type="button" aria-label={label} aria-pressed={active} title={label} onClick={onClick} className={`grid size-7 place-items-center rounded-md ${active ? "bg-[var(--surface)] text-[var(--accent)] shadow-sm" : "text-[var(--muted)]"}`}>{children}</button>; }
