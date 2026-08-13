@@ -296,6 +296,18 @@ test("source-first 프로필을 재정렬 파일에 적용하고 dirty 상태를
   await dialog.getByLabel("extra 열 매핑").selectOption("stockName");
   await expect(dialog.getByText("저장되지 않은 변경")).toBeVisible();
   await expect(dialog.getByRole("button", { name: "프로필 업데이트" })).toBeEnabled();
+  page.once("dialog", (confirmation) => confirmation.accept());
+  await dialog.getByRole("button", { name: "프로필 삭제" }).click();
+  await expect(dialog.getByLabel("매핑 프로필")).toHaveValue("");
+  await expect(dialog.getByText("직접 연결", { exact: true })).toHaveCount(6);
+  await expect(dialog.getByLabel("raw_ticker 열 매핑")).toHaveValue("ticker");
+  await expect(dialog.getByLabel("raw_date 열 매핑")).toHaveValue("tradedAt");
+  await expect(dialog.getByLabel("extra 열 매핑")).toHaveValue("stockName");
+  await expect(dialog.getByRole("button", { name: "프로필 업데이트" })).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "프로필 삭제" })).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "새 프로필로 저장" })).toBeEnabled();
+  await dialog.getByRole("button", { name: "거래 후보 검토" }).click();
+  await expect(dialog.getByText("가져오기 후보")).toBeVisible();
 });
 
 test("같은 체결 ID의 동일 행은 독립적으로 표시하고 한 건만 가져온다", async ({ page }) => {

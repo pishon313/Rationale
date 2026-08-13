@@ -1,11 +1,24 @@
 import { describe, expect, it } from "vitest";
 import { buildTabularColumns, detectImportMapping, headerSignature, profileMatch, validateImportMapping } from "./column-mapping";
-import { applySourceColumnAssignment, ignoredImportantField, mappingAdvisories, mappingReady, requiredMappingCoverage, sampleValuesForColumn, sourceColumnAssignments } from "./source-column-mapping";
+import { applySourceColumnAssignment, ignoredImportantField, mappedSourceColumnKeys, mappingAdvisories, mappingReady, requiredMappingCoverage, sampleValuesForColumn, sourceColumnAssignments } from "./source-column-mapping";
 import type { ImportMappingProfile, ParsedTabularFile } from "./import-types";
 
 function parsed(headers: string[], rows: string[][]): ParsedTabularFile { return { columns: buildTabularColumns(headers), rows }; }
 
 describe("source-first column mapping", () => {
+  it("collects mapped source keys without mutation and preserves duplicate occurrences", () => {
+    const mapping = {
+      tradedAt: { normalizedHeader: "date", occurrence: 0 },
+      ticker: { normalizedHeader: "symbol", occurrence: 0 },
+      stockName: { normalizedHeader: "symbol", occurrence: 1 },
+      orderId: { normalizedHeader: "symbol", occurrence: 0 },
+    };
+    const before = structuredClone(mapping);
+    expect(mappedSourceColumnKeys({})).toEqual(new Set());
+    expect(mappedSourceColumnKeys(mapping)).toEqual(new Set(["date#0", "symbol#0", "symbol#1"]));
+    expect(mapping).toEqual(before);
+  });
+
   it("preserves source order, inverts mappings, and keeps unknown columns ignored", () => {
     const file = parsed(["종목코드", "알 수 없는 열", "거래일"], [["005930", "x", "2026-08-12"]]);
     const detected = detectImportMapping(file.columns).mapping;
@@ -74,6 +87,20 @@ describe("source-first column mapping", () => {
     const reordered = parsed(["extra", "종목코드", "가격", "수량", "구분", "거래일"], [["sample", "005930", "100", "2", "매수", "2026-08-12"]]);
     expect(profileMatch(profile, reordered.columns)).toBe("exact");
     expect(sourceColumnAssignments(reordered, profile.bindings, { profileBindings: profile.bindings }).map((item) => item.target)).toEqual(["ignore", "ticker", "price", "quantity", "tradeType", "tradedAt"]);
+  });
+
+  it("detaches profile provenance while preserving mapping, samples, and unrelated row status", () => {
+    const file = parsed(["거래일", "수량", "수수료", "관련 없음"], [["2026-08-12", "2", "10", "memo"]]);
+    const mapping = { tradedAt: file.columns[0].reference, quantity: file.columns[1].reference };
+    const before = structuredClone(mapping);
+    const profiled = sourceColumnAssignments(file, mapping, { profileBindings: mapping });
+    expect(profiled.map((item) => item.origin)).toEqual(["profile", "profile", "needs_review", "ignored"]);
+
+    const detached = sourceColumnAssignments(file, mapping, { manuallyChanged: mappedSourceColumnKeys(mapping) });
+    expect(detached.map((item) => item.origin)).toEqual(["manual", "manual", "needs_review", "ignored"]);
+    expect(detached.map((item) => item.target)).toEqual(profiled.map((item) => item.target));
+    expect(detached.map((item) => item.sampleValues)).toEqual(profiled.map((item) => item.sampleValues));
+    expect(mapping).toEqual(before);
   });
 
   it("keeps compatible profile bindings while exposing an additional ignored column", () => {

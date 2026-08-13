@@ -40,6 +40,10 @@ export function sampleValuesForColumn(parsed: ParsedTabularFile, column: Tabular
   return values;
 }
 
+export function mappedSourceColumnKeys(mapping: ImportMapping): Set<string> {
+  return new Set(Object.values(mapping).filter((reference) => reference !== undefined).map(columnReferenceKey));
+}
+
 export function sourceColumnAssignments(parsed: ParsedTabularFile, mapping: ImportMapping, options: { profileBindings?: ImportMapping; manuallyChanged?: ReadonlySet<string>; explicitlyIgnored?: ReadonlySet<string> } = {}): SourceColumnAssignment[] {
   const targetByColumn = new Map(Object.entries(mapping).map(([field, reference]) => [columnReferenceKey(reference), field as ImportField]));
   const profileByColumn = new Map(Object.entries(options.profileBindings ?? {}).map(([field, reference]) => [columnReferenceKey(reference), field as ImportField]));

@@ -68,6 +68,8 @@ Profiles are versioned local records containing only a user name, stable column 
 
 Compatible matching additionally requires the saved and current occurrence count to be identical for every bound normalized header. Additional unrelated columns are allowed, but adding or removing another occurrence of a bound header is incompatible. Profile identity and dirty state are separate: editing a selected profile permits an explicit in-place update or save-as-new action, while normalized duplicate names are rejected.
 
+Canceling an in-progress preview by changing its mapping, Account, or source metadata immediately returns the editor to an idle mapping state; generation checks prevent older async results or errors from replacing a newer preview. Detaching or successfully deleting a selected profile preserves the current mapping as unsaved manual work and removes only its profile provenance. A failed profile deletion leaves both the selection and provenance unchanged.
+
 The `import-mapping-profiles` collection is device-local. It is intentionally excluded from Backup V5 and multi-device sync, and contains no raw file rows or broker data.
 
 ## Safety boundary

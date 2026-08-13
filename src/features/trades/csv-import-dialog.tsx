@@ -4,7 +4,7 @@ import { FileSpreadsheet, Trash2, X } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { columnReferenceKey, detectImportMapping, exactProfileToAutoApply, hasDuplicateMappingProfileName, headerSignature, profileMatch, updatedMappingProfile, validateImportMapping } from "@/features/import/column-mapping";
 import { buildImportPreview, preflightImport } from "@/features/import/import-pipeline";
-import { applySourceColumnAssignment, mappingAdvisories, mappingReady, requiredMappingCoverage, sourceColumnAssignments, type MappingAdvisoryCode, type SourceColumnAssignment, type SourceColumnAssignmentTarget } from "@/features/import/source-column-mapping";
+import { applySourceColumnAssignment, mappedSourceColumnKeys, mappingAdvisories, mappingReady, requiredMappingCoverage, sourceColumnAssignments, type MappingAdvisoryCode, type SourceColumnAssignment, type SourceColumnAssignmentTarget } from "@/features/import/source-column-mapping";
 import type { ImportCandidateStatus, ImportIssue, ImportMapping, ImportMappingProfile, ImportMutationPlan, ParsedTabularFile } from "@/features/import/import-types";
 import { parseImportFile } from "@/features/import/tabular-parser";
 import type { InvestmentAccount } from "@/features/accounts/types";
@@ -65,14 +65,20 @@ export function CsvImportDialog({ stocks, accounts, existing, onCancel, onImport
   const selectedOutsidePage = selectedIds.size - selectedOnPage;
   const blockedCount = preview ? preview.summary.exact_duplicate + preview.summary.source_conflict + preview.summary.rejected : 0;
 
-  async function load(file?: File) {
-    if (!file) return;
+  function cancelPendingPreviewBuild() {
     previewGeneration.current += 1;
     setBuildingPreview(false);
+  }
+
+  async function load(file?: File) {
+    if (!file) return;
+    cancelPendingPreviewBuild();
+    const generation = previewGeneration.current;
     setFileError("");
     setParsed(null); setPreview(null); setSelectedIds(new Set()); setFileName(file.name); setStage("file");
     try {
       const next = await parseImportFile(file);
+      if (generation !== previewGeneration.current) return;
       if (!next.columns.length || !next.rows.length) throw new Error("첫 번째 시트에서 헤더와 거래 행을 찾지 못했습니다.");
       const detected = detectImportMapping(next.columns);
       const exact = exactProfileToAutoApply(profileStore.items, next.columns);
@@ -85,13 +91,20 @@ export function CsvImportDialog({ stocks, accounts, existing, onCancel, onImport
       setProfileBindings(exact?.bindings); setManuallyChanged(new Set()); setExplicitlyIgnored(new Set());
       setIsProfileDirty(false); setPage(0); setStage("mapping");
     } catch (error) {
-      setFileError(error instanceof Error ? error.message : "거래 내역 파일을 읽지 못했습니다.");
+      if (generation === previewGeneration.current) setFileError(error instanceof Error ? error.message : "거래 내역 파일을 읽지 못했습니다.");
     }
   }
 
   function invalidatePreview() {
-    previewGeneration.current += 1;
+    cancelPendingPreviewBuild();
     setPreview(null); setSelectedIds(new Set()); setStage(parsed ? "mapping" : "file");
+  }
+
+  function detachProfileKeepingCurrentMapping() {
+    setSelectedProfileId("");
+    setProfileBindings(undefined);
+    setManuallyChanged(mappedSourceColumnKeys(mapping));
+    setIsProfileDirty(true);
   }
 
   function assignSource(assignment: SourceColumnAssignment, target: SourceColumnAssignmentTarget) {
@@ -107,9 +120,9 @@ export function CsvImportDialog({ stocks, accounts, existing, onCancel, onImport
 
   function applyProfile(id: string) {
     invalidatePreview();
-    setSelectedProfileId(id);
     const profile = profileStore.items.find((item) => item.id === id);
-    if (!profile) { setProfileBindings(undefined); return; }
+    if (!profile) { detachProfileKeepingCurrentMapping(); return; }
+    setSelectedProfileId(id);
     setMapping(profile.bindings); setProfileBindings(profile.bindings); setManuallyChanged(new Set()); setExplicitlyIgnored(new Set()); setDetectionIssues([]); setProfileName(profile.name); setIsProfileDirty(false);
   }
 
@@ -148,7 +161,8 @@ export function CsvImportDialog({ stocks, accounts, existing, onCancel, onImport
     setProfileError("");
     try {
       await profileStore.replaceAsync(profileStore.allItems.filter((profile) => profile.id !== selectedProfileId));
-      setSelectedProfileId(""); setIsProfileDirty(true);
+      invalidatePreview();
+      detachProfileKeepingCurrentMapping();
     } catch { setProfileError("매핑 프로필을 삭제하지 못했습니다."); }
   }
 
@@ -204,7 +218,7 @@ export function CsvImportDialog({ stocks, accounts, existing, onCancel, onImport
                 <details open className="rounded-lg bg-[var(--surface-muted)] p-3"><summary className="cursor-pointer text-sm font-semibold">{t("정확도 및 안전성 확인")}</summary><div role="status" className="mt-2 space-y-1 text-xs text-[var(--muted)]">{advisories.map((code) => <p key={code}>{t(advisoryMessage(code))}</p>)}</div></details>
               </div>
               {mappingDetailIssues.length > 0 && <div role={mappingDetailIssues.some((issue) => issue.severity === "error") ? "alert" : undefined} className="space-y-1 border-t p-4 text-sm">{mappingDetailIssues.map((issue, index) => <p key={`${issue.code}-${issue.field}-${index}`} className={issue.severity === "error" ? "text-red-600" : "text-amber-700"}>{localizeIssue(issue, t, formatNumber)}</p>)}</div>}
-              <div className="flex flex-wrap items-end gap-2 border-t p-5"><label className="text-xs text-[var(--muted)]">{t("프로필 이름")}<input className="mt-1 block h-9 rounded-lg border bg-[var(--surface)] px-3 text-sm" value={profileName} onChange={(event) => { setProfileName(event.target.value); setIsProfileDirty(true); }} /></label>{selectedProfileId && <button type="button" disabled={!isProfileDirty || !profileName.trim() || hasMappingErrors} onClick={() => void saveProfile("update")} className="h-9 rounded-lg border px-3 text-sm disabled:opacity-50">{t("프로필 업데이트")}</button>}<button type="button" disabled={!profileName.trim() || hasMappingErrors} onClick={() => void saveProfile("new")} className="h-9 rounded-lg border px-3 text-sm disabled:opacity-50">{t("새 프로필로 저장")}</button>{selectedProfileId && <button type="button" aria-label={t("프로필 삭제")} onClick={() => void deleteProfile()} className="destructive-icon-action grid size-9 place-items-center rounded-lg border"><Trash2 size={15}/></button>}{selectedProfileId && isProfileDirty && <span className="pb-2 text-xs text-amber-700">{t("저장되지 않은 변경")}</span>}</div>
+              <div className="flex flex-wrap items-end gap-2 border-t p-5"><label className="text-xs text-[var(--muted)]">{t("프로필 이름")}<input className="mt-1 block h-9 rounded-lg border bg-[var(--surface)] px-3 text-sm" value={profileName} onChange={(event) => { setProfileName(event.target.value); setIsProfileDirty(true); }} /></label>{selectedProfileId && <button type="button" disabled={!isProfileDirty || !profileName.trim() || hasMappingErrors} onClick={() => void saveProfile("update")} className="h-9 rounded-lg border px-3 text-sm disabled:opacity-50">{t("프로필 업데이트")}</button>}<button type="button" disabled={!profileName.trim() || hasMappingErrors} onClick={() => void saveProfile("new")} className="h-9 rounded-lg border px-3 text-sm disabled:opacity-50">{t("새 프로필로 저장")}</button>{selectedProfileId && <button type="button" aria-label={t("프로필 삭제")} onClick={() => void deleteProfile()} className="destructive-icon-action grid size-9 place-items-center rounded-lg border"><Trash2 size={15}/></button>}{isProfileDirty && <span className="pb-2 text-xs text-amber-700">{t("저장되지 않은 변경")}</span>}</div>
               {profileError && <p role="alert" className="mt-2 text-sm text-red-600">{t(profileError)}</p>}
             </section>}
 
@@ -219,7 +233,7 @@ export function CsvImportDialog({ stocks, accounts, existing, onCancel, onImport
           </>}
         </div>
 
-        <div className="sticky bottom-0 flex items-center justify-between gap-2 border-t bg-[var(--surface)] p-4"><p className="text-xs text-[var(--muted)]">{stage === "review" ? t("저장은 전체 원장을 다시 검증한 뒤 한 번에 수행됩니다.") : t("필수 열을 연결한 뒤 거래 후보를 검토할 수 있습니다.")}</p><div className="flex gap-2"><button type="button" disabled={saving || buildingPreview} onClick={onCancel} className="rounded-lg border px-4 py-2 text-sm disabled:opacity-50">{t("취소")}</button>{stage === "mapping" && <button type="button" disabled={!canReview} onClick={() => void reviewCandidates()} className="rounded-lg bg-[var(--accent)] px-5 py-2 text-sm text-white disabled:opacity-50">{buildingPreview ? t("거래 후보를 만들고 있습니다...") : t("거래 후보 검토")}</button>}{stage === "review" && <button type="button" disabled={!canImport} onClick={() => void submit()} className="rounded-lg bg-[var(--accent)] px-5 py-2 text-sm text-white disabled:opacity-50">{saving ? t("저장 중...") : t("{inserted}건 추가 · {restored}건 복원", { inserted: formatNumber(preflight?.plan.insertedTrades.length ?? 0), restored: formatNumber(preflight?.plan.restoredTradeIds.length ?? 0) })}</button>}</div></div>
+        <div className="sticky bottom-0 flex items-center justify-between gap-2 border-t bg-[var(--surface)] p-4"><p className="text-xs text-[var(--muted)]">{stage === "review" ? t("저장은 전체 원장을 다시 검증한 뒤 한 번에 수행됩니다.") : t("필수 열을 연결한 뒤 거래 후보를 검토할 수 있습니다.")}</p><div className="flex gap-2"><button type="button" disabled={saving} onClick={onCancel} className="rounded-lg border px-4 py-2 text-sm disabled:opacity-50">{t("취소")}</button>{stage === "mapping" && <button type="button" disabled={!canReview} onClick={() => void reviewCandidates()} className="rounded-lg bg-[var(--accent)] px-5 py-2 text-sm text-white disabled:opacity-50">{buildingPreview ? t("거래 후보를 만들고 있습니다...") : t("거래 후보 검토")}</button>}{stage === "review" && <button type="button" disabled={!canImport} onClick={() => void submit()} className="rounded-lg bg-[var(--accent)] px-5 py-2 text-sm text-white disabled:opacity-50">{saving ? t("저장 중...") : t("{inserted}건 추가 · {restored}건 복원", { inserted: formatNumber(preflight?.plan.insertedTrades.length ?? 0), restored: formatNumber(preflight?.plan.restoredTradeIds.length ?? 0) })}</button>}</div></div>
       </div>
     </div>
   );
