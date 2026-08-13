@@ -19,7 +19,7 @@ const collections = (trades: Trade[] = [trade("t1", 0.35)]): SyncCollections => 
 describe("Sync Contract v1", () => {
   it("projects only contract fields and preserves economic values", () => {
     expect(toAccountSyncPayload(account)).not.toHaveProperty("isDefault");
-    const projected = toStockSyncPayload(stock); for (const key of ["quantity", "averagePrice", "currentPrice", "priceUpdatedAt", "priceQuotedAt", "priceSource", "priceStatus"]) expect(projected).not.toHaveProperty(key);
+    const projected = toStockSyncPayload({ ...stock, countryCode: "US", providerRefs: [{ provider: "eodhd", symbol: "NVDA.US", exchangeCode: "US" }], priceFreshness: "eod", priceDelayMinutes: null }); for (const key of ["quantity", "averagePrice", "currentPrice", "priceUpdatedAt", "priceQuotedAt", "priceSource", "priceFreshness", "priceDelayMinutes", "priceStatus"]) expect(projected).not.toHaveProperty(key); expect(projected).toMatchObject({ countryCode: "US", providerRefs: [{ provider: "eodhd", symbol: "NVDA.US" }] });
     expect(toTradeSyncPayload({ ...trade("fractional", 0.35), transferId: "pair", isOpeningPosition: true, deletedAt: at })).toMatchObject({ quantity: 0.35, transferId: "pair", isOpeningPosition: true, deletedAt: at });
     expect(isSyncableRecord({ id: "sample:v1:stock:nvda" })).toBe(false); expect(recordNameFor("trades", "t1")).toBe("v1|trades|t1");
   });

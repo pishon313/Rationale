@@ -8,7 +8,7 @@ import { buildAccountTransfer } from "@/features/accounts/account-transfer";
 
 const trade = (value: Partial<Trade> & Pick<Trade, "id" | "tradeType" | "tradedAt">): Trade => ({ stockId: null, stockName: "", planId: null, quantity: 0, price: 0, currency: "KRW", exchangeRate: 1, fee: 0, tax: 0, accountName: "A", memo: "", emotion: "평온", emotionIntensity: 1, confidenceScore: 3, ruleComplianceScore: 3, createdAt: value.tradedAt, ...value });
 const stock = (value: Partial<Stock> & Pick<Stock, "id" | "name" | "currentPrice">) => ({ currency: "KRW", deletedAt: null, ...value } as Stock);
-const rates = { KRW: 1, USD: 1400, JPY: 9, EUR: 1600, CAD: 1000 };
+const rates = { KRW: 1, USD: 1400, JPY: 9, EUR: 1600, CAD: 1000, HKD: 177 };
 const account = (id: string, name: string): InvestmentAccount => ({ id, name, institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault: id === "a", archivedAt: null, memo: "", createdAt: "2025-01-01", updatedAt: "2025-01-01" });
 const cash = (id: string, tradeType: "입금" | "출금", amount: number, cashFlowKind: Trade["cashFlowKind"] = "external") => trade({ id, tradeType, tradedAt: `2025-0${id.length}-01`, amount, cashFlowKind });
 const dividend = (amount: number) => trade({ id: "gain", tradeType: "배당", tradedAt: "2025-09-01", stockId: "s1", stockName: "A주식", amount });

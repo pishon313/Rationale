@@ -5,12 +5,15 @@ import { WalletCards, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
+import { invoke } from "@tauri-apps/api/core";
 import { useI18n } from "@/i18n/i18n-provider";
 import type { Trade } from "@/features/trades/types";
 import { currencies, investmentTypes, markets, stockStatuses, stockViews, type Stock } from "./types";
 import { stockFormSchema, type StockFormValues } from "./schema";
 import type { StockAccountHolding } from "./stock-account-holdings";
 import { analyzeStockCurrencyCorrection, StockCurrencyCorrectionError } from "./stock-currency-correction";
+import { marketFromCountry, type InstrumentSearchResult } from "./market-data";
+import { isTauriApp } from "@/lib/local-repository";
 
 type Props = { stock?: Stock; holdings?: StockAccountHolding[]; trades?: Trade[]; onCancel: () => void; onSave: (stock: Stock) => void | boolean | Promise<void | boolean> };
 
@@ -23,6 +26,10 @@ export function StockForm({ stock, holdings = [], trades = [], onCancel, onSave 
   const [pendingCorrection, setPendingCorrection] = useState<Stock | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [entryMode, setEntryMode] = useState<"search" | "manual">(stock ? "manual" : "search");
+  const [searchQuery, setSearchQuery] = useState(""); const [countryFilter, setCountryFilter] = useState("");
+  const [searchResults, setSearchResults] = useState<InstrumentSearchResult[]>([]); const [searchState, setSearchState] = useState<"idle" | "loading" | "empty" | "error">("idle");
+  const [selectedSearchResult, setSelectedSearchResult] = useState<InstrumentSearchResult | null>(null);
   const errorText = (message: string | undefined, fallback: string) => {
     if (!message) return undefined;
     return /[가-힣]/.test(message) ? t(message) : t(fallback);
@@ -31,14 +38,14 @@ export function StockForm({ stock, holdings = [], trades = [], onCancel, onSave 
     resolver: zodResolver(stockFormSchema),
     defaultValues: stock ? {
       ticker: stock.ticker, name: stock.name, market: stock.market, currency: stock.currency,
-      twelveDataSymbol: stock.twelveData?.symbol ?? "", twelveDataCountry: stock.twelveData?.country ?? "", twelveDataExchange: stock.twelveData?.exchange ?? "",
+      countryCode: stock.countryCode ?? "", exchangeCode: stock.exchangeCode ?? "", providerSymbol: stock.providerRefs?.[0]?.symbol ?? "", provider: stock.providerRefs?.[0]?.provider ?? "manual",
       assetType: stock.assetType, sector: stock.sector, status: stock.status, investmentType: stock.investmentType,
       currentPrice: stock.currentPrice, targetPrice: stock.targetPrice, averagePrice: stock.averagePrice,
       quantity: stock.quantity, thesisSummary: stock.thesisSummary, currentView: stock.currentView,
       currentViewMemo: stock.currentViewMemo, nextReviewDate: stock.nextReviewDate, reviewNote: stock.reviewNote ?? "",
       nextEarningsDate: stock.nextEarningsDate ?? null, tagsText: stock.tags.join(", "),
     } : {
-      ticker: "", name: "", market: "한국", currency: "KRW", twelveDataSymbol: "", twelveDataCountry: "", twelveDataExchange: "", assetType: "주식", sector: "",
+      ticker: "", name: "", market: "한국", currency: "KRW", countryCode: "", exchangeCode: "", providerSymbol: "", provider: "manual", assetType: "주식", sector: "",
       status: "관찰", investmentType: "관찰 전용", currentPrice: 0, targetPrice: null,
       averagePrice: 0, quantity: 0, thesisSummary: "", currentView: "판단 보류", currentViewMemo: "",
       nextReviewDate: null, reviewNote: "", nextEarningsDate: null, tagsText: "",
@@ -49,11 +56,13 @@ export function StockForm({ stock, holdings = [], trades = [], onCancel, onSave 
   const selectedCurrency = watch("currency");
   const correctionAnalysis = stock ? analyzeStockCurrencyCorrection({ stock, trades, newCurrency: selectedCurrency }) : null;
   function syncCurrency(value: string) {
-    setValue("market", value as "한국" | "미국" | "기타");
+    setValue("market", value as Stock["market"]);
     if (ledgerManaged) return;
     if (value === "한국") setValue("currency", "KRW");
     if (value === "미국") setValue("currency", "USD");
   }
+  async function search() { if (!searchQuery.trim()) return; if (!isTauriApp()) { setSearchState("error"); return; } setSearchState("loading"); try { const results = await invoke<InstrumentSearchResult[]>("search_instruments", { request: { provider: "eodhd", query: searchQuery, countryCode: countryFilter || null, limit: 20 } }); setSearchResults(results); setSearchState(results.length ? "idle" : "empty"); } catch { setSearchResults([]); setSearchState("error"); } }
+  function selectResult(result: InstrumentSearchResult) { const currency = currencies.includes(result.currency as typeof currencies[number]) ? result.currency as typeof currencies[number] : null; if (!currency) { setSaveError("지원하지 않는 통화입니다."); return; } setSelectedSearchResult(result); setValue("ticker", result.ticker); setValue("name", result.name); setValue("market", marketFromCountry(result.countryCode)); setValue("currency", currency); setValue("countryCode", result.countryCode ?? ""); setValue("exchangeCode", result.exchangeCode); setValue("provider", "eodhd"); setValue("providerSymbol", result.providerSymbol); setValue("assetType", result.assetType || "주식"); if (result.previousClose) setValue("currentPrice", result.previousClose); setEntryMode("manual"); }
 
   async function persist(next: Stock) {
     setSaving(true);
@@ -75,7 +84,9 @@ export function StockForm({ stock, holdings = [], trades = [], onCancel, onSave 
     const parsed = stockFormSchema.parse(values); const now = new Date().toISOString();
     const next: Stock = { id: stock?.id ?? crypto.randomUUID(), ticker: parsed.ticker, name: parsed.name, market: parsed.market,
       currency: parsed.currency, assetType: parsed.assetType, sector: parsed.sector, status: parsed.status,
-      twelveData: parsed.twelveDataSymbol && parsed.twelveDataCountry && parsed.twelveDataExchange ? { symbol: parsed.twelveDataSymbol.toUpperCase(), country: parsed.twelveDataCountry.toUpperCase(), exchange: parsed.twelveDataExchange.toUpperCase() } : null,
+      countryCode: parsed.countryCode || null, exchangeCode: parsed.exchangeCode || null,
+      exchangeMic: selectedSearchResult?.exchangeMic ?? stock?.exchangeMic ?? null, exchangeName: selectedSearchResult?.exchangeName ?? stock?.exchangeName ?? null, isin: selectedSearchResult?.isin ?? stock?.isin ?? null,
+      providerRefs: parsed.provider === "manual" ? [] : [{ provider: parsed.provider, symbol: parsed.providerSymbol, exchangeCode: parsed.exchangeCode || null }], quotePreference: parsed.provider === "manual" || Boolean(stock && stock.currentPrice !== parsed.currentPrice) ? "manual" : "auto",
       investmentType: parsed.investmentType, currentPrice: parsed.currentPrice, targetPrice: parsed.targetPrice,
       averagePrice: stock?.averagePrice ?? 0, quantity: stock?.quantity ?? 0,
       ...(stock?.openingAccountName !== undefined ? { openingAccountName: stock.openingAccountName } : {}), thesisSummary: parsed.thesisSummary,
@@ -83,10 +94,16 @@ export function StockForm({ stock, holdings = [], trades = [], onCancel, onSave 
       nextReviewDate: parsed.nextReviewDate || null, reviewNote: parsed.reviewNote,
       nextEarningsDate: parsed.nextEarningsDate || null,
       tags: parsed.tagsText.split(",").map((tag) => tag.trim()).filter(Boolean),
-      priceUpdatedAt: stock?.priceUpdatedAt ?? null, priceQuotedAt: stock?.priceQuotedAt ?? null,
-      priceSource: stock?.priceSource ?? "manual", priceStatus: stock?.priceStatus ?? "manual",
+      priceUpdatedAt: selectedSearchResult?.previousClose || !stock || stock.currentPrice !== parsed.currentPrice ? now : stock.priceUpdatedAt ?? null, priceQuotedAt: selectedSearchResult?.previousCloseDate ?? (!stock || stock.currentPrice !== parsed.currentPrice ? now : stock.priceQuotedAt ?? null),
+      priceSource: selectedSearchResult?.previousClose ? "eodhd" : !stock || stock.currentPrice !== parsed.currentPrice ? "manual" : stock.priceSource ?? "manual", priceFreshness: selectedSearchResult?.previousClose ? "eod" : !stock || stock.currentPrice !== parsed.currentPrice ? "manual" : stock.priceFreshness ?? "manual", priceDelayMinutes: null, priceStatus: selectedSearchResult?.previousClose ? "online" : !stock || stock.currentPrice !== parsed.currentPrice ? "manual" : stock.priceStatus ?? "manual",
       ledgerInitializedAt: stock ? stock.ledgerInitializedAt ?? null : now,
       createdAt: stock?.createdAt ?? now, updatedAt: now, deletedAt: null };
+    const listingChanged = Boolean(stock && (stock.ticker !== next.ticker || stock.market !== next.market || stock.currency !== next.currency));
+    const providerRefChanged = stock?.providerRefs?.[0]?.provider !== next.providerRefs?.[0]?.provider || stock?.providerRefs?.[0]?.symbol !== next.providerRefs?.[0]?.symbol || stock?.providerRefs?.[0]?.exchangeCode !== next.providerRefs?.[0]?.exchangeCode;
+    if (listingChanged && stock?.providerRefs?.length && !providerRefChanged) {
+      if (!window.confirm("종목 식별 정보가 변경되어 기존 자동 시세 연결을 해제합니다. 계속할까요?")) return;
+      next.providerRefs = []; next.quotePreference = "manual";
+    }
     if (stock && stock.currency !== next.currency && correctionAnalysis?.hasMixedCurrencyConflict) {
       setSaveError(t("이 종목에는 서로 다른 통화의 매매 기록이 있어 통화를 자동으로 변경할 수 없습니다. 매매 기록의 통화를 먼저 확인해 주세요."));
       return;
@@ -97,12 +114,12 @@ export function StockForm({ stock, holdings = [], trades = [], onCancel, onSave 
       return;
     }
     await persist(next);
-  })}><div className="sticky top-0 z-10 flex items-center justify-between border-b bg-[var(--surface)] px-5 py-4"><div><h2 id="stock-form-title" className="text-lg font-semibold">{t(stock ? "종목 수정" : "새 종목 추가")}</h2><p className="mt-1 text-xs text-[var(--muted)]">{t("판단에 필요한 기본 정보를 기록하세요.")}</p></div><button type="button" aria-label={t("닫기")} onClick={onCancel} className="grid size-9 place-items-center rounded-lg hover:bg-[var(--surface-muted)]"><X size={19} /></button></div><div className="grid gap-5 p-5 sm:grid-cols-2">
+  })}><div className="sticky top-0 z-10 flex items-center justify-between border-b bg-[var(--surface)] px-5 py-4"><div><h2 id="stock-form-title" className="text-lg font-semibold">{t(stock ? "종목 수정" : "새 종목 추가")}</h2><p className="mt-1 text-xs text-[var(--muted)]">{t("판단에 필요한 기본 정보를 기록하세요.")}</p></div><button type="button" aria-label={t("닫기")} onClick={onCancel} className="grid size-9 place-items-center rounded-lg hover:bg-[var(--surface-muted)]"><X size={19} /></button></div>{!stock && <div className="border-b p-5"><div className="flex gap-2"><button type="button" onClick={() => setEntryMode("search")} className={`rounded-lg px-3 py-2 text-sm ${entryMode === "search" ? "bg-[var(--accent)] text-white" : "border"}`}>검색해서 추가</button><button type="button" onClick={() => setEntryMode("manual")} className={`rounded-lg px-3 py-2 text-sm ${entryMode === "manual" ? "bg-[var(--accent)] text-white" : "border"}`}>직접 입력</button></div>{entryMode === "search" && <div className="mt-4"><div className="flex gap-2"><input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void search(); } }} className={fieldClass} placeholder="티커, 종목명 또는 ISIN" /><select value={countryFilter} onChange={(event) => setCountryFilter(event.target.value)} className={fieldClass}><option value="">전체 국가</option><option value="US">미국</option><option value="KR">한국</option><option value="JP">일본</option><option value="HK">홍콩</option><option value="CA">캐나다</option></select><button type="button" onClick={() => void search()} className="mt-1 rounded-lg bg-[var(--accent)] px-4 text-sm text-white">검색</button></div>{searchState === "loading" && <p className="mt-3 text-sm text-[var(--muted)]">검색 중...</p>}{(searchState === "empty" || searchState === "error") && <p className="mt-3 text-sm text-[var(--muted)]">검색 결과를 가져오지 못했습니다. <button type="button" className="text-[var(--accent)] underline" onClick={() => setEntryMode("manual")}>직접 입력으로 계속</button></p>}<div className="mt-3 space-y-2">{searchResults.map((result) => <button type="button" key={`${result.providerSymbol}:${result.exchangeCode}`} onClick={() => selectResult(result)} className="block w-full rounded-lg border p-3 text-left"><b>{result.ticker} · {result.name}</b><span className="mt-1 block text-xs text-[var(--muted)]">{result.countryCode ?? "—"} · {result.exchangeCode} · {result.currency} · {result.assetType} · {result.providerSymbol}{result.previousClose ? ` · ${result.previousClose} (${result.previousCloseDate ?? "—"})` : ""}</span></button>)}</div></div>}</div>}<div className={`grid gap-5 p-5 sm:grid-cols-2 ${!stock && entryMode === "search" ? "hidden" : ""}`}>
     <Field label={t("티커")} error={errorText(errors.ticker?.message, "티커는 20자 이내로 입력해 주세요.")}><input autoFocus className={fieldClass} placeholder={t("예: 005930, TSLA")} {...register("ticker")} /></Field>
     <Field label={t("종목명")} error={errorText(errors.name?.message, "종목명은 100자 이내로 입력해 주세요.")}><input className={fieldClass} placeholder={t("예: 삼성전자")} {...register("name")} /></Field>
     <Field label={t("시장")}><select className={fieldClass} value={market} onChange={(e) => syncCurrency(e.target.value)}>{markets.map((v) => <option key={v} value={v}>{t(v)}</option>)}</select></Field>
     <Field label={t("통화")}><select aria-label={t("통화")} className={fieldClass} {...register("currency")}>{currencies.map((currency) => <option key={currency} value={currency}>{currency}</option>)}</select>{ledgerManaged && <span className="mt-1 block text-xs font-normal leading-5 text-[var(--muted)]">{t("통화를 변경하면 기존 매수·매도 기록의 통화와 거래일 환율을 다시 적용합니다.")}</span>}</Field>
-    <><Field label="Twelve Data symbol" error={errors.twelveDataSymbol?.message}><input className={fieldClass} placeholder={market === "한국" ? "005930" : market === "미국" ? "TSLA" : "SHLD"} {...register("twelveDataSymbol")} /></Field><Field label="Twelve Data country" error={errors.twelveDataCountry?.message}><input className={fieldClass} placeholder={market === "한국" ? "KR" : market === "미국" ? "US" : "CA"} {...register("twelveDataCountry")} /></Field><Field label="Twelve Data exchange" error={errors.twelveDataExchange?.message}><input className={fieldClass} placeholder={market === "한국" ? "KRX" : market === "미국" ? "NASDAQ" : "TSX"} {...register("twelveDataExchange")} /></Field><div className="self-end pb-2 text-xs leading-5 text-[var(--muted)]">자동 시세를 사용하려면 세 값을 모두 입력하세요. 표시 시장과 별도로 Twelve Data에서 사용할 정확한 identity입니다.</div></>
+    <Field label="가격 제공자"><select className={fieldClass} {...register("provider")}><option value="manual">수동</option><option value="eodhd">EODHD</option><option value="twelve-data">Twelve Data</option></select></Field><Field label="Provider symbol" error={errors.providerSymbol?.message}><input className={fieldClass} placeholder="SHLD.TO" {...register("providerSymbol")} /></Field><Field label="국가 코드" error={errors.countryCode?.message}><input className={fieldClass} placeholder="CA" {...register("countryCode")} /></Field><Field label="거래소 코드" error={errors.exchangeCode?.message}><input className={fieldClass} placeholder="TO" {...register("exchangeCode")} /></Field>
     <Field label={t("자산 유형")} error={errorText(errors.assetType?.message, "자산 유형을 입력해 주세요.")}><input className={fieldClass} {...register("assetType")} /></Field>
     <Field label={t("섹터")} error={errorText(errors.sector?.message, "섹터는 60자 이내로 입력해 주세요.")}><input className={fieldClass} placeholder={t("예: 반도체")} {...register("sector")} /></Field>
     <Field label={t("상태")}><select className={fieldClass} {...register("status")}>{stockStatuses.map((v) => <option key={v} value={v}>{t(v)}</option>)}</select></Field>

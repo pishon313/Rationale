@@ -175,11 +175,10 @@ function validateStockRecord(stock: Record<string, unknown>, index: number) {
   requireEnum(stock.status, stockStatuses, label, "상태");
   requireEnum(stock.investmentType, investmentTypes, label, "투자 유형");
   requireEnum(stock.currentView, stockViews, label, "현재 판단");
-  if (stock.twelveData !== undefined && stock.twelveData !== null) {
-    if (!isRecord(stock.twelveData)) throw new Error(`${label}의 Twelve Data 식별자가 올바르지 않습니다.`);
-    requireStrings(stock.twelveData, ["symbol", "country", "exchange"], `${label} Twelve Data 식별자`);
-    if (!(stock.twelveData.symbol as string).trim() || !(stock.twelveData.country as string).trim() || !(stock.twelveData.exchange as string).trim()) throw new Error(`${label}의 Twelve Data 식별자가 완전하지 않습니다.`);
-  }
+  if (stock.countryCode !== undefined && stock.countryCode !== null && (typeof stock.countryCode !== "string" || !/^[A-Z]{2}$/.test(stock.countryCode))) throw new Error(`${label}의 국가 코드가 올바르지 않습니다.`);
+  if (stock.providerRefs !== undefined) { if (!Array.isArray(stock.providerRefs)) throw new Error(`${label}의 provider 연결이 올바르지 않습니다.`); for (const ref of stock.providerRefs) { if (!isRecord(ref) || !["eodhd", "twelve-data"].includes(String(ref.provider)) || typeof ref.symbol !== "string" || !ref.symbol.trim()) throw new Error(`${label}의 provider 연결이 올바르지 않습니다.`); } }
+  if (stock.quotePreference !== undefined && !["auto", "manual", "eodhd", "twelve-data"].includes(String(stock.quotePreference))) throw new Error(`${label}의 가격 제공자 설정이 올바르지 않습니다.`);
+  if (stock.priceFreshness !== undefined && !["realtime", "delayed", "eod", "manual", "unknown"].includes(String(stock.priceFreshness))) throw new Error(`${label}의 가격 시점이 올바르지 않습니다.`);
   requireNonNegativeNumbers(stock, ["currentPrice", "averagePrice", "quantity"], label);
   requireNullableNumber(stock.targetPrice, label, "목표 가격");
   requireStringArray(stock.tags, label, "태그");

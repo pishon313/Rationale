@@ -8,7 +8,7 @@ import type { InvestmentAccount } from "./types";
 const now="2026-01-01T00:00:00.000Z";
 const accounts:InvestmentAccount[]=["a","b"].map((id,index)=>({id,name:id.toUpperCase(),institution:"",kind:"brokerage",subtype:"",baseCurrency:"KRW",isDefault:index===0,archivedAt:null,memo:"",createdAt:now,updatedAt:now}));
 const cash=(id:string,accountId:string,type:"입금"|"출금",amount:number,kind?:Trade["cashFlowKind"]):Trade=>({id,stockId:null,stockName:"",planId:null,tradeType:type,tradedAt:now,quantity:0,price:0,amount,currency:"KRW",exchangeRate:1,fee:0,tax:0,accountId,accountName:accountId.toUpperCase(),cashFlowKind:kind,memo:"",emotion:"평온",emotionIntensity:1,confidenceScore:3,ruleComplianceScore:5,createdAt:now,updatedAt:now,deletedAt:null});
-const rates={KRW:1,USD:1400,JPY:9,EUR:1600,CAD:1000};
+const rates={KRW:1,USD:1400,JPY:9,EUR:1600,CAD:1000,HKD:177};
 
 describe("cash flow semantics",()=>{
  it("reconciliation changes cash but creates neither contributions nor profit",()=>{const trades=[cash("r","a","입금",30000,"reconciliation")];const ledger=buildTradingLedger(trades,accounts);const result=buildLongTermPerformance(trades,[],ledger,rates,new Date("2027-01-01"),accounts);expect(ledger.cashBalances[0].balance).toBe(30000);expect(result.netContributionsKrw).toBe(0);expect(result.reconciliationAdjustmentKrw).toBe(30000);expect(result.totalProfitKrw).toBe(0);expect(result.xirrPercent).toBeNull();});

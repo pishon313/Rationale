@@ -368,7 +368,7 @@ function parseCurrency(value: string): Currency {
   const terms: Record<Currency, string[]> = {
     KRW: ["krw", "원", "원화", "ウォン", "韓国ウォン", "won", "koreanwon", "southkoreanwon", "wonsudcoreen", "woncoreen", "wonsudcoreano", "woncoreano"],
     USD: ["usd", "달러", "米ドル", "ドル", "dollar", "dollars", "usdollar", "usdollars", "dollaramericain", "dollarsamericains", "dollarostatunitense", "dollaristatunitensi", "dolarestadounidense", "dolaresestadounidenses"],
-    JPY: ["jpy", "엔", "엔화", "円", "日本円", "yen", "yens", "japaneseyen", "yenjaponais", "yengiapponese", "yenjapones"], EUR: ["eur", "유로", "ユーロ", "euro", "euros"], CAD: ["cad", "canadiandollar", "canadiandollars", "캐나다달러"],
+    JPY: ["jpy", "엔", "엔화", "円", "日本円", "yen", "yens", "japaneseyen", "yenjaponais", "yengiapponese", "yenjapones"], EUR: ["eur", "유로", "ユーロ", "euro", "euros"], CAD: ["cad", "canadiandollar", "canadiandollars", "캐나다달러"], HKD: ["hkd", "hongkongdollar", "hongkongdollars", "홍콩달러"],
   };
   for (const currency of Object.keys(terms) as Currency[]) if (terms[currency].includes(normalized)) return currency;
   throw importFailure("IMPORT_INVALID_CURRENCY", "currency");

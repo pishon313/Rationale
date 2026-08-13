@@ -18,7 +18,8 @@ use tauri_plugin_sql::{DbInstances, DbPool, Migration, MigrationKind};
 use zeroize::{Zeroize, Zeroizing};
 
 const SERVICE: &str = "com.tradejournal.local";
-const QUOTE_PROVIDER: &str = "twelve-data";
+const TWELVE_DATA_PROVIDER: &str = "twelve-data";
+const EODHD_PROVIDER: &str = "eodhd";
 const DATABASE_URL: &str = "sqlite:tradejournal.db";
 const COLLECTION_STATE: &str = "__tradejournal_collection_state__";
 const ENCRYPTED_BACKUP_FORMAT: &str = "rationale-encrypted-backup";
@@ -506,8 +507,8 @@ fn save_api_key(provider: String, value: String) -> Result<(), String> {
     if value.len() > 512 {
         return Err("INVALID_API_KEY".into());
     }
-    let entry = keyring::Entry::new(SERVICE, QUOTE_PROVIDER)
-        .map_err(|_| "KEYCHAIN_UNAVAILABLE".to_string())?;
+    let entry =
+        keyring::Entry::new(SERVICE, &provider).map_err(|_| "KEYCHAIN_UNAVAILABLE".to_string())?;
     if value.is_empty() {
         entry
             .delete_credential()
@@ -526,8 +527,8 @@ fn save_api_key(provider: String, value: String) -> Result<(), String> {
 #[tauri::command]
 fn has_api_key(provider: String) -> Result<bool, String> {
     validate_quote_provider(&provider)?;
-    let entry = keyring::Entry::new(SERVICE, QUOTE_PROVIDER)
-        .map_err(|_| "KEYCHAIN_UNAVAILABLE".to_string())?;
+    let entry =
+        keyring::Entry::new(SERVICE, &provider).map_err(|_| "KEYCHAIN_UNAVAILABLE".to_string())?;
     match entry.get_password() {
         Ok(value) => Ok(!value.is_empty()),
         Err(keyring::Error::NoEntry) => Ok(false),
@@ -536,7 +537,7 @@ fn has_api_key(provider: String) -> Result<bool, String> {
 }
 
 fn validate_quote_provider(provider: &str) -> Result<(), String> {
-    if provider == QUOTE_PROVIDER {
+    if matches!(provider, TWELVE_DATA_PROVIDER | EODHD_PROVIDER) {
         Ok(())
     } else {
         Err("UNSUPPORTED_API_PROVIDER".into())
@@ -558,7 +559,10 @@ fn validate_quote_request(
     if exchange.trim().is_empty() || exchange.len() > 30 || exchange.chars().any(char::is_control) {
         return Err("INVALID_QUOTE_EXCHANGE".into());
     }
-    if !matches!(expected_currency, "KRW" | "USD" | "JPY" | "EUR" | "CAD") {
+    if !matches!(
+        expected_currency,
+        "KRW" | "USD" | "JPY" | "EUR" | "CAD" | "HKD"
+    ) {
         return Err("INVALID_QUOTE_CURRENCY".into());
     }
     Ok(())
@@ -573,6 +577,8 @@ fn normalized_country(value: &str) -> String {
         "CANADA" => "CA".into(),
         "UNITED STATES" | "USA" => "US".into(),
         "SOUTH KOREA" | "KOREA" => "KR".into(),
+        "JAPAN" => "JP".into(),
+        "HONG KONG" => "HK".into(),
         other => other.into(),
     }
 }
@@ -628,6 +634,336 @@ struct QuoteResult {
     source: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstrumentSearchRequest {
+    provider: String,
+    query: String,
+    country_code: Option<String>,
+    limit: Option<usize>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InstrumentSearchResult {
+    provider: String,
+    provider_symbol: String,
+    ticker: String,
+    name: String,
+    country_code: Option<String>,
+    country_name: Option<String>,
+    exchange_code: String,
+    exchange_mic: Option<String>,
+    exchange_name: Option<String>,
+    currency: String,
+    asset_type: String,
+    isin: Option<String>,
+    previous_close: Option<f64>,
+    previous_close_date: Option<String>,
+    is_primary: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MarketQuoteRequest {
+    provider: String,
+    provider_symbol: String,
+    exchange_code: Option<String>,
+    expected_currency: String,
+    expected_country_code: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MarketQuoteResult {
+    provider: String,
+    provider_symbol: String,
+    price: f64,
+    currency: String,
+    exchange_code: Option<String>,
+    country_code: Option<String>,
+    quoted_at: String,
+    freshness: String,
+    delay_minutes: Option<u32>,
+    is_market_open: Option<bool>,
+}
+
+fn provider_key(provider: &str) -> Result<String, String> {
+    validate_quote_provider(provider)?;
+    let entry =
+        keyring::Entry::new(SERVICE, provider).map_err(|_| "KEYCHAIN_UNAVAILABLE".to_string())?;
+    entry.get_password().map_err(|error| match error {
+        keyring::Error::NoEntry => "API_KEY_MISSING".into(),
+        _ => "KEYCHAIN_READ_FAILED".into(),
+    })
+}
+
+fn safe_provider_error(status: reqwest::StatusCode, body: &serde_json::Value) -> String {
+    if status.as_u16() == 429 {
+        return "RATE_LIMITED".into();
+    }
+    if status.as_u16() == 401 || status.as_u16() == 403 {
+        return "PROVIDER_UNAUTHORIZED".into();
+    }
+    let message = body
+        .get("message")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if message.contains("limit") {
+        "RATE_LIMITED".into()
+    } else if message.contains("not found") || message.contains("symbol") {
+        "SYMBOL_NOT_FOUND".into()
+    } else if message.contains("plan") || message.contains("subscription") {
+        "PROVIDER_ENTITLEMENT_REQUIRED".into()
+    } else {
+        "PROVIDER_ERROR".into()
+    }
+}
+
+#[tauri::command]
+async fn search_instruments(
+    request: InstrumentSearchRequest,
+) -> Result<Vec<InstrumentSearchResult>, String> {
+    if request.provider != EODHD_PROVIDER
+        || request.query.trim().is_empty()
+        || request.query.len() > 100
+        || request.query.chars().any(char::is_control)
+    {
+        return Err("INVALID_MARKET_DATA_REQUEST".into());
+    }
+    let limit = request.limit.unwrap_or(20).clamp(1, 25);
+    let api_key = provider_key(EODHD_PROVIDER)?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(12))
+        .build()
+        .map_err(|_| "NETWORK_ERROR".to_string())?;
+    let mut url = reqwest::Url::parse("https://eodhd.com/api/search/")
+        .map_err(|_| "INVALID_MARKET_DATA_REQUEST".to_string())?;
+    url.path_segments_mut()
+        .map_err(|_| "INVALID_MARKET_DATA_REQUEST".to_string())?
+        .push(request.query.trim());
+    url.query_pairs_mut()
+        .append_pair("api_token", &api_key)
+        .append_pair("fmt", "json")
+        .append_pair("limit", &limit.to_string());
+    let response = client.get(url).send().await.map_err(|error| {
+        if error.is_timeout() {
+            "NETWORK_TIMEOUT".to_string()
+        } else {
+            "NETWORK_ERROR".to_string()
+        }
+    })?;
+    let status = response.status();
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|_| "INVALID_RESPONSE".to_string())?;
+    if !status.is_success() {
+        return Err(safe_provider_error(status, &body));
+    }
+    let rows = body.as_array().ok_or("INVALID_RESPONSE")?;
+    let country_filter = request.country_code.map(|value| normalized_country(&value));
+    Ok(rows
+        .iter()
+        .filter_map(|row| {
+            let code = row.get("Code")?.as_str()?.trim();
+            let exchange = row.get("Exchange")?.as_str()?.trim();
+            let currency = row.get("Currency")?.as_str()?.trim();
+            if code.is_empty() || exchange.is_empty() || currency.is_empty() {
+                return None;
+            }
+            let country_name = row
+                .get("Country")
+                .and_then(|value| value.as_str())
+                .map(str::to_string);
+            let country_code = row
+                .get("CountryCode")
+                .and_then(|value| value.as_str())
+                .map(normalized_country)
+                .or_else(|| country_name.as_deref().map(normalized_country));
+            if country_filter
+                .as_ref()
+                .is_some_and(|filter| country_code.as_ref() != Some(filter))
+            {
+                return None;
+            }
+            let price = row
+                .get("previousClose")
+                .and_then(|value| value.as_f64())
+                .filter(|value| value.is_finite() && *value > 0.0);
+            Some(InstrumentSearchResult {
+                provider: EODHD_PROVIDER.into(),
+                provider_symbol: format!("{code}.{exchange}"),
+                ticker: code.into(),
+                name: row
+                    .get("Name")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or(code)
+                    .into(),
+                country_code,
+                country_name,
+                exchange_code: exchange.into(),
+                exchange_mic: row
+                    .get("ExchangeMIC")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string),
+                exchange_name: row
+                    .get("ExchangeName")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string),
+                currency: currency.into(),
+                asset_type: row
+                    .get("Type")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("Stock")
+                    .into(),
+                isin: row
+                    .get("ISIN")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string),
+                previous_close: price,
+                previous_close_date: row
+                    .get("previousCloseDate")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string),
+                is_primary: row.get("isPrimary").and_then(|value| value.as_bool()),
+            })
+        })
+        .take(limit)
+        .collect())
+}
+
+#[tauri::command]
+async fn fetch_market_quote(request: MarketQuoteRequest) -> Result<MarketQuoteResult, String> {
+    validate_quote_provider(&request.provider)?;
+    if request.provider_symbol.trim().is_empty()
+        || request.provider_symbol.len() > 40
+        || request.provider_symbol.chars().any(char::is_control)
+    {
+        return Err("INVALID_MARKET_DATA_REQUEST".into());
+    }
+    let api_key = provider_key(&request.provider)?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(12))
+        .build()
+        .map_err(|_| "NETWORK_ERROR".to_string())?;
+    let (url, freshness) = if request.provider == EODHD_PROVIDER {
+        let mut url = reqwest::Url::parse("https://eodhd.com/api/eod/")
+            .map_err(|_| "INVALID_MARKET_DATA_REQUEST".to_string())?;
+        url.path_segments_mut()
+            .map_err(|_| "INVALID_MARKET_DATA_REQUEST".to_string())?
+            .push(request.provider_symbol.trim());
+        url.query_pairs_mut()
+            .append_pair("api_token", &api_key)
+            .append_pair("fmt", "json")
+            .append_pair("period", "d")
+            .append_pair("order", "d")
+            .append_pair("limit", "1");
+        (url, "eod")
+    } else {
+        let mut url = reqwest::Url::parse("https://api.twelvedata.com/quote").unwrap();
+        {
+            let mut pairs = url.query_pairs_mut();
+            pairs
+                .append_pair("symbol", request.provider_symbol.trim())
+                .append_pair("apikey", &api_key);
+            if let Some(country) = &request.expected_country_code {
+                pairs.append_pair("country", country);
+            }
+            if let Some(exchange) = &request.exchange_code {
+                pairs.append_pair("exchange", exchange);
+            }
+        }
+        (url, "unknown")
+    };
+    let response = client.get(url).send().await.map_err(|error| {
+        if error.is_timeout() {
+            "NETWORK_TIMEOUT".to_string()
+        } else {
+            "NETWORK_ERROR".to_string()
+        }
+    })?;
+    let status = response.status();
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|_| "INVALID_RESPONSE".to_string())?;
+    if !status.is_success() || body.get("status").and_then(|value| value.as_str()) == Some("error")
+    {
+        return Err(safe_provider_error(status, &body));
+    }
+    let row = if request.provider == EODHD_PROVIDER {
+        body.as_array()
+            .and_then(|rows| rows.first())
+            .ok_or("PRICE_MISSING")?
+    } else {
+        &body
+    };
+    let price = row
+        .get("close")
+        .or_else(|| row.get("price"))
+        .and_then(|value| value.as_f64().or_else(|| value.as_str()?.parse().ok()))
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .ok_or("PRICE_MISSING")?;
+    let currency = if request.provider == EODHD_PROVIDER {
+        request.expected_currency.clone()
+    } else {
+        row.get("currency")
+            .and_then(|value| value.as_str())
+            .ok_or("INVALID_RESPONSE")?
+            .into()
+    };
+    let exchange = if request.provider == EODHD_PROVIDER {
+        request.exchange_code.clone()
+    } else {
+        row.get("exchange")
+            .and_then(|value| value.as_str())
+            .map(str::to_string)
+    };
+    let country = if request.provider == EODHD_PROVIDER {
+        request.expected_country_code.clone()
+    } else {
+        row.get("country")
+            .and_then(|value| value.as_str())
+            .map(normalized_country)
+    };
+    if normalized(&currency) != normalized(&request.expected_currency)
+        || request.exchange_code.as_ref().is_some_and(|expected| {
+            exchange
+                .as_ref()
+                .is_none_or(|actual| normalized(actual) != normalized(expected))
+        })
+        || request
+            .expected_country_code
+            .as_ref()
+            .is_some_and(|expected| {
+                country
+                    .as_ref()
+                    .is_none_or(|actual| normalized_country(actual) != normalized_country(expected))
+            })
+    {
+        return Err("IDENTITY_MISMATCH".into());
+    }
+    Ok(MarketQuoteResult {
+        provider: request.provider,
+        provider_symbol: request.provider_symbol,
+        price,
+        currency,
+        exchange_code: exchange,
+        country_code: country,
+        quoted_at: row
+            .get("date")
+            .or_else(|| row.get("datetime"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .into(),
+        freshness: freshness.into(),
+        delay_minutes: None,
+        is_market_open: row.get("is_market_open").and_then(|value| value.as_bool()),
+    })
+}
+
 #[tauri::command]
 async fn fetch_quote(
     symbol: String,
@@ -636,7 +972,7 @@ async fn fetch_quote(
     expected_currency: String,
 ) -> Result<QuoteResult, String> {
     validate_quote_request(&symbol, &country, &exchange, &expected_currency)?;
-    let entry = keyring::Entry::new(SERVICE, QUOTE_PROVIDER)
+    let entry = keyring::Entry::new(SERVICE, TWELVE_DATA_PROVIDER)
         .map_err(|_| "KEYCHAIN_UNAVAILABLE".to_string())?;
     let api_key = entry.get_password().map_err(|e| match e {
         keyring::Error::NoEntry => "API_KEY_MISSING".to_string(),
@@ -903,6 +1239,8 @@ pub fn run() {
             save_api_key,
             has_api_key,
             fetch_quote,
+            search_instruments,
+            fetch_market_quote,
             save_collections_atomically,
             get_sync_outbox,
             get_sync_runtime_status,
@@ -1011,7 +1349,8 @@ mod encrypted_backup_tests {
             validate_quote_request("TSLA", "", "NASDAQ", "USD"),
             Err("INVALID_QUOTE_COUNTRY".into())
         );
-        assert!(validate_quote_provider(QUOTE_PROVIDER).is_ok());
+        assert!(validate_quote_provider(TWELVE_DATA_PROVIDER).is_ok());
+        assert!(validate_quote_provider(EODHD_PROVIDER).is_ok());
         assert!(validate_quote_request("005930", "KR", "KRX", "KRW").is_ok());
         assert!(validate_quote_request("BRK.B", "US", "NYSE", "USD").is_ok());
         assert!(validate_quote_request("SHLD", "CA", "TSX", "CAD").is_ok());

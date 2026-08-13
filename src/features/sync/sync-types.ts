@@ -11,7 +11,7 @@ export type SyncWriteSource = "localUser" | "remoteSync" | "backupRestore" | "sa
 export type SyncStatus = "disabled" | "checkingAccount" | "signedOut" | "ready" | "syncing" | "offline" | "needsReconciliation" | "error";
 
 export type AccountSyncPayloadV1 = Omit<InvestmentAccount, "isDefault">;
-export type StockSyncPayloadV1 = Omit<Stock, "quantity" | "averagePrice" | "currentPrice" | "priceUpdatedAt" | "priceQuotedAt" | "priceSource" | "priceStatus" | "openingAccountName">;
+export type StockSyncPayloadV1 = Omit<Stock, "quantity" | "averagePrice" | "currentPrice" | "priceUpdatedAt" | "priceQuotedAt" | "priceSource" | "priceFreshness" | "priceDelayMinutes" | "priceStatus" | "openingAccountName">;
 export type TradeSyncPayloadV1 = Trade;
 export type SyncPayloadV1 = AccountSyncPayloadV1 | StockSyncPayloadV1 | TradeSyncPayloadV1;
 export type SyncEnvelopeV1<T extends SyncPayloadV1 = SyncPayloadV1> = {

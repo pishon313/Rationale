@@ -32,11 +32,15 @@ export function useLocalCollection<T extends LocalRecord>(name: string, fallback
     latestItems.current = next;
     setItems(next);
   }, []);
+  const updateManyAsync = useCallback(async (updates: ReadonlyMap<string, T>) => {
+    const next = latestItems.current.map((item) => updates.get(item.id) ?? item);
+    await saveCollection(name, next); latestItems.current = next; setItems(next);
+  }, [name]);
   return {
     items: items.filter((item) => !item.deletedAt), allItems: items, ready, loadError,
     add: (item: T) => commit((current) => [item, ...current]),
     update: (item: T) => commit((current) => current.map((value) => value.id === item.id ? item : value)),
     remove: (id: string) => commit((current) => current.map((value) => value.id === id ? { ...value, deletedAt: new Date().toISOString(), updatedAt: new Date().toISOString() } : value)),
-    replaceAsync, applyCommitted,
+    replaceAsync, applyCommitted, updateManyAsync,
   };
 }

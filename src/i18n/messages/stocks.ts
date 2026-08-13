@@ -2,6 +2,7 @@ import type { MessageCatalog } from "../types";
 
 export const stockMessages: MessageCatalog = {
   ja: {
+    "홍콩": "香港", "캐나다": "カナダ",
     "종목 수정": "銘柄を編集",
     "새 종목 추가": "新しい銘柄を追加",
     "판단에 필요한 기본 정보를 기록하세요.": "投資判断に必要な基本情報を記録します。",
@@ -146,6 +147,7 @@ export const stockMessages: MessageCatalog = {
     "활성화": "有効化",
   },
   en: {
+    "홍콩": "Hong Kong", "캐나다": "Canada",
     "종목 수정": "Edit stock",
     "새 종목 추가": "Add new stock",
     "판단에 필요한 기본 정보를 기록하세요.": "Record the essential information for your investment decision.",
@@ -290,6 +292,7 @@ export const stockMessages: MessageCatalog = {
     "활성화": "Active",
   },
   fr: {
+    "홍콩": "Hong Kong", "캐나다": "Canada",
     "종목 수정": "Modifier le titre",
     "새 종목 추가": "Ajouter un titre",
     "판단에 필요한 기본 정보를 기록하세요.": "Renseignez les informations essentielles à votre décision d’investissement.",
@@ -434,6 +437,7 @@ export const stockMessages: MessageCatalog = {
     "활성화": "Active",
   },
   it: {
+    "홍콩": "Hong Kong", "캐나다": "Canada",
     "종목 수정": "Modifica titolo",
     "새 종목 추가": "Aggiungi nuovo titolo",
     "판단에 필요한 기본 정보를 기록하세요.": "Registra le informazioni essenziali per la decisione d’investimento.",
@@ -578,6 +582,7 @@ export const stockMessages: MessageCatalog = {
     "활성화": "Attiva",
   },
   es: {
+    "홍콩": "Hong Kong", "캐나다": "Canadá",
     "종목 수정": "Editar valor",
     "새 종목 추가": "Añadir nuevo valor",
     "판단에 필요한 기본 정보를 기록하세요.": "Registra la información esencial para tu decisión de inversión.",
