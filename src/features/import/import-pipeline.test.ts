@@ -3,7 +3,7 @@ import type { InvestmentAccount } from "@/features/accounts/types";
 import type { Stock } from "@/features/stocks/types";
 import type { Trade } from "@/features/trades/types";
 import { buildTabularColumns, detectImportMapping, exactProfileToAutoApply, hasDuplicateMappingProfileName, headerSignature, profileMatch, updatedMappingProfile, validateImportMapping } from "./column-mapping";
-import { adaptTabularRow, buildImportPreview, parseExecutionDateTime, parseOptionalNumber, preflightImport } from "./import-pipeline";
+import { adaptTabularRow, buildImportMutationPlan, buildImportPreview, parseExecutionDateTime, parseOptionalNumber, preflightImport } from "./import-pipeline";
 import type { ImportContext, ImportMappingProfile, ParsedTabularFile } from "./import-types";
 import { parseDelimitedImport } from "./tabular-parser";
 
@@ -105,6 +105,109 @@ describe("Import Pipeline v1", () => {
     expect(changedProvider.candidates[0].trade?.origin?.sourceKey).toBe(sourceKey);
   });
 
+  it("separates per-row candidate identity from trusted proposed Trade identity", async () => {
+    const rows = ["2026-08-12T10:00:01,005930,매수,1,70000,0,0,same-id,", "2026-08-12T10:00:01,005930,매수,1,70000,0,0,same-id,"];
+    const parsed = table(rows);
+    const context = { stocks, accounts, existingTrades: [], targetAccountId: "a1", provider: "broker", importedAt: now, importBatchId: "batch-stable" };
+    const first = await buildImportPreview(parsed, detectImportMapping(parsed.columns).mapping, context);
+    const rebuilt = await buildImportPreview(parsed, detectImportMapping(parsed.columns).mapping, context);
+    expect(new Set(first.candidates.map((candidate) => candidate.id)).size).toBe(first.candidates.length);
+    expect(first.candidates[0].id).not.toBe(first.candidates[1].id);
+    expect(first.candidates.map((candidate) => candidate.id)).toEqual(rebuilt.candidates.map((candidate) => candidate.id));
+    expect(first.candidates[0].trade?.id).toBe(first.candidates[1].trade?.id);
+    expect(first.candidates[0]).toMatchObject({ status: "ready", action: "insert", selectedByDefault: true });
+    expect(first.candidates[1]).toMatchObject({ status: "exact_duplicate", action: "none", selectedByDefault: false });
+    expect(first.candidates[1].issues).toContainEqual(expect.objectContaining({ code: "IMPORT_BATCH_EXACT_DUPLICATE", details: { duplicateOfRow: 2 } }));
+    expect(first.summary).toMatchObject({ ready: 1, exact_duplicate: 1 });
+    expect(first.candidates[0].trade?.origin).not.toHaveProperty("candidateId");
+    const selected = new Set(first.candidates.map((candidate) => candidate.id));
+    expect(preflightImport(first, selected, { existingTrades: [], accounts })).toMatchObject({ ok: true, plan: { insertedTrades: [expect.objectContaining({ id: first.candidates[0].trade?.id })] } });
+  });
+
+  it("keeps candidate IDs unique for rejected rows as well as parsed rows", async () => {
+    const result = await preview([
+      "2026-08-12T10:00:01,005930,매수,invalid,70000,0,0,rejected-a,",
+      "2026-08-12T10:00:01,005930,매수,invalid,70000,0,0,rejected-b,",
+      "2026-08-12T10:00:01,005930,매수,1,70000,0,0,valid-c,",
+    ]);
+    expect(new Set(result.candidates.map((candidate) => candidate.id)).size).toBe(result.candidates.length);
+    expect(result.candidates.every((candidate) => !candidate.trade?.origin || !candidate.trade.origin.sourceKey?.includes(candidate.id))).toBe(true);
+  });
+
+  it.each([
+    ["quantity", "2026-08-12T10:00:01,005930,매수,2,70000,0,0,conflict-id,"],
+    ["price", "2026-08-12T10:00:01,005930,매수,1,71000,0,0,conflict-id,"],
+    ["fee", "2026-08-12T10:00:01,005930,매수,1,70000,1,0,conflict-id,"],
+    ["tax", "2026-08-12T10:00:01,005930,매수,1,70000,0,1,conflict-id,"],
+    ["timestamp", "2026-08-12T10:00:02,005930,매수,1,70000,0,0,conflict-id,"],
+    ["side", "2026-08-12T10:00:01,005930,매도,1,70000,0,0,conflict-id,"],
+  ])("blocks every trusted group member when %s differs", async (_field, changed) => {
+    const result = await preview(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,conflict-id,", changed]);
+    expect(result.candidates).toHaveLength(2);
+    expect(result.candidates.every((candidate) => candidate.status === "source_conflict" && candidate.action === "none" && !candidate.selectedByDefault)).toBe(true);
+    expect(result.summary).toMatchObject({ ready: 0, source_conflict: 2 });
+    expect(result.candidates.every((candidate) => candidate.issues.some((issue) => issue.code === "IMPORT_BATCH_SOURCE_IDENTITY_CONFLICT"))).toBe(true);
+    expect(preflightImport(result, new Set(result.candidates.map((candidate) => candidate.id)), { existingTrades: [], accounts }).ok).toBe(false);
+  });
+
+  it("blocks every trusted group member when the resolved Stock differs", async () => {
+    const other = { ...stocks[0], id: "s2", ticker: "000660", name: "SK하이닉스" };
+    const parsed = table(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,stock-conflict,", "2026-08-12T10:00:01,000660,매수,1,70000,0,0,stock-conflict,"]);
+    const result = await buildImportPreview(parsed, detectImportMapping(parsed.columns).mapping, { stocks: [...stocks, other], accounts, existingTrades: [], targetAccountId: "a1", importedAt: now });
+    expect(result.candidates.every((candidate) => candidate.status === "source_conflict" && candidate.action === "none")).toBe(true);
+  });
+
+  it("blocks all rows when a later third row conflicts, independent of first-row order", async () => {
+    const same = "2026-08-12T10:00:01,005930,매수,1,70000,0,0,three-id,";
+    const changed = "2026-08-12T10:00:01,005930,매수,2,70000,0,0,three-id,";
+    for (const rows of [[same, same, changed], [changed, same, same]]) {
+      const result = await preview(rows);
+      expect(result.candidates.every((candidate) => candidate.status === "source_conflict" && candidate.action === "none")).toBe(true);
+      expect(result.summary.source_conflict).toBe(3);
+    }
+  });
+
+  it("blocks a valid trusted row when another identity-probed row is invalid", async () => {
+    const result = await preview(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,invalid-peer,", "2026-08-12T10:00:01,005930,매수,invalid,70000,0,0,invalid-peer,"]);
+    expect(result.candidates[0]).toMatchObject({ status: "source_conflict", action: "none" });
+    expect(result.candidates[1]).toMatchObject({ status: "rejected", action: "none" });
+    expect(result.candidates.every((candidate) => candidate.issues.some((issue) => issue.code === "IMPORT_BATCH_SOURCE_IDENTITY_CONFLICT"))).toBe(true);
+  });
+
+  it("rejects manually selected actionable candidates with duplicate proposed Trade IDs", async () => {
+    const result = await preview(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,guard-id,"]);
+    const first = result.candidates[0];
+    const duplicate = { ...first, id: "candidate:manual-duplicate" };
+    expect(buildImportMutationPlan([first, duplicate], [])).toMatchObject({ ok: false, issue: { code: "IMPORT_PREVIEW_STALE", row: duplicate.row } });
+  });
+
+  it("keeps one representative action for identical trusted rows against active, deleted, and manual records", async () => {
+    const row = "2026-08-12T10:00:01,005930,매수,1,70000,0,0,existing-group,";
+    const initial = await preview([row]);
+    const imported = initial.candidates[0].trade as Trade;
+    const active = await preview([row, row], [imported]);
+    expect(active.candidates.map((candidate) => [candidate.status, candidate.action])).toEqual([["exact_duplicate", "none"], ["exact_duplicate", "none"]]);
+
+    const deleted = { ...imported, deletedAt: "2026-08-13T00:00:00Z" };
+    const restore = await preview([row, row], [deleted]);
+    expect(restore.candidates.map((candidate) => [candidate.status, candidate.action])).toEqual([["previously_deleted", "restore"], ["exact_duplicate", "none"]]);
+    const restored = preflightImport(restore, new Set(restore.candidates.map((candidate) => candidate.id)), { existingTrades: [deleted], accounts });
+    expect(restored).toMatchObject({ ok: true, plan: { restoredTradeIds: [deleted.id] } });
+
+    const manual = { ...imported, id: "manual-group", origin: { kind: "manual" as const }, journalStatus: "recorded" as const };
+    const possible = await preview([row, row], [manual]);
+    expect(possible.candidates.map((candidate) => [candidate.status, candidate.action, candidate.selectedByDefault])).toEqual([["possible_duplicate", "insert", false], ["exact_duplicate", "none", false]]);
+  });
+
+  it("keeps trusted groups account-scoped and never falls back after mapped account failure", async () => {
+    const secondAccount = { ...accounts[0], id: "a2", name: "두 번째 계좌", isDefault: false };
+    const result = await previewCsv("거래일시,종목코드,구분,수량,가격,계좌,체결 ID\n2026-08-12T10:00:01,005930,매수,1,70000,기본 계좌,account-id\n2026-08-12T10:00:01,005930,매수,2,70000,두 번째 계좌,account-id", { accounts: [...accounts, secondAccount] });
+    expect(result.candidates.every((candidate) => candidate.status === "ready")).toBe(true);
+    const unresolved = await previewCsv("거래일시,종목코드,구분,수량,가격,계좌,체결 ID\n2026-08-12T10:00:01,005930,매수,1,70000,없는 계좌,account-id\n2026-08-12T10:00:01,005930,매수,1,70000,기본 계좌,account-id");
+    expect(unresolved.candidates.map((candidate) => candidate.status)).toEqual(["rejected", "ready"]);
+    expect(unresolved.candidates[0].issues).toContainEqual(expect.objectContaining({ code: "IMPORT_ACCOUNT_NOT_FOUND" }));
+  });
+
   it("detects one legacy v1 execution across provider label changes", async () => {
     const first = await preview(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,exec-v1,"]);
     const legacy = { ...(first.candidates[0].trade as Trade), origin: { ...(first.candidates[0].trade as Trade).origin!, sourceKey: "file:v1:legacy-provider-dependent" } };
@@ -179,7 +282,8 @@ describe("Import Pipeline v1", () => {
   it("blocks atomic commit when selected candidates violate the ledger", async () => {
     const result = await preview(["2026-08-12T10:00:01,005930,매도,1,70000,0,0,,"]);
     const selected = new Set(result.candidates.map((candidate) => candidate.id));
-    expect(preflightImport(result, selected, { existingTrades: [], accounts })).toMatchObject({ ok: false, issues: [{ code: "IMPORT_LEDGER_CONFLICT" }] });
+    expect(result.candidates[0].id).not.toBe(result.candidates[0].trade?.id);
+    expect(preflightImport(result, selected, { existingTrades: [], accounts })).toMatchObject({ ok: false, issues: [{ code: "IMPORT_LEDGER_CONFLICT", row: 2, candidateId: result.candidates[0].id }] });
   });
 
   it("rejects timezone-bearing generic file values instead of stripping the suffix", async () => {

@@ -28,6 +28,9 @@ type ExistingTradeIndexes = {
   activeIntraday: Set<string>;
 };
 
+type TrustedBatchIdentity = { key: string; accountId: string; externalExecutionId: string };
+type ProvisionalCandidate = { candidate: ImportCandidate; sourceSequence: number; trustedIdentity: TrustedBatchIdentity | null; economicKey: string | null };
+
 export async function buildImportPreview(parsed: ParsedTabularFile, mapping: ImportMapping, context: ImportContext): Promise<ImportPreview> {
   const mappingIssues = validateImportMapping(mapping, parsed.columns);
   if (mappingIssues.some((issue) => issue.severity === "error")) return emptyPreview(mappingIssues);
@@ -36,12 +39,13 @@ export async function buildImportPreview(parsed: ParsedTabularFile, mapping: Imp
   const provider = context.provider?.trim() || null;
   const indexes = buildResolutionIndexes(context.stocks, context.accounts);
   const occurrences = new Map<string, number>();
-  const pendingBySource = new Map<string, { resolved: ResolvedExecution; id: string }[]>();
   const existing = buildExistingTradeIndexes(context.existingTrades);
-  const candidates: ImportCandidate[] = [];
+  const provisional: ProvisionalCandidate[] = [];
 
   for (const [index, row] of parsed.rows.entries()) {
     const rowNumber = index + 2;
+    const candidateId = await buildCandidateId(importBatchId, index, rowNumber);
+    const trustedIdentity = probeTrustedIdentity(parsed, row, mapping, context.targetAccountId, indexes);
     try {
       const canonical = adaptTabularRow(parsed, row, rowNumber, index, mapping, importBatchId, provider);
       const resolved = resolveExecution(canonical, context.targetAccountId, indexes);
@@ -51,8 +55,8 @@ export async function buildImportPreview(parsed: ParsedTabularFile, mapping: Imp
       const sourceKey = canonical.externalExecutionId
         ? `file:v2:${await sha256(canonicalSerialize([canonical.adapter, resolved.account.id, canonical.externalExecutionId]))}`
         : `file:v2:${await sha256(canonicalSerialize([identity, occurrence]))}`;
-      const id = `import:${await sha256(sourceKey)}`;
-      const trade = resolvedExecutionToTrade(resolved, sourceKey, id, importedAt);
+      const tradeId = `import:${await sha256(sourceKey)}`;
+      const trade = resolvedExecutionToTrade(resolved, sourceKey, tradeId, importedAt);
       const legacySourceKey = canonical.externalExecutionId
         ? `file:v1:${await sha256(`${canonical.provider ?? "generic-file"}|${resolved.account.id}|${canonical.externalExecutionId}`)}`
         : `file:v1:${await sha256(`${identity}|${occurrence}`)}`;
@@ -61,47 +65,47 @@ export async function buildImportPreview(parsed: ParsedTabularFile, mapping: Imp
         ...(existing.bySourceKey.get(legacySourceKey) ?? []),
         ...(canonical.externalExecutionId ? existing.byExternalExecution.get(externalExecutionKey(resolved.account.id, canonical.externalExecutionId)) ?? [] : []),
       ]);
-      const pendingSource = pendingBySource.get(sourceKey) ?? [];
       const matchedTradeIds: string[] = [];
       let status: ImportCandidateStatus = "ready";
       let action: ImportCandidateAction = "insert";
       const issues: ImportIssue[] = [];
 
-      if (sourceMatches.length > 1 || pendingSource.length > 1) {
+      if (sourceMatches.length > 1) {
         status = "source_conflict"; action = "none";
-        matchedTradeIds.push(...sourceMatches.map((item) => item.id), ...pendingSource.map((item) => item.id));
-        issues.push(candidateIssue("IMPORT_SOURCE_IDENTITY_AMBIGUOUS", "error", rowNumber, id));
-      } else if (sourceMatches.length === 1 || pendingSource.length === 1) {
+        matchedTradeIds.push(...sourceMatches.map((item) => item.id));
+        issues.push(candidateIssue("IMPORT_SOURCE_IDENTITY_AMBIGUOUS", "error", rowNumber, candidateId));
+      } else if (sourceMatches.length === 1) {
         const sameSource = sourceMatches[0];
-        const pending = pendingSource[0];
-        const sameEconomics = sameSource ? economicTradeKey(sameSource) === economicResolvedKey(resolved) : economicResolvedKey(pending.resolved) === economicResolvedKey(resolved);
+        const sameEconomics = economicTradeKey(sameSource) === economicResolvedKey(resolved);
         if (!sameEconomics) { status = "source_conflict"; action = "none"; }
         else if (sameSource?.deletedAt) { status = "previously_deleted"; action = "restore"; }
         else { status = "exact_duplicate"; action = "none"; }
-        if (sameSource) matchedTradeIds.push(sameSource.id);
-        if (pending) matchedTradeIds.push(pending.id);
+        matchedTradeIds.push(sameSource.id);
         const code = status === "previously_deleted" ? "IMPORT_PREVIOUSLY_DELETED" : status === "exact_duplicate" ? "IMPORT_EXACT_DUPLICATE" : "IMPORT_SOURCE_CONFLICT";
-        issues.push(candidateIssue(code, status === "source_conflict" ? "error" : status === "previously_deleted" ? "warning" : "info", rowNumber, id));
+        issues.push(candidateIssue(code, status === "source_conflict" ? "error" : status === "previously_deleted" ? "warning" : "info", rowNumber, candidateId));
       } else {
         const possibleMatches = existing.possibleActive.get(possibleResolvedKey(resolved)) ?? [];
         if (possibleMatches.length || (!canonical.externalExecutionId && occurrence > 0)) {
           status = "possible_duplicate"; action = "insert";
           matchedTradeIds.push(...possibleMatches.map((trade) => trade.id));
-          issues.push(candidateIssue(occurrence > 0 ? "IMPORT_AMBIGUOUS_IDENTICAL_ROW" : "IMPORT_POSSIBLE_DUPLICATE", "warning", rowNumber, id));
+          issues.push(candidateIssue(occurrence > 0 ? "IMPORT_AMBIGUOUS_IDENTICAL_ROW" : "IMPORT_POSSIBLE_DUPLICATE", "warning", rowNumber, candidateId));
         }
       }
-      addIndex(pendingBySource, sourceKey, { resolved, id });
-      if (canonical.timePrecision === "date") issues.push(candidateIssue("IMPORT_TIME_MISSING", "warning", rowNumber, id));
-      if (canonical.currency === null) issues.push(candidateIssue("IMPORT_CURRENCY_FALLBACK", "info", rowNumber, id));
-      if (canonical.exchangeRate === null && resolved.currency !== "KRW") issues.push(candidateIssue("IMPORT_EXCHANGE_RATE_FALLBACK", "warning", rowNumber, id));
-      candidates.push({ id, row: rowNumber, status, action, selectedByDefault: status === "ready", execution: canonical, trade, matchedTradeIds, issues });
+      if (canonical.timePrecision === "date") issues.push(candidateIssue("IMPORT_TIME_MISSING", "warning", rowNumber, candidateId));
+      if (canonical.currency === null) issues.push(candidateIssue("IMPORT_CURRENCY_FALLBACK", "info", rowNumber, candidateId));
+      if (canonical.exchangeRate === null && resolved.currency !== "KRW") issues.push(candidateIssue("IMPORT_EXCHANGE_RATE_FALLBACK", "warning", rowNumber, candidateId));
+      provisional.push({ candidate: { id: candidateId, row: rowNumber, status, action, selectedByDefault: false, execution: canonical, trade, matchedTradeIds, issues }, sourceSequence: index, trustedIdentity, economicKey: economicResolvedKey(resolved) });
     } catch (error) {
       const importError = toImportError(error, rowNumber);
-      candidates.push({ id: `row:${rowNumber}`, row: rowNumber, status: "rejected", action: "none", selectedByDefault: false, matchedTradeIds: [], issues: [importError] });
+      importError.candidateId = candidateId;
+      provisional.push({ candidate: { id: candidateId, row: rowNumber, status: "rejected", action: "none", selectedByDefault: false, matchedTradeIds: [], issues: [importError] }, sourceSequence: index, trustedIdentity, economicKey: null });
     }
   }
 
+  reconcileTrustedGroups(provisional);
+  const candidates = provisional.map((item) => item.candidate);
   blockAmbiguousDateOnlyOrdering(candidates, existing.activeIntraday);
+  for (const candidate of candidates) candidate.selectedByDefault = candidate.status === "ready" && candidate.action === "insert";
   const issues = [...mappingIssues, ...candidates.flatMap((candidate) => candidate.issues)];
   return { candidates, issues, requiresTimezoneConfirmation: false, summary: summarize(candidates) };
 }
@@ -113,7 +117,7 @@ export function preflightImport(preview: ImportPreview, selectedIds: ReadonlySet
   if (!planResult.ok) return { ok: false as const, plan: emptyPlan(context.existingTrades), issues: [planResult.issue] };
   const validation = validateTradeMutation(context.existingTrades, planResult.plan.nextTrades, context.accounts);
   if (!validation.ok) {
-    const candidate = selected.find((item) => validation.error.includes(item.id));
+    const candidate = selected.find((item) => item.trade && validation.error.includes(item.trade.id));
     return { ok: false as const, plan: planResult.plan, issues: [{ code: "IMPORT_LEDGER_CONFLICT", severity: "error", ...(candidate ? { row: candidate.row, candidateId: candidate.id } : {}), details: { reason: validation.error } } satisfies ImportIssue] };
   }
   return { ok: true as const, plan: planResult.plan, issues: [] as ImportIssue[] };
@@ -130,9 +134,12 @@ export function buildImportMutationPlan(selected: ImportCandidate[], existingTra
   const restoredTradeIds: string[] = [];
   const restored = new Map<string, Trade>();
   const selectedIds = new Set<string>();
+  const selectedTradeIds = new Set<string>();
   for (const candidate of selected) {
     if (!candidate.trade || candidate.action === "none" || selectedIds.has(candidate.id)) return staleIssue(candidate);
     selectedIds.add(candidate.id);
+    if (selectedTradeIds.has(candidate.trade.id)) return staleIssue(candidate);
+    selectedTradeIds.add(candidate.trade.id);
     if (candidate.action === "restore") {
       if (candidate.matchedTradeIds.length !== 1) return staleIssue(candidate);
       const current = latestById.get(candidate.matchedTradeIds[0]);
@@ -265,6 +272,47 @@ function buildExistingTradeIndexes(trades: Trade[]): ExistingTradeIndexes {
   return result;
 }
 
+function probeTrustedIdentity(parsed: ParsedTabularFile, row: string[], mapping: ImportMapping, targetAccountId: string | undefined, indexes: ResolutionIndexes): TrustedBatchIdentity | null {
+  const externalExecutionId = cell(parsed, row, mapping.externalExecutionId).trim();
+  if (!externalExecutionId) return null;
+  try {
+    const account = resolveAccount(cell(parsed, row, mapping.accountName) || null, targetAccountId, indexes);
+    return { key: canonicalSerialize(["generic-tabular-v1", account.id, externalExecutionId]), accountId: account.id, externalExecutionId };
+  } catch {
+    return null;
+  }
+}
+
+function reconcileTrustedGroups(provisional: ProvisionalCandidate[]) {
+  const groups = new Map<string, ProvisionalCandidate[]>();
+  for (const item of provisional) if (item.trustedIdentity) addIndex(groups, item.trustedIdentity.key, item);
+  for (const members of groups.values()) {
+    if (members.length < 2) continue;
+    members.sort((left, right) => left.sourceSequence - right.sourceSequence);
+    const invalidMember = members.some((item) => !item.economicKey || !item.candidate.trade || item.candidate.status === "rejected");
+    const economics = new Set(members.flatMap((item) => item.economicKey ? [item.economicKey] : []));
+    const existingConflict = members.some((item) => item.candidate.status === "source_conflict");
+    if (invalidMember || economics.size !== 1 || existingConflict) {
+      for (const item of members) {
+        const candidate = item.candidate;
+        if (candidate.status !== "rejected") candidate.status = "source_conflict";
+        candidate.action = "none";
+        candidate.selectedByDefault = false;
+        candidate.issues.push(candidateIssue("IMPORT_BATCH_SOURCE_IDENTITY_CONFLICT", "error", candidate.row, candidate.id));
+      }
+      continue;
+    }
+    const representative = members[0].candidate;
+    for (const item of members.slice(1)) {
+      const candidate = item.candidate;
+      candidate.status = "exact_duplicate";
+      candidate.action = "none";
+      candidate.selectedByDefault = false;
+      candidate.issues.push({ ...candidateIssue("IMPORT_BATCH_EXACT_DUPLICATE", "info", candidate.row, candidate.id), details: { duplicateOfRow: representative.row } });
+    }
+  }
+}
+
 function resolveExecution(canonical: CanonicalExecution, targetAccountId: string | undefined, indexes: ResolutionIndexes): ResolvedExecution {
   const tickerMatches = canonical.ticker ? indexes.stocksByTicker.get(normalizeTicker(canonical.ticker)) ?? [] : [];
   const nameMatches = canonical.stockName ? indexes.stocksByName.get(normalizeName(canonical.stockName)) ?? [] : [];
@@ -272,19 +320,24 @@ function resolveExecution(canonical: CanonicalExecution, targetAccountId: string
   if (tickerMatches[0] && nameMatches[0] && tickerMatches[0].id !== nameMatches[0].id) throw importFailure("IMPORT_INSTRUMENT_CONFLICT", "ticker");
   const stock = tickerMatches[0] ?? nameMatches[0];
   if (!stock) throw importFailure("IMPORT_INSTRUMENT_NOT_FOUND", "ticker");
+  const account = resolveAccount(canonical.externalAccountReference, targetAccountId, indexes);
+  if (canonical.currency && canonical.currency !== stock.currency) throw importFailure("IMPORT_CURRENCY_CONFLICT", "currency");
+  const currency = stock.currency;
+  const exchangeRate = currency === "KRW" ? 1 : canonical.exchangeRate ?? fallbackRatesToKrw[currency];
+  return { canonical, stock, account, currency, exchangeRate };
+}
+
+function resolveAccount(externalAccountReference: string | null, targetAccountId: string | undefined, indexes: ResolutionIndexes) {
   let account: InvestmentAccount | undefined;
-  if (canonical.externalAccountReference) {
-    const matches = indexes.accountsByName.get(normalizeName(canonical.externalAccountReference)) ?? [];
+  if (externalAccountReference) {
+    const matches = indexes.accountsByName.get(normalizeName(externalAccountReference)) ?? [];
     if (matches.length > 1) throw importFailure("IMPORT_AMBIGUOUS_ACCOUNT", "accountName");
     if (!matches.length) throw importFailure("IMPORT_ACCOUNT_NOT_FOUND", "accountName");
     if (matches[0].archivedAt) throw importFailure("IMPORT_ARCHIVED_ACCOUNT", "accountName");
     account = matches[0];
   } else account = targetAccountId ? indexes.activeAccountsById.get(targetAccountId) : undefined;
   if (!account) throw importFailure("IMPORT_ACCOUNT_REQUIRED", "accountName");
-  if (canonical.currency && canonical.currency !== stock.currency) throw importFailure("IMPORT_CURRENCY_CONFLICT", "currency");
-  const currency = stock.currency;
-  const exchangeRate = currency === "KRW" ? 1 : canonical.exchangeRate ?? fallbackRatesToKrw[currency];
-  return { canonical, stock, account, currency, exchangeRate };
+  return account;
 }
 
 function resolvedExecutionToTrade(resolved: ResolvedExecution, sourceKey: string, id: string, importedAt: string): Trade {
@@ -331,6 +384,7 @@ function possibleTradeKey(trade: Trade) {
 
 function externalExecutionKey(accountId: string, externalExecutionId: string) { return canonicalSerialize([accountId, externalExecutionId.trim()]); }
 function canonicalSerialize(values: Array<string | number>) { return JSON.stringify(values); }
+async function buildCandidateId(importBatchId: string, sourceSequence: number, sourceRow: number) { return `candidate:v1:${await sha256(canonicalSerialize([importBatchId, sourceSequence, sourceRow]))}`; }
 function uniqueTrades(trades: Trade[]) { return [...new Map(trades.map((trade) => [trade.id, trade])).values()]; }
 
 function intradayKey(trade: Trade) { return [trade.accountId, trade.stockId, trade.tradedAt.slice(0, 10)].join("|"); }
@@ -338,7 +392,7 @@ function intradayKey(trade: Trade) { return [trade.accountId, trade.stockId, tra
 function blockAmbiguousDateOnlyOrdering(candidates: ImportCandidate[], existingIntraday: ReadonlySet<string>) {
   const candidateCounts = new Map<string, number>();
   for (const candidate of candidates) {
-    if (!candidate.trade) continue;
+    if (!candidate.trade || candidate.action === "none") continue;
     const key = intradayKey(candidate.trade);
     candidateCounts.set(key, (candidateCounts.get(key) ?? 0) + 1);
   }

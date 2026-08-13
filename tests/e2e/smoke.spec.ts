@@ -214,6 +214,57 @@ test("거래 파일 후보를 검토하고 원자적으로 가져온 뒤 재가�
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]"))).toHaveLength(2);
 });
 
+test("같은 체결 ID의 동일 행은 독립적으로 표시하고 한 건만 가져온다", async ({ page }) => {
+  const account = e2eAccount("trusted-same-account", "동일 체결 계좌");
+  const stock = { id: "trusted-same-stock", ticker: "TSAM", name: "동일 체결 종목", market: "한국", currency: "KRW", assetType: "주식", sector: "테스트", status: "보유", investmentType: "장기 코어", currentPrice: 1000, targetPrice: null, averagePrice: 0, quantity: 0, thesisSummary: "", currentView: "중립", currentViewMemo: "", nextReviewDate: null, reviewNote: "", nextEarningsDate: null, ledgerInitializedAt: "2026-08-01T00:00:00.000Z", tags: [], createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", deletedAt: null };
+  await page.addInitScript(({ account, stock }) => {
+    if (localStorage.getItem("tradejournal.accounts.v1") === null) localStorage.setItem("tradejournal.accounts.v1", JSON.stringify([account]));
+    if (localStorage.getItem("tradejournal.stocks.v1") === null) localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([stock]));
+    if (localStorage.getItem("tradejournal.trades.v1") === null) localStorage.setItem("tradejournal.trades.v1", "[]");
+  }, { account, stock });
+  const duplicateKeyErrors: string[] = [];
+  page.on("console", (message) => { if (message.type() === "error" && /same key|unique.*key/i.test(message.text())) duplicateKeyErrors.push(message.text()); });
+  const csv = "거래일시,종목코드,구분,수량,가격,체결 ID\n2026-08-12T10:00:01,TSAM,매수,1,1000,same-exec\n2026-08-12T10:00:01,TSAM,매수,1,1000,same-exec";
+  await page.goto("/trades");
+  await page.getByRole("button", { name: "파일 가져오기" }).click();
+  let dialog = page.getByRole("dialog", { name: "증권사 거래 내역 가져오기" });
+  await dialog.locator('input[type="file"]').setInputFiles({ name: "same.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  await expect(dialog.getByText("추가 가능 1")).toBeVisible();
+  await expect(dialog.getByText("정확한 중복 1")).toBeVisible();
+  await expect(dialog.getByLabel("행 2 선택")).toBeEnabled();
+  await expect(dialog.getByLabel("행 3 선택")).toBeDisabled();
+  await expect(dialog.getByText("대표 행: 2")).toBeVisible();
+  await dialog.getByRole("button", { name: "1건 추가 · 0건 복원" }).click();
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]").length)).toBe(1);
+  await page.reload();
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]"))).toHaveLength(1);
+  await page.getByRole("button", { name: "파일 가져오기" }).click();
+  dialog = page.getByRole("dialog", { name: "증권사 거래 내역 가져오기" });
+  await dialog.locator('input[type="file"]').setInputFiles({ name: "same-again.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  await expect(dialog.getByRole("button", { name: "0건 추가 · 0건 복원" })).toBeDisabled();
+  expect(duplicateKeyErrors).toEqual([]);
+});
+
+test("같은 체결 ID의 충돌 행은 첫 행을 포함해 모두 차단한다", async ({ page }) => {
+  const account = e2eAccount("trusted-conflict-account", "충돌 체결 계좌");
+  const stock = { id: "trusted-conflict-stock", ticker: "TCNF", name: "충돌 체결 종목", market: "한국", currency: "KRW", assetType: "주식", sector: "테스트", status: "보유", investmentType: "장기 코어", currentPrice: 1000, targetPrice: null, averagePrice: 0, quantity: 0, thesisSummary: "", currentView: "중립", currentViewMemo: "", nextReviewDate: null, reviewNote: "", nextEarningsDate: null, ledgerInitializedAt: "2026-08-01T00:00:00.000Z", tags: [], createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", deletedAt: null };
+  await page.addInitScript(({ account, stock }) => { localStorage.setItem("tradejournal.accounts.v1", JSON.stringify([account])); localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([stock])); localStorage.setItem("tradejournal.trades.v1", "[]"); }, { account, stock });
+  await page.goto("/trades");
+  for (const [name, quantities] of [["two", [1, 2]], ["three", [1, 1, 2]]] as const) {
+    await page.getByRole("button", { name: "파일 가져오기" }).click();
+    const dialog = page.getByRole("dialog", { name: "증권사 거래 내역 가져오기" });
+    const rows = quantities.map((quantity) => `2026-08-12T10:00:01,TCNF,매수,${quantity},1000,conflict-exec`);
+    await dialog.locator('input[type="file"]').setInputFiles({ name: `${name}.csv`, mimeType: "text/csv", buffer: Buffer.from(["거래일시,종목코드,구분,수량,가격,체결 ID", ...rows].join("\n")) });
+    await expect(dialog.getByText(`원본 충돌 ${quantities.length}`)).toBeVisible();
+    for (let row = 2; row < quantities.length + 2; row += 1) await expect(dialog.getByLabel(`행 ${row} 선택`)).toBeDisabled();
+    await expect(dialog.getByRole("button", { name: "0건 추가 · 0건 복원" })).toBeDisabled();
+    await dialog.getByRole("button", { name: "취소" }).click();
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]"))).toHaveLength(0);
+  }
+  await page.reload();
+  expect(await page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("tradejournal.corrupt.trades.")))).toHaveLength(0);
+});
+
 test("삭제한 가져오기 거래를 중복 ID 없이 명시적으로 복원한다", async ({ page }) => {
   const account = e2eAccount("restore-account", "복원 계좌");
   const stock = { id: "restore-stock", ticker: "RSTR", name: "복원 종목", market: "한국", currency: "KRW", assetType: "주식", sector: "테스트", status: "보유", investmentType: "장기 코어", currentPrice: 1000, targetPrice: null, averagePrice: 0, quantity: 0, thesisSummary: "", currentView: "중립", currentViewMemo: "", nextReviewDate: null, reviewNote: "", nextEarningsDate: null, ledgerInitializedAt: "2026-08-01T00:00:00.000Z", tags: [], createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", deletedAt: null };
