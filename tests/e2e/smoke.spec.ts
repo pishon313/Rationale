@@ -190,6 +190,7 @@ test("거래 파일 후보를 검토하고 원자적으로 가져온 뒤 재가�
     name: "synthetic-broker.csv", mimeType: "text/csv",
     buffer: Buffer.from("거래일시,종목코드,구분,수량,가격,수수료,세금\n2026-08-12T10:00:01,IMPT,매수,1,1000,0,0\n2026-08-12T10:00:02,IMPT,매수,1,1000,0,0"),
   });
+  await dialog.getByRole("button", { name: "거래 후보 검토" }).click();
   await expect(dialog.getByText("중복 가능성 1")).toBeVisible();
   await expect(dialog.getByText("추가 가능 1")).toBeVisible();
   const possible = dialog.getByLabel("행 2 선택");
@@ -209,9 +210,92 @@ test("거래 파일 후보를 검토하고 원자적으로 가져온 뒤 재가�
     name: "synthetic-broker-reimport.csv", mimeType: "text/csv",
     buffer: Buffer.from("거래일시,종목코드,구분,수량,가격,수수료,세금\n2026-08-12T10:00:02,IMPT,매수,1,1000,0,0"),
   });
+  await dialog.getByRole("button", { name: "거래 후보 검토" }).click();
   await expect(dialog.getByText("정확한 중복 1")).toBeVisible();
   await expect(dialog.getByRole("button", { name: "0건 추가 · 0건 복원" })).toBeDisabled();
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]"))).toHaveLength(2);
+});
+
+test("원본 열 중심으로 수동 연결하고 예시 값을 유지해 가져온다", async ({ page }) => {
+  const account = e2eAccount("source-first-account", "원본 열 계좌");
+  const stock = { id: "source-first-stock", ticker: "005930", name: "삼성전자", market: "한국", currency: "KRW", assetType: "주식", sector: "테스트", status: "보유", investmentType: "장기 코어", currentPrice: 70000, targetPrice: null, averagePrice: 0, quantity: 0, thesisSummary: "", currentView: "중립", currentViewMemo: "", nextReviewDate: null, reviewNote: "", nextEarningsDate: null, ledgerInitializedAt: "2026-08-01T00:00:00.000Z", tags: [], createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", deletedAt: null };
+  await page.addInitScript(({ account, stock }) => { localStorage.setItem("tradejournal.accounts.v1", JSON.stringify([account])); localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([stock])); localStorage.setItem("tradejournal.trades.v1", "[]"); }, { account, stock });
+  await page.goto("/trades");
+  await page.getByRole("button", { name: "파일 가져오기" }).click();
+  const dialog = page.getByRole("dialog", { name: "증권사 거래 내역 가져오기" });
+  const headers = ["ord_dt", "ord_tmd", "pdno", "prdt_name", "sll_buy_dvsn_cd_name", "tot_ccld_qty", "avg_prvs", "fee_raw", "tax_raw", "crcy_cd", "acct_raw", "exec_id", "odno", "ord_channel"];
+  const values = ["2026-08-12", "10:00:01", "005930", "삼성전자", "매수", "1", "70000", "10", "2", "KRW", "원본 열 계좌", "exec-source-first", "order-1", "MOBILE"];
+  await dialog.locator('input[type="file"]').setInputFiles({ name: "raw-headers.csv", mimeType: "text/csv", buffer: Buffer.from(`${headers.join(",")}\n${values.join(",")}`) });
+  for (const header of headers) await expect(dialog.getByLabel(`${header} 열 매핑`)).toBeVisible();
+  await expect(dialog.getByText("005930", { exact: true })).toBeVisible();
+  await expect(dialog.getByLabel("ord_channel 열 매핑")).toHaveValue("ignore");
+  await expect(dialog.getByText("필수 0/5")).toBeVisible();
+  await expect(dialog.getByText("수수료 열이 없으면 수수료를 0으로 계산합니다.")).toBeVisible();
+  await expect(dialog.getByText("계좌 열이 없으면 모든 행을 선택한 대상 계좌로 가져옵니다.")).toBeVisible();
+  const targets: Record<string, string> = { ord_dt: "tradedAt", ord_tmd: "time", pdno: "ticker", prdt_name: "stockName", sll_buy_dvsn_cd_name: "tradeType", tot_ccld_qty: "quantity", avg_prvs: "price", fee_raw: "fee", tax_raw: "tax", crcy_cd: "currency", acct_raw: "accountName", exec_id: "externalExecutionId", odno: "orderId" };
+  for (const [header, target] of Object.entries(targets)) await dialog.getByLabel(`${header} 열 매핑`).selectOption(target);
+  await expect(dialog.getByText("필수 5/5")).toBeVisible();
+  await expect(dialog.getByText("수수료 열이 없으면 수수료를 0으로 계산합니다.")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "거래 후보 검토" }).click();
+  await expect(dialog.getByText("추가 가능 1")).toBeVisible();
+  await dialog.getByRole("button", { name: "열 연결로 돌아가기" }).click();
+  await expect(dialog.getByLabel("pdno 열 매핑")).toHaveValue("ticker");
+  await dialog.getByRole("button", { name: "거래 후보 검토" }).click();
+  await dialog.getByRole("button", { name: "1건 추가 · 0건 복원" }).click();
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]").length)).toBe(1);
+});
+
+test("원본 열 매핑에서 같은 대상 필드의 중복 소유를 막는다", async ({ page }) => {
+  const account = e2eAccount("mapping-collision-account", "매핑 충돌 계좌");
+  await page.addInitScript((account) => { localStorage.setItem("tradejournal.accounts.v1", JSON.stringify([account])); localStorage.setItem("tradejournal.stocks.v1", "[]"); localStorage.setItem("tradejournal.trades.v1", "[]"); }, account);
+  await page.goto("/trades");
+  await page.getByRole("button", { name: "파일 가져오기" }).click();
+  const dialog = page.getByRole("dialog", { name: "증권사 거래 내역 가져오기" });
+  await dialog.locator('input[type="file"]').setInputFiles({ name: "collision.csv", mimeType: "text/csv", buffer: Buffer.from("qty_a,qty_b\n1,2") });
+  const first = dialog.getByLabel("qty_a 열 매핑"); const second = dialog.getByLabel("qty_b 열 매핑");
+  await first.selectOption("quantity");
+  await expect(second.locator('option[value="quantity"]')).toBeDisabled();
+  await first.selectOption("ignore");
+  await expect(second.locator('option[value="quantity"]')).toBeEnabled();
+  await second.selectOption("quantity");
+  await expect(second).toHaveValue("quantity");
+});
+
+test("중복 헤더를 occurrence별로 표시하고 하나만 체결가로 연결한다", async ({ page }) => {
+  const account = e2eAccount("duplicate-header-account", "중복 헤더 계좌");
+  await page.addInitScript((account) => { localStorage.setItem("tradejournal.accounts.v1", JSON.stringify([account])); localStorage.setItem("tradejournal.stocks.v1", "[]"); localStorage.setItem("tradejournal.trades.v1", "[]"); }, account);
+  await page.goto("/trades");
+  await page.getByRole("button", { name: "파일 가져오기" }).click();
+  const dialog = page.getByRole("dialog", { name: "증권사 거래 내역 가져오기" });
+  await dialog.locator('input[type="file"]').setInputFiles({ name: "duplicate-price.csv", mimeType: "text/csv", buffer: Buffer.from("거래일,종목코드,구분,수량,가격,가격\n2026-08-12,005930,매수,1,70000,71000") });
+  const first = dialog.getByLabel("가격 (1) 열 매핑"); const second = dialog.getByLabel("가격 (2) 열 매핑");
+  await expect(first).toHaveValue("ignore"); await expect(second).toHaveValue("ignore");
+  await expect(dialog.getByText("확인 필요", { exact: true })).toHaveCount(2);
+  await first.selectOption("price");
+  await expect(first).toHaveValue("price"); await expect(second).toHaveValue("ignore");
+  await expect(second.locator('option[value="price"]')).toBeDisabled();
+});
+
+test("source-first 프로필을 재정렬 파일에 적용하고 dirty 상태를 유지한다", async ({ page }) => {
+  const account = e2eAccount("profile-source-account", "프로필 계좌");
+  await page.addInitScript((account) => { localStorage.setItem("tradejournal.accounts.v1", JSON.stringify([account])); localStorage.setItem("tradejournal.stocks.v1", "[]"); localStorage.setItem("tradejournal.trades.v1", "[]"); localStorage.setItem("tradejournal.import-mapping-profiles.v1", "[]"); }, account);
+  await page.goto("/trades"); await page.getByRole("button", { name: "파일 가져오기" }).click();
+  const dialog = page.getByRole("dialog", { name: "증권사 거래 내역 가져오기" });
+  const first = "raw_date,raw_side,raw_qty,raw_price,raw_ticker,extra\n2026-08-12,매수,1,100,005930,x";
+  await dialog.locator('input[type="file"]').setInputFiles({ name: "profile-first.csv", mimeType: "text/csv", buffer: Buffer.from(first) });
+  const targets: Record<string, string> = { raw_date: "tradedAt", raw_side: "tradeType", raw_qty: "quantity", raw_price: "price", raw_ticker: "ticker" };
+  for (const [header, target] of Object.entries(targets)) await dialog.getByLabel(`${header} 열 매핑`).selectOption(target);
+  await dialog.getByLabel("프로필 이름").fill("Raw Broker");
+  await dialog.getByRole("button", { name: "새 프로필로 저장" }).click();
+  await expect(dialog.getByText("프로필", { exact: true })).toHaveCount(5);
+  const reordered = "extra,raw_ticker,raw_price,raw_qty,raw_side,raw_date\nx,005930,100,1,매수,2026-08-12";
+  await dialog.locator('input[type="file"]').setInputFiles({ name: "profile-reordered.csv", mimeType: "text/csv", buffer: Buffer.from(reordered) });
+  await expect(dialog.getByLabel("raw_ticker 열 매핑")).toHaveValue("ticker");
+  await expect(dialog.getByLabel("raw_date 열 매핑")).toHaveValue("tradedAt");
+  await expect(dialog.getByText("프로필", { exact: true })).toHaveCount(5);
+  await dialog.getByLabel("extra 열 매핑").selectOption("stockName");
+  await expect(dialog.getByText("저장되지 않은 변경")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "프로필 업데이트" })).toBeEnabled();
 });
 
 test("같은 체결 ID의 동일 행은 독립적으로 표시하고 한 건만 가져온다", async ({ page }) => {
@@ -229,6 +313,7 @@ test("같은 체결 ID의 동일 행은 독립적으로 표시하고 한 건만 
   await page.getByRole("button", { name: "파일 가져오기" }).click();
   let dialog = page.getByRole("dialog", { name: "증권사 거래 내역 가져오기" });
   await dialog.locator('input[type="file"]').setInputFiles({ name: "same.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  await dialog.getByRole("button", { name: "거래 후보 검토" }).click();
   await expect(dialog.getByText("추가 가능 1")).toBeVisible();
   await expect(dialog.getByText("정확한 중복 1")).toBeVisible();
   await expect(dialog.getByLabel("행 2 선택")).toBeEnabled();
@@ -241,6 +326,7 @@ test("같은 체결 ID의 동일 행은 독립적으로 표시하고 한 건만 
   await page.getByRole("button", { name: "파일 가져오기" }).click();
   dialog = page.getByRole("dialog", { name: "증권사 거래 내역 가져오기" });
   await dialog.locator('input[type="file"]').setInputFiles({ name: "same-again.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  await dialog.getByRole("button", { name: "거래 후보 검토" }).click();
   await expect(dialog.getByRole("button", { name: "0건 추가 · 0건 복원" })).toBeDisabled();
   expect(duplicateKeyErrors).toEqual([]);
 });
@@ -255,6 +341,7 @@ test("같은 체결 ID의 충돌 행은 첫 행을 포함해 모두 차단한다
     const dialog = page.getByRole("dialog", { name: "증권사 거래 내역 가져오기" });
     const rows = quantities.map((quantity) => `2026-08-12T10:00:01,TCNF,매수,${quantity},1000,conflict-exec`);
     await dialog.locator('input[type="file"]').setInputFiles({ name: `${name}.csv`, mimeType: "text/csv", buffer: Buffer.from(["거래일시,종목코드,구분,수량,가격,체결 ID", ...rows].join("\n")) });
+    await dialog.getByRole("button", { name: "거래 후보 검토" }).click();
     await expect(dialog.getByText(`원본 충돌 ${quantities.length}`)).toBeVisible();
     for (let row = 2; row < quantities.length + 2; row += 1) await expect(dialog.getByLabel(`행 ${row} 선택`)).toBeDisabled();
     await expect(dialog.getByRole("button", { name: "0건 추가 · 0건 복원" })).toBeDisabled();
@@ -279,6 +366,7 @@ test("삭제한 가져오기 거래를 중복 ID 없이 명시적으로 복원�
   await page.getByRole("button", { name: "파일 가져오기" }).click();
   let dialog = page.getByRole("dialog", { name: "증권사 거래 내역 가져오기" });
   await dialog.locator('input[type="file"]').setInputFiles({ name: "restore.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  await dialog.getByRole("button", { name: "거래 후보 검토" }).click();
   await dialog.getByRole("button", { name: "1건 추가 · 0건 복원" }).click();
   await expect(page.getByText("1건의 거래 내역을 추가하고 0건을 복원했습니다.")).toBeVisible();
   const original = await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]")[0]);
@@ -290,6 +378,7 @@ test("삭제한 가져오기 거래를 중복 ID 없이 명시적으로 복원�
   await page.getByRole("button", { name: "파일 가져오기" }).click();
   dialog = page.getByRole("dialog", { name: "증권사 거래 내역 가져오기" });
   await dialog.locator('input[type="file"]').setInputFiles({ name: "restore-again.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  await dialog.getByRole("button", { name: "거래 후보 검토" }).click();
   await expect(dialog.getByText("삭제된 기록 1")).toBeVisible();
   const restoreSelection = dialog.getByLabel("행 2 선택");
   await expect(restoreSelection).not.toBeChecked();
@@ -314,6 +403,7 @@ test("101개 후보를 페이지별로 검토하고 숨겨진 행을 자동 선�
   await page.getByRole("button", { name: "파일 가져오기" }).click();
   const dialog = page.getByRole("dialog", { name: "증권사 거래 내역 가져오기" });
   await dialog.locator('input[type="file"]').setInputFiles({ name: "large.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  await dialog.getByRole("button", { name: "거래 후보 검토" }).click();
   await expect(dialog.getByText("현재 페이지 1 / 2")).toBeVisible();
   await expect(dialog.getByText("전체 선택 100건")).toBeVisible();
   await dialog.getByRole("button", { name: "다음" }).click();

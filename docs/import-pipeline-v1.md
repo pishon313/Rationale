@@ -58,6 +58,12 @@ All economic ledger and performance calculations include imported Trades. Behavi
 
 ## Mapping profiles
 
+The mapping editor is source-first: every uploaded column remains visible in file order and maps to one supported Rationale canonical field or to Ignore. Representative raw string samples are scanned from a bounded number of rows and shown only in memory; leading zeros are preserved, and samples, filenames, paths, assignment status, and ignored columns are never persisted. Duplicate headers remain distinct by occurrence, and one canonical destination cannot be owned by two source columns.
+
+Required coverage consists of trade date, side, quantity, price, and either ticker or Stock name. The editor separately explains non-blocking accuracy and safety effects when time, fees, tax, currency, exchange rate, Account, or external execution ID are not mapped. Unknown broker-specific columns can be ignored, but Rationale does not create arbitrary custom Trade fields. Candidate preview is built only after the user reviews a valid mapping; the existing duplicate, trusted-identity, Ledger, and atomic persistence boundaries remain unchanged.
+
+The UI projection is compiled back into the existing destination-keyed `ImportMapping`. Mapping profiles therefore remain version 1, retain stable `normalizedHeader + occurrence` bindings, and continue to be device-local. Reordered files apply the same bindings, compatible files expose additional columns independently, and ignored columns do not enter profile data.
+
 Profiles are versioned local records containing only a user name, stable column bindings, a header signature, and timestamps. A unique exact header signature is reapplied automatically. Reordered columns are exact matches because signatures are order-independent; files with additional columns are compatible when every saved reference still resolves. Missing columns, duplicate-header occurrence changes, and binding collisions block application.
 
 Compatible matching additionally requires the saved and current occurrence count to be identical for every bound normalized header. Additional unrelated columns are allowed, but adding or removing another occurrence of a bound header is incompatible. Profile identity and dirty state are separate: editing a selected profile permits an explicit in-place update or save-as-new action, while normalized duplicate names are rejected.

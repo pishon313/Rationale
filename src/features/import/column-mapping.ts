@@ -26,6 +26,12 @@ const aliases: Record<ImportField, string[]> = {
   orderId: ["주문id", "주문번호", "注文番号", "order id", "order number", "numéro d’ordre", "numero ordine", "número de orden"],
 };
 
+const normalizedAliases = Object.fromEntries(Object.entries(aliases).map(([field, values]) => [field, new Set(values.map(normalizeHeader))])) as Record<ImportField, Set<string>>;
+
+export function suggestedImportFieldsForColumn(column: TabularColumn): ImportField[] {
+  return [...requiredImportFields, ...optionalImportFields].filter((field) => normalizedAliases[field].has(column.reference.normalizedHeader));
+}
+
 export function normalizeHeader(value: string) {
   return value.normalize("NFKD").toLowerCase().replace(/\p{M}/gu, "").normalize("NFC").replace(/[^\p{L}\p{N}]/gu, "");
 }
@@ -52,11 +58,11 @@ export function resolveColumnIndex(columns: TabularColumn[], reference?: ColumnR
 export function detectImportMapping(columns: TabularColumn[]): { mapping: ImportMapping; issues: ImportIssue[] } {
   const mapping: ImportMapping = {};
   const issues: ImportIssue[] = [];
+  const suggestions = new Map(columns.map((column) => [columnReferenceKey(column.reference), suggestedImportFieldsForColumn(column)]));
   for (const field of [...requiredImportFields, ...optionalImportFields]) {
-    const accepted = new Set(aliases[field].map(normalizeHeader));
-    const matches = columns.filter((column) => accepted.has(column.reference.normalizedHeader));
-    if (matches.length === 1) mapping[field] = matches[0].reference;
-    if (matches.length > 1) issues.push({
+    const matches = columns.filter((column) => suggestedImportFieldsForColumn(column).includes(field));
+    if (matches.length === 1 && suggestions.get(columnReferenceKey(matches[0].reference))?.length === 1) mapping[field] = matches[0].reference;
+    if (matches.length > 1 || (matches.length === 1 && (suggestions.get(columnReferenceKey(matches[0].reference))?.length ?? 0) > 1)) issues.push({
       code: "IMPORT_AMBIGUOUS_COLUMN",
       severity: "warning",
       field,
