@@ -11,6 +11,10 @@ export const stockFormSchema = z.object({
   name: z.string().trim().min(1, "종목명을 입력해 주세요.").max(100),
   market: z.enum(markets),
   currency: z.enum(currencies),
+  countryCode: z.string().trim().toUpperCase().regex(/^$|^[A-Z]{2}$/, "국가 코드는 ISO 두 글자로 입력해 주세요."),
+  exchangeCode: z.string().trim().max(30),
+  providerSymbol: z.string().trim().max(40),
+  provider: z.enum(["manual", "eodhd", "twelve-data"]),
   assetType: z.string().trim().min(1, "자산 유형을 입력해 주세요."),
   sector: z.string().trim().max(60),
   status: z.enum(stockStatuses),
@@ -26,6 +30,9 @@ export const stockFormSchema = z.object({
   reviewNote: z.string().trim().max(300, "검토할 사항은 300자 이내로 입력해 주세요."),
   nextEarningsDate: z.string().nullable(),
   tagsText: z.string(),
+}).superRefine((value, context) => {
+  if (value.provider === "manual") return;
+  for (const [path, field] of [["countryCode", value.countryCode], ["exchangeCode", value.exchangeCode], ["providerSymbol", value.providerSymbol]] as const) if (!field) context.addIssue({ code: "custom", path: [path], message: "자동 시세 연결 정보가 완전하지 않습니다." });
 });
 
 export type StockFormValues = z.input<typeof stockFormSchema>;

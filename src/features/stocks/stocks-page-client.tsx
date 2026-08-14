@@ -10,24 +10,25 @@ import type { Stock } from "./types";
 import { StockForm } from "./stock-form";
 import { StockTable } from "./stock-table";
 import { useStockStore } from "./use-stock-store";
+import { applyQuote, planQuoteRequests, validateQuote, type MarketQuote } from "./market-data";
 
 export function StocksPageClient() {
   const { t, formatNumber } = useI18n();
-  const { stocks, storedTrades, accountHoldingsByStockId, addStock, updateStock, correctStockCurrency, deleteStock } = useStockStore();
+  const { stocks, storedTrades, accountHoldingsByStockId, addStock, updateStock, updateStocksAsync, correctStockCurrency, deleteStock } = useStockStore();
   const [editing, setEditing] = useState<Stock | null | "new">(null);
   const [deleting, setDeleting] = useState<Stock | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [quoteMessage, setQuoteMessage] = useState("");
   async function refreshQuotes() {
-    if (!navigator.onLine) { stocks.forEach((stock) => updateStock({ ...stock, priceStatus: "offline" })); setQuoteMessage(t("인터넷 연결 없음 — 마지막 저장 가격을 표시합니다.")); return; }
+    if (!navigator.onLine) { setQuoteMessage(t("인터넷 연결 없음 — 마지막 저장 가격을 표시합니다.")); return; }
     if (!isTauriApp()) { setQuoteMessage(t("자동 시세 갱신은 Mac 앱에서 사용할 수 있습니다.")); return; }
-    setRefreshing(true); let success = 0; const failures: string[] = [];
+    setRefreshing(true); let success = 0; const failures: string[] = []; const updates = new Map<string, Stock>(); const rateLimited = new Set<string>();
     for (const stock of stocks) {
-      try {
-        const quote = await invoke<{ price: number; currency: string; exchange: string; quotedAt: string; isMarketOpen: boolean | null; source: string }>("fetch_quote", { symbol: stock.ticker, market: stock.market });
-        updateStock({ ...stock, currentPrice: quote.price, priceUpdatedAt: new Date().toISOString(), priceQuotedAt: quote.quotedAt || null, priceSource: "twelve-data", priceStatus: "online", updatedAt: new Date().toISOString() }); success++;
-      } catch (error) { failures.push(`${stock.name}: ${quoteErrorMessage(String(error), t)}`); }
+      const requests = planQuoteRequests(stock); if (!requests.length) continue; let lastError: unknown;
+      for (const [index, request] of requests.entries()) { if (rateLimited.has(request.provider)) continue; try { const quote = validateQuote(stock, request, await invoke<MarketQuote>("fetch_market_quote", { request })); updates.set(stock.id, applyQuote(stock, quote)); success++; lastError = null; break; } catch (error) { lastError = error; const code = String(error); if (code.includes("RATE_LIMITED")) rateLimited.add(request.provider); if (index === requests.length - 1 || !["API_KEY_MISSING", "PROVIDER_ENTITLEMENT_REQUIRED", "SYMBOL_NOT_FOUND", "RATE_LIMITED"].some((allowed) => code.includes(allowed))) break; } }
+      if (lastError) failures.push(`${stock.name}: ${quoteErrorMessage(String(lastError), t)}`);
     }
+    if (updates.size) await updateStocksAsync(updates);
     setRefreshing(false);
     setQuoteMessage(failures.length
       ? `${t("{success}개 갱신 · {failure}", { success: formatNumber(success), failure: failures[0] })}${failures.length > 1 ? t(" 외 {count}건", { count: formatNumber(failures.length - 1) }) : ""}`

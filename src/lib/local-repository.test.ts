@@ -283,7 +283,7 @@ describe("Tauri local repository", () => {
     sqlMocks.load.mockResolvedValue({ select: vi.fn().mockResolvedValue(rows), execute: vi.fn() });
     sqlMocks.invoke.mockResolvedValue(undefined);
 
-    await expect(loadCollection<Stock>("stocks", [])).resolves.toEqual([sampleStocks[0], sampleStocks[1]]);
+    await expect(loadCollection<Stock>("stocks", [])).resolves.toEqual([sampleStocks[0], sampleStocks[1]].map((stock) => ({ ...stock, countryCode: "KR", providerRefs: [], quotePreference: "manual" })));
 
     expect(sqlMocks.invoke).toHaveBeenCalledWith("quarantine_corrupt_records", { entries: [
       expect.objectContaining({ recordId: "broken-json", rawData: '{"id":', errorType: "JSON_PARSE_ERROR" }),

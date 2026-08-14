@@ -1,9 +1,15 @@
-export const markets = ["한국", "미국", "기타"] as const;
+export const markets = ["한국", "미국", "일본", "홍콩", "캐나다", "기타"] as const;
 import { currencies, type Currency } from "@/domain/currency";
 export { currencies };
 export const stockStatuses = ["보유", "매수 대기", "관찰", "매도 완료", "재진입 대기", "아이디어 폐기"] as const;
 export const investmentTypes = ["장기 코어", "중기 투자", "스윙", "단기", "관찰 전용"] as const;
 export const stockViews = ["강세", "중립", "약세", "판단 보류"] as const;
+
+export const marketDataProviders = ["manual", "eodhd", "twelve-data"] as const;
+export type MarketDataProvider = (typeof marketDataProviders)[number];
+export type ProviderInstrumentRef = { provider: Exclude<MarketDataProvider, "manual">; symbol: string; exchangeCode?: string | null };
+export type QuotePreference = "auto" | "manual" | "eodhd" | "twelve-data";
+export type QuoteFreshness = "realtime" | "delayed" | "eod" | "manual" | "unknown";
 
 export type Stock = {
   id: string;
@@ -11,6 +17,13 @@ export type Stock = {
   name: string;
   market: (typeof markets)[number];
   currency: Currency;
+  countryCode?: string | null;
+  exchangeCode?: string | null;
+  exchangeMic?: string | null;
+  exchangeName?: string | null;
+  isin?: string | null;
+  providerRefs?: ProviderInstrumentRef[];
+  quotePreference?: QuotePreference;
   assetType: string;
   sector: string;
   status: (typeof stockStatuses)[number];
@@ -18,7 +31,9 @@ export type Stock = {
   currentPrice: number;
   priceUpdatedAt?: string | null;
   priceQuotedAt?: string | null;
-  priceSource?: "manual" | "twelve-data";
+  priceSource?: MarketDataProvider;
+  priceFreshness?: QuoteFreshness;
+  priceDelayMinutes?: number | null;
   priceStatus?: "manual" | "online" | "offline" | "error";
   targetPrice: number | null;
   averagePrice: number;

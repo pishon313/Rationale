@@ -109,6 +109,7 @@ test("빈 종목 목록에서 새 종목을 등록하고 상세로 이동한다"
   await expect(page.getByText("조건에 맞는 종목이 없습니다")).toBeVisible();
   await page.getByRole("button", { name: "종목 추가" }).click();
   const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "직접 입력" }).click();
   await dialog.getByLabel("티커").fill("TEST");
   await dialog.getByLabel("종목명").fill("테스트 종목");
   await dialog.getByRole("button", { name: "종목 추가" }).click();

@@ -1,4 +1,5 @@
 import { validateStoredCollection, validateStoredRecord, type CollectionValidationErrorType } from "./collection-validation";
+import { migrateStoredCollection } from "./stored-data-migration";
 import { isSyncableRecord, toSyncEnvelope } from "@/features/sync/sync-projection";
 import type { SyncConflictV1, SyncEntityType, SyncEnvelopeV1, SyncWriteSource } from "@/features/sync/sync-types";
 
@@ -94,6 +95,7 @@ export async function loadCollection<T extends Identifiable>(collection: string,
         registerCorruption({ collection, source: "localStorage", affectedRecordCount: 1, validRecordCount: 0, quarantineIds: [quarantineId], errorType: "JSON_PARSE_ERROR", invalidIndexes: [] });
         return fallback;
       }
+      parsed = migrateStoredCollection(collection, parsed);
       const validation = validateStoredCollection(collection, parsed);
       if (!validation.valid) {
         const quarantineId = quarantineBrowser(collection, saved, validation.errorType, validation.index);
@@ -116,6 +118,8 @@ export async function loadCollection<T extends Identifiable>(collection: string,
         catch { errorType = "JSON_PARSE_ERROR"; }
         try {
           if (errorType === "JSON_PARSE_ERROR") throw new Error("parse");
+          const migrated = migrateStoredCollection(collection, [parsed]);
+          parsed = Array.isArray(migrated) ? migrated[0] : parsed;
           validateStoredRecord(collection, parsed, index);
           if ((parsed as Identifiable).id !== row.id) throw new Error("record id mismatch");
           valid.push(parsed as T);

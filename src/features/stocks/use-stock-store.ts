@@ -33,6 +33,8 @@ export function useStockStore() {
     ready: stockStore.ready && tradeStore.ready && accountStore.ready,
     addStock: stockStore.add,
     updateStock: stockStore.update,
+    replaceStocksAsync: stockStore.replaceAsync,
+    updateStocksAsync: stockStore.updateManyAsync,
     correctStockCurrency: async (desiredStock: Stock) => {
       const currentStock = stocks.find((item) => item.id === desiredStock.id);
       if (!currentStock) throw new Error("수정할 종목을 찾지 못했습니다.");
