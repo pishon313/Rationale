@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import * as XLSX from "@e965/xlsx";
 
 const e2eAccount = (id: string, name: string, isDefault = true) => ({ id, name, institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault, archivedAt: null, memo: "", createdAt: "2026-08-08T00:00:00.000Z", updatedAt: "2026-08-08T00:00:00.000Z" });
 
@@ -215,6 +216,27 @@ test("거래 파일 후보를 검토하고 원자적으로 가져온 뒤 재가�
   await expect(dialog.getByText("정확한 중복 1")).toBeVisible();
   await expect(dialog.getByRole("button", { name: "0건 추가 · 0건 복원" })).toBeDisabled();
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]"))).toHaveLength(2);
+});
+
+test("Excel의 typed date serial을 표시 문자열과 무관하게 거래일로 검토한다", async ({ page }) => {
+  const account = e2eAccount("typed-date-account", "Typed Date 계좌");
+  const stock = { id: "typed-date-stock", ticker: "XDAT", name: "Typed Date 종목", market: "한국", currency: "KRW", assetType: "주식", sector: "테스트", status: "보유", investmentType: "장기 코어", currentPrice: 1000, targetPrice: null, averagePrice: 0, quantity: 0, thesisSummary: "", currentView: "중립", currentViewMemo: "", nextReviewDate: null, reviewNote: "", nextEarningsDate: null, ledgerInitializedAt: "2026-07-01T00:00:00.000Z", tags: [], createdAt: "2026-07-01T00:00:00.000Z", updatedAt: "2026-07-01T00:00:00.000Z", deletedAt: null };
+  await page.addInitScript(({ account, stock }) => { localStorage.setItem("tradejournal.accounts.v1", JSON.stringify([account])); localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([stock])); localStorage.setItem("tradejournal.trades.v1", "[]"); }, { account, stock });
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet([["거래일자", "종목코드", "매매구분", "체결수량", "체결가"], [null, "XDAT", "매수", 1, 1000]]);
+  sheet.A2 = { t: "n", v: 46232, z: "mm-dd-yy" };
+  XLSX.utils.book_append_sheet(workbook, sheet, "거래내역");
+  const buffer = Buffer.from(XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }));
+
+  await page.goto("/trades");
+  await page.getByRole("button", { name: "파일 가져오기" }).click();
+  const dialog = page.getByRole("dialog", { name: "증권사 거래 내역 가져오기" });
+  await dialog.locator('input[type="file"]').setInputFiles({ name: "typed-date.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer });
+  await dialog.getByRole("button", { name: "거래 후보 검토" }).click();
+
+  await expect(dialog.getByText("추가 가능 1")).toBeVisible();
+  await expect(dialog.getByText("2026-07-29T09:00:00")).toBeVisible();
+  await expect(dialog.getByText("거래일 형식을 확인해 주세요.")).toHaveCount(0);
 });
 
 test("원본 열 중심으로 수동 연결하고 예시 값을 유지해 가져온다", async ({ page }) => {

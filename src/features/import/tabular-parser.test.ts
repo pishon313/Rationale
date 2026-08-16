@@ -48,6 +48,41 @@ describe("tabular import parser", () => {
     expect(parsed.rows[0]).toEqual(["2026-08-01 10:11:12", "005930"]);
   });
 
+  it.each(["xlsx", "xls"] as const)("normalizes a typed Excel date from a .%s serial", async (bookType) => {
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet([["거래일자"], [null]]);
+    sheet.A2 = { t: "n", v: 46232, z: "mm-dd-yy" };
+    XLSX.utils.book_append_sheet(workbook, sheet, "거래내역");
+
+    const parsed = await parseExcelImport(XLSX.write(workbook, { type: "array", bookType }));
+
+    expect(parsed.rows[0]).toEqual(["2026-07-29"]);
+  });
+
+  it("reads the 1904 workbook date system", async () => {
+    const workbook = XLSX.utils.book_new();
+    workbook.Workbook = { WBProps: { date1904: true } };
+    const sheet = XLSX.utils.aoa_to_sheet([["거래일자"], [null]]);
+    sheet.A2 = { t: "n", v: 44770, z: "m/d/yy" };
+    XLSX.utils.book_append_sheet(workbook, sheet, "거래내역");
+
+    const parsed = await parseExcelImport(XLSX.write(workbook, { type: "array", bookType: "xlsx" }));
+
+    expect(parsed.rows[0]).toEqual(["2026-07-29"]);
+  });
+
+  it("preserves non-date formatting and text that merely looks like a date", async () => {
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet([["종목코드", "일반 숫자", "텍스트 날짜"], [null, null, "7/29/26"]]);
+    sheet.A2 = { t: "n", v: 5930, z: "000000" };
+    sheet.B2 = { t: "n", v: 46232, z: "General" };
+    XLSX.utils.book_append_sheet(workbook, sheet, "거래내역");
+
+    const parsed = await parseExcelImport(XLSX.write(workbook, { type: "array", bookType: "xlsx" }));
+
+    expect(parsed.rows[0]).toEqual(["005930", "46232", "7/29/26"]);
+  });
+
   it("enforces file extensions and the 10 MB limit before parsing", async () => {
     await expect(parseImportFile(new File(["x"], "broker.txt"))).rejects.toThrow("CSV, TSV");
     const large = new File([new Uint8Array(10 * 1024 * 1024 + 1)], "broker.csv");

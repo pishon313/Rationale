@@ -14,6 +14,7 @@ No broker API or broker-specific domain model is part of v1. `provider` is optio
 
 ## Time and numeric policy
 
+- Typed Excel date, date-time, and time-only cells are normalized from their numeric serial, number format, and the workbook's 1900 or 1904 date system before they enter the generic pipeline. Display text and client locale do not define the canonical date. Ordinary numeric formatting, including leading-zero identifiers, remains display-preserving; plain text two-digit years remain untrusted and rejected by the existing strict date rules. This normalization does not interpret broker-specific cash-ledger rows or total transaction amounts.
 - Execution seconds are preserved. `10:11:12` and `10:11:13` are distinct executions.
 - A supplied `Z` or numeric UTC offset is rejected with `IMPORT_UNSUPPORTED_TIMEZONE`; generic file import never strips or guesses a timezone. A future documented provider adapter may normalize provider timestamps before the canonical boundary.
 - A timestamp without an offset is retained as local wall-clock time with seconds, matching the existing Trade contract.

@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
+import * as XLSX from "@e965/xlsx";
 import type { InvestmentAccount } from "@/features/accounts/types";
 import type { Stock } from "@/features/stocks/types";
 import type { Trade } from "@/features/trades/types";
 import { buildTabularColumns, detectImportMapping, exactProfileToAutoApply, hasDuplicateMappingProfileName, headerSignature, profileMatch, updatedMappingProfile, validateImportMapping } from "./column-mapping";
 import { adaptTabularRow, buildImportMutationPlan, buildImportPreview, parseExecutionDateTime, parseOptionalNumber, preflightImport } from "./import-pipeline";
 import type { ImportContext, ImportMappingProfile, ParsedTabularFile } from "./import-types";
-import { parseDelimitedImport } from "./tabular-parser";
+import { parseDelimitedImport, parseExcelImport } from "./tabular-parser";
 
 const now = "2026-08-12T00:00:00.000Z";
 const accounts: InvestmentAccount[] = [{ id: "a1", name: "기본 계좌", institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault: true, archivedAt: null, memo: "", createdAt: now, updatedAt: now }];
@@ -34,6 +35,25 @@ describe("Import Pipeline v1", () => {
     expect(parseExecutionDateTime("2026-08-12")).toMatchObject({ value: "2026-08-12T09:00:00", timePrecision: "date" });
     expect(parseExecutionDateTime("20260812", "101113").value).toBe("2026-08-12T10:11:13");
     expect(parseExecutionDateTime("20260812", "1011")).toMatchObject({ value: "2026-08-12T10:11:00", timePrecision: "minute" });
+  });
+
+  it("builds a preview from a typed Excel date without a date-format exclusion", async () => {
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ["거래일자", "종목코드", "매매구분", "체결수량", "체결가"],
+      [null, "005930", "매수", 1, 70000],
+    ]);
+    sheet.A2 = { t: "n", v: 46232, z: "m/d/yy" };
+    XLSX.utils.book_append_sheet(workbook, sheet, "거래내역");
+    const parsed = await parseExcelImport(XLSX.write(workbook, { type: "array", bookType: "xlsx" }));
+
+    const result = await buildImportPreview(parsed, detectImportMapping(parsed.columns).mapping, {
+      stocks, accounts, existingTrades: [], targetAccountId: "a1", provider: "synthetic", importedAt: now,
+    });
+
+    expect(result.candidates[0]).toMatchObject({ status: "ready", trade: { tradedAt: "2026-07-29T09:00:00" } });
+    expect(result.candidates[0].issues).not.toContainEqual(expect.objectContaining({ code: "IMPORT_INVALID_DATE" }));
+    expect(result.candidates[0].issues).not.toContainEqual(expect.objectContaining({ code: "IMPORT_AMBIGUOUS_DATE" }));
   });
 
   it("reconciles embedded and separate time without silently choosing a conflict", () => {

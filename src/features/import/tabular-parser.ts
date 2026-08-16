@@ -1,4 +1,5 @@
 import { buildTabularColumns, detectImportMapping } from "./column-mapping";
+import { workbookDateSystem, worksheetToImportRows } from "./excel-cell-normalization";
 import type { ParsedTabularFile } from "./import-types";
 
 const maximumFileSize = 10 * 1024 * 1024;
@@ -41,14 +42,11 @@ export function parseDelimitedImport(text: string): ParsedTabularFile {
 
 export async function parseExcelImport(buffer: ArrayBuffer): Promise<ParsedTabularFile> {
   const XLSX = await import("@e965/xlsx");
-  const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+  const workbook = XLSX.read(buffer, { type: "array", cellDates: false, cellNF: true, cellText: true });
   const firstSheetName = workbook.SheetNames[0];
   if (!firstSheetName) throw new Error("엑셀 파일에서 시트를 찾지 못했습니다.");
   const sheet = workbook.Sheets[firstSheetName];
-  const records = XLSX.utils.sheet_to_json<Array<string | number | boolean | Date>>(sheet, {
-    header: 1, defval: "", raw: false, dateNF: "yyyy-mm-dd hh:mm:ss",
-  });
-  const rows = records.map((row) => row.map((cell) => String(cell ?? "").trim())).filter((row) => row.some(Boolean));
+  const rows = worksheetToImportRows(XLSX, sheet, workbookDateSystem(workbook));
   return ensureUsable({ columns: buildTabularColumns(rows[0] ?? []), rows: rows.slice(1), sheetName: firstSheetName });
 }
 
