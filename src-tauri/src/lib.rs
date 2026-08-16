@@ -7,10 +7,14 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
-    fs,
+    collections::{HashMap, HashSet},
+    fs::{self, File, OpenOptions},
+    io::Write,
     path::{Path, PathBuf},
-    sync::{Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex, OnceLock,
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{Manager, State};
@@ -34,7 +38,22 @@ const AUTOMATIC_BACKUP_SUFFIX: &str = ".json";
 const AUTOMATIC_BACKUP_INTERVAL_SECONDS: u64 = 24 * 60 * 60;
 const AUTOMATIC_BACKUP_FUTURE_TOLERANCE_SECONDS: u64 = 5 * 60;
 const AUTOMATIC_BACKUP_RETENTION: usize = 7;
+const AUTOMATIC_BACKUP_SOURCE_COLLECTIONS: [&str; 12] = [
+    "accounts",
+    "stocks",
+    "plans",
+    "trades",
+    "observations",
+    "reviews",
+    "rules",
+    "notes",
+    "language-preferences",
+    "dashboard-notes",
+    "earnings-events",
+    "preferences",
+];
 static AUTOMATIC_BACKUP_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static AUTOMATIC_BACKUP_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1058,16 +1077,57 @@ async fn fetch_quote(
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct AutomaticBackupCounts {
+    accounts: u64,
+    stocks: u64,
+    plans: u64,
+    trades: u64,
+    observations: u64,
+    reviews: u64,
+    rules: u64,
+    notes: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct AutomaticBackupStatus {
     path: Option<String>,
     created_at_ms: Option<u64>,
     backup_needed: bool,
     created: bool,
+    verified: bool,
+    counts: Option<AutomaticBackupCounts>,
+    ignored_invalid_file_count: usize,
+    error_code: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+struct AutomaticBackupSourceCount {
+    collection: String,
+    count: u64,
+}
+
+#[derive(Clone)]
 struct AutomaticBackupFile {
     path: PathBuf,
     timestamp: u64,
+    counts: AutomaticBackupCounts,
+}
+
+struct AutomaticBackupInventory {
+    valid: Vec<AutomaticBackupFile>,
+    ignored_invalid_file_count: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum AutomaticBackupWriteFault {
+    #[default]
+    None,
+    TempReadFailure,
+    TempReadMismatch,
+    PublishFailure,
+    FinalReadFailure,
+    FinalReadMismatch,
 }
 
 #[tauri::command]
@@ -1078,12 +1138,21 @@ fn get_automatic_backup_status(app: tauri::AppHandle) -> Result<AutomaticBackupS
 }
 
 #[tauri::command]
-fn ensure_automatic_backup(
+async fn ensure_automatic_backup(
     app: tauri::AppHandle,
+    db_instances: State<'_, DbInstances>,
     content: String,
+    source_counts: Vec<AutomaticBackupSourceCount>,
 ) -> Result<AutomaticBackupStatus, String> {
     let directory = automatic_backup_directory(&app)?;
-    ensure_automatic_backup_in_directory(&directory, &content, unix_timestamp()?)
+    let now = unix_timestamp()?;
+    let current = automatic_backup_status(&directory, now)?;
+    if !current.backup_needed {
+        return Ok(current);
+    }
+    let raw_counts = raw_automatic_backup_source_counts(db_instances).await?;
+    verify_automatic_backup_source_counts(&source_counts, &raw_counts)?;
+    ensure_automatic_backup_in_directory(&directory, &content, now)
 }
 
 fn automatic_backup_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -1102,8 +1171,78 @@ fn unix_timestamp() -> Result<u64, String> {
 }
 
 fn automatic_backup_status(directory: &Path, now: u64) -> Result<AutomaticBackupStatus, String> {
-    let files = automatic_backup_files(directory)?;
-    Ok(status_from_files(&files, now, false))
+    let inventory = automatic_backup_files(directory)?;
+    Ok(status_from_files(&inventory, now, false))
+}
+
+async fn raw_automatic_backup_source_counts(
+    db_instances: State<'_, DbInstances>,
+) -> Result<Vec<AutomaticBackupSourceCount>, String> {
+    let instances = db_instances.0.read().await;
+    let pool = match instances.get(DATABASE_URL) {
+        Some(DbPool::Sqlite(pool)) => pool.clone(),
+        _ => return Err("LOCAL_DATABASE_NOT_LOADED".into()),
+    };
+    drop(instances);
+    let mut counts = Vec::with_capacity(AUTOMATIC_BACKUP_SOURCE_COLLECTIONS.len());
+    for collection in AUTOMATIC_BACKUP_SOURCE_COLLECTIONS {
+        let count =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_records WHERE collection = ?")
+                .bind(collection)
+                .fetch_one(&pool)
+                .await
+                .map_err(|_| "AUTOMATIC_BACKUP_SOURCE_COUNT_QUERY_FAILED".to_string())?;
+        let count = u64::try_from(count)
+            .map_err(|_| "AUTOMATIC_BACKUP_SOURCE_COUNT_QUERY_FAILED".to_string())?;
+        counts.push(AutomaticBackupSourceCount {
+            collection: collection.into(),
+            count,
+        });
+    }
+    Ok(counts)
+}
+
+fn verify_automatic_backup_source_counts(
+    provided: &[AutomaticBackupSourceCount],
+    raw: &[AutomaticBackupSourceCount],
+) -> Result<(), String> {
+    let provided = automatic_backup_source_count_map(provided)?;
+    let raw = automatic_backup_source_count_map(raw)?;
+    if AUTOMATIC_BACKUP_SOURCE_COLLECTIONS
+        .iter()
+        .any(|collection| provided.get(*collection) != raw.get(*collection))
+    {
+        return Err("AUTOMATIC_BACKUP_SOURCE_COUNT_MISMATCH".into());
+    }
+    Ok(())
+}
+
+fn automatic_backup_source_count_map(
+    counts: &[AutomaticBackupSourceCount],
+) -> Result<HashMap<String, u64>, String> {
+    if counts.len() != AUTOMATIC_BACKUP_SOURCE_COLLECTIONS.len() {
+        return Err("AUTOMATIC_BACKUP_SOURCE_COUNTS_INVALID".into());
+    }
+    let allowed = AUTOMATIC_BACKUP_SOURCE_COLLECTIONS
+        .into_iter()
+        .collect::<HashSet<_>>();
+    let mut result = HashMap::with_capacity(counts.len());
+    for entry in counts {
+        if !allowed.contains(entry.collection.as_str())
+            || result
+                .insert(entry.collection.clone(), entry.count)
+                .is_some()
+        {
+            return Err("AUTOMATIC_BACKUP_SOURCE_COUNTS_INVALID".into());
+        }
+    }
+    if AUTOMATIC_BACKUP_SOURCE_COLLECTIONS
+        .iter()
+        .any(|collection| !result.contains_key(*collection))
+    {
+        return Err("AUTOMATIC_BACKUP_SOURCE_COUNTS_INVALID".into());
+    }
+    Ok(result)
 }
 
 fn ensure_automatic_backup_in_directory(
@@ -1111,78 +1250,174 @@ fn ensure_automatic_backup_in_directory(
     content: &str,
     now: u64,
 ) -> Result<AutomaticBackupStatus, String> {
+    ensure_automatic_backup_in_directory_with_fault(
+        directory,
+        content,
+        now,
+        AutomaticBackupWriteFault::None,
+    )
+}
+
+fn ensure_automatic_backup_in_directory_with_fault(
+    directory: &Path,
+    content: &str,
+    now: u64,
+    fault: AutomaticBackupWriteFault,
+) -> Result<AutomaticBackupStatus, String> {
     let _guard = AUTOMATIC_BACKUP_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
         .map_err(|_| "AUTOMATIC_BACKUP_LOCK_FAILED".to_string())?;
-    fs::create_dir_all(directory).map_err(|_| "AUTOMATIC_BACKUP_DIRECTORY_FAILED".to_string())?;
-    let mut files = automatic_backup_files(directory)?;
-    prune_automatic_backups(&mut files);
-    let current = status_from_files(&files, now, false);
+    let counts = automatic_backup_summary(content.as_bytes())?;
+    let mut inventory = automatic_backup_files(directory)?;
+    let current = status_from_files(&inventory, now, false);
     if !current.backup_needed {
         return Ok(current);
     }
+    fs::create_dir_all(directory).map_err(|_| "AUTOMATIC_BACKUP_DIRECTORY_FAILED".to_string())?;
 
     let filename = format!("{AUTOMATIC_BACKUP_PREFIX}{now}{AUTOMATIC_BACKUP_SUFFIX}");
     let path = directory.join(&filename);
-    let temporary = directory.join(format!(".{filename}.tmp"));
-    if fs::write(&temporary, content.as_bytes()).is_err() {
-        let _ = fs::remove_file(&temporary);
-        return Err("AUTOMATIC_BACKUP_WRITE_FAILED".into());
-    }
-    if fs::rename(&temporary, &path).is_err() {
-        let _ = fs::remove_file(&temporary);
-        return Err("AUTOMATIC_BACKUP_RENAME_FAILED".into());
-    }
-    files.push(AutomaticBackupFile {
+    let temporary = directory.join(format!(
+        ".{filename}.{}.{}.tmp",
+        std::process::id(),
+        AUTOMATIC_BACKUP_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    write_verified_automatic_backup(&temporary, &path, content.as_bytes(), fault)?;
+    inventory.valid.push(AutomaticBackupFile {
         path: path.clone(),
         timestamp: now,
+        counts: counts.clone(),
     });
-    files.sort_by_key(|file| file.timestamp);
-    prune_automatic_backups(&mut files);
+    prune_automatic_backups(&mut inventory.valid);
     Ok(AutomaticBackupStatus {
         path: Some(path.to_string_lossy().into_owned()),
         created_at_ms: Some(now.saturating_mul(1_000)),
         backup_needed: false,
         created: true,
+        verified: true,
+        counts: Some(counts),
+        ignored_invalid_file_count: inventory.ignored_invalid_file_count,
+        error_code: None,
     })
 }
 
-fn automatic_backup_files(directory: &Path) -> Result<Vec<AutomaticBackupFile>, String> {
-    if !directory.exists() {
-        return Ok(Vec::new());
+fn write_verified_automatic_backup(
+    temporary: &Path,
+    final_path: &Path,
+    content: &[u8],
+    fault: AutomaticBackupWriteFault,
+) -> Result<(), String> {
+    let mut published = false;
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(temporary)
+            .map_err(|_| "AUTOMATIC_BACKUP_WRITE_FAILED".to_string())?;
+        file.write_all(content)
+            .and_then(|_| file.flush())
+            .and_then(|_| file.sync_all())
+            .map_err(|_| "AUTOMATIC_BACKUP_WRITE_FAILED".to_string())?;
+        drop(file);
+
+        if fault == AutomaticBackupWriteFault::TempReadFailure {
+            return Err("AUTOMATIC_BACKUP_TEMP_READ_FAILED".into());
+        }
+        let mut temp_content =
+            fs::read(temporary).map_err(|_| "AUTOMATIC_BACKUP_TEMP_READ_FAILED".to_string())?;
+        if fault == AutomaticBackupWriteFault::TempReadMismatch {
+            temp_content.push(0);
+        }
+        if temp_content != content {
+            return Err("AUTOMATIC_BACKUP_TEMP_VERIFY_FAILED".into());
+        }
+        automatic_backup_summary(&temp_content)?;
+
+        if fault == AutomaticBackupWriteFault::PublishFailure {
+            return Err("AUTOMATIC_BACKUP_RENAME_FAILED".into());
+        }
+        publish_backup_without_overwrite(temporary, final_path)?;
+        published = true;
+
+        if fault == AutomaticBackupWriteFault::FinalReadFailure {
+            return Err("AUTOMATIC_BACKUP_FINAL_READ_FAILED".into());
+        }
+        let mut final_content =
+            fs::read(final_path).map_err(|_| "AUTOMATIC_BACKUP_FINAL_READ_FAILED".to_string())?;
+        if fault == AutomaticBackupWriteFault::FinalReadMismatch {
+            final_content.push(0);
+        }
+        if final_content != content {
+            return Err("AUTOMATIC_BACKUP_FINAL_VERIFY_FAILED".into());
+        }
+        automatic_backup_summary(&final_content)?;
+        if let Some(directory) = final_path.parent() {
+            let _ = File::open(directory).and_then(|directory| directory.sync_all());
+        }
+        Ok(())
+    })();
+
+    if result.is_err() && published {
+        let _ = fs::remove_file(final_path);
     }
-    let mut files = fs::read_dir(directory)
+    let _ = fs::remove_file(temporary);
+    result
+}
+
+fn publish_backup_without_overwrite(temporary: &Path, final_path: &Path) -> Result<(), String> {
+    fs::hard_link(temporary, final_path).map_err(|_| "AUTOMATIC_BACKUP_RENAME_FAILED".to_string())
+}
+
+fn automatic_backup_files(directory: &Path) -> Result<AutomaticBackupInventory, String> {
+    if !directory.exists() {
+        return Ok(AutomaticBackupInventory {
+            valid: Vec::new(),
+            ignored_invalid_file_count: 0,
+        });
+    }
+    let mut valid = Vec::new();
+    let mut ignored_invalid_file_count = 0;
+    for entry in fs::read_dir(directory)
         .map_err(|_| "AUTOMATIC_BACKUP_STATUS_FAILED".to_string())?
         .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let file_type = entry.file_type().ok()?;
-            if !file_type.is_file() {
-                return None;
-            }
-            let name = entry.file_name();
-            let name = name.to_str()?;
-            let timestamp = name
-                .strip_prefix(AUTOMATIC_BACKUP_PREFIX)?
-                .strip_suffix(AUTOMATIC_BACKUP_SUFFIX)?
-                .parse()
-                .ok()?;
-            Some(AutomaticBackupFile {
+    {
+        if !entry.file_type().is_ok_and(|file_type| file_type.is_file()) {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(timestamp) = name
+            .strip_prefix(AUTOMATIC_BACKUP_PREFIX)
+            .and_then(|value| value.strip_suffix(AUTOMATIC_BACKUP_SUFFIX))
+            .and_then(|value| value.parse().ok())
+        else {
+            continue;
+        };
+        match fs::read(entry.path()).and_then(|content| {
+            automatic_backup_summary(&content).map_err(|error| std::io::Error::other(error))
+        }) {
+            Ok(counts) => valid.push(AutomaticBackupFile {
                 path: entry.path(),
                 timestamp,
-            })
-        })
-        .collect::<Vec<_>>();
-    files.sort_by_key(|file| file.timestamp);
-    Ok(files)
+                counts,
+            }),
+            Err(_) => ignored_invalid_file_count += 1,
+        }
+    }
+    valid.sort_by_key(|file| file.timestamp);
+    Ok(AutomaticBackupInventory {
+        valid,
+        ignored_invalid_file_count,
+    })
 }
 
 fn status_from_files(
-    files: &[AutomaticBackupFile],
+    inventory: &AutomaticBackupInventory,
     now: u64,
     created: bool,
 ) -> AutomaticBackupStatus {
-    let latest = files.iter().rev().find(|file| {
+    let latest = inventory.valid.iter().rev().find(|file| {
         file.timestamp <= now.saturating_add(AUTOMATIC_BACKUP_FUTURE_TOLERANCE_SECONDS)
     });
     let backup_needed = latest.is_none_or(|file| {
@@ -1194,6 +1429,10 @@ fn status_from_files(
         created_at_ms: latest.map(|file| file.timestamp.saturating_mul(1_000)),
         backup_needed,
         created,
+        verified: latest.is_some(),
+        counts: latest.map(|file| file.counts.clone()),
+        ignored_invalid_file_count: inventory.ignored_invalid_file_count,
+        error_code: None,
     }
 }
 
@@ -1202,6 +1441,55 @@ fn prune_automatic_backups(files: &mut Vec<AutomaticBackupFile>) {
     let remove_count = files.len().saturating_sub(AUTOMATIC_BACKUP_RETENTION);
     for old in files.drain(..remove_count) {
         let _ = fs::remove_file(old.path);
+    }
+}
+
+fn automatic_backup_summary(content: &[u8]) -> Result<AutomaticBackupCounts, String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(content).map_err(|_| "AUTOMATIC_BACKUP_INVALID_JSON".to_string())?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| "AUTOMATIC_BACKUP_INVALID_STRUCTURE".to_string())?;
+    let version = object
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "AUTOMATIC_BACKUP_UNSUPPORTED_VERSION".to_string())?;
+    if !(1..=5).contains(&version) {
+        return Err("AUTOMATIC_BACKUP_UNSUPPORTED_VERSION".into());
+    }
+    let stocks = backup_array_count(object, "stocks", true)?;
+    let plans = backup_array_count(object, "plans", true)?;
+    let trades = backup_array_count(object, "trades", true)?;
+    let extended = version >= 2;
+    let current = version >= 4;
+    if version == 5 {
+        backup_array_count(object, "dashboardNotes", true)?;
+        backup_array_count(object, "earningsEvents", true)?;
+    }
+    Ok(AutomaticBackupCounts {
+        accounts: backup_array_count(object, "accounts", version == 5)?,
+        stocks,
+        plans,
+        trades,
+        observations: backup_array_count(object, "observations", extended)?,
+        reviews: backup_array_count(object, "reviews", extended)?,
+        rules: backup_array_count(object, "rules", extended)?,
+        notes: backup_array_count(object, "notes", current)?,
+    })
+}
+
+fn backup_array_count(
+    object: &serde_json::Map<String, serde_json::Value>,
+    name: &str,
+    required: bool,
+) -> Result<u64, String> {
+    match object.get(name) {
+        Some(value) => value
+            .as_array()
+            .map(|items| items.len() as u64)
+            .ok_or_else(|| "AUTOMATIC_BACKUP_INVALID_STRUCTURE".to_string()),
+        None if required => Err("AUTOMATIC_BACKUP_INVALID_STRUCTURE".into()),
+        None => Ok(0),
     }
 }
 
@@ -1258,10 +1546,7 @@ pub fn run() {
 #[cfg(test)]
 mod encrypted_backup_tests {
     use super::*;
-    use std::sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, Barrier,
-    };
+    use std::sync::{Arc, Barrier};
 
     const PASSWORD: &str = "correct horse battery staple";
     const BACKUP: &str = r#"{"version":4,"stocks":[{"name":"삼성전자"}],"plans":[],"trades":[],"memo":"장기 투자 메모","amount":1200000}"#;
@@ -1389,27 +1674,162 @@ mod encrypted_backup_tests {
         path
     }
 
-    fn create_backup_file(directory: &Path, timestamp: u64) {
+    fn backup_payload(stocks: usize, trades: usize) -> String {
+        serde_json::json!({
+            "version": 5,
+            "exportedAt": "2026-08-16T00:00:00.000Z",
+            "accounts": [],
+            "stocks": vec![serde_json::json!({"id": "stock"}); stocks],
+            "plans": [],
+            "trades": vec![serde_json::json!({"id": "trade"}); trades],
+            "observations": [],
+            "reviews": [],
+            "rules": [],
+            "notes": [],
+            "language": "en",
+            "dashboardNotes": [],
+            "earningsEvents": [],
+            "displayCurrency": "KRW"
+        })
+        .to_string()
+    }
+
+    fn source_counts(count: u64) -> Vec<AutomaticBackupSourceCount> {
+        AUTOMATIC_BACKUP_SOURCE_COLLECTIONS
+            .iter()
+            .map(|collection| AutomaticBackupSourceCount {
+                collection: (*collection).into(),
+                count,
+            })
+            .collect()
+    }
+
+    fn create_backup_file(directory: &Path, timestamp: u64) -> PathBuf {
         fs::create_dir_all(directory).unwrap();
-        fs::write(
-            directory.join(format!(
-                "{AUTOMATIC_BACKUP_PREFIX}{timestamp}{AUTOMATIC_BACKUP_SUFFIX}"
-            )),
-            b"{}",
+        let path = directory.join(format!(
+            "{AUTOMATIC_BACKUP_PREFIX}{timestamp}{AUTOMATIC_BACKUP_SUFFIX}"
+        ));
+        fs::write(&path, backup_payload(1, 2)).unwrap();
+        path
+    }
+
+    #[test]
+    fn automatic_backup_source_counts_require_the_exact_allowlist() {
+        let expected = source_counts(2);
+        assert!(verify_automatic_backup_source_counts(&expected, &expected).is_ok());
+
+        let mut duplicate = expected.clone();
+        duplicate[1].collection = duplicate[0].collection.clone();
+        assert_eq!(
+            verify_automatic_backup_source_counts(&duplicate, &expected),
+            Err("AUTOMATIC_BACKUP_SOURCE_COUNTS_INVALID".into())
+        );
+
+        let missing = &expected[..expected.len() - 1];
+        assert_eq!(
+            verify_automatic_backup_source_counts(missing, &expected),
+            Err("AUTOMATIC_BACKUP_SOURCE_COUNTS_INVALID".into())
+        );
+
+        let mut unknown = expected.clone();
+        unknown[0].collection = "unknown".into();
+        assert_eq!(
+            verify_automatic_backup_source_counts(&unknown, &expected),
+            Err("AUTOMATIC_BACKUP_SOURCE_COUNTS_INVALID".into())
+        );
+
+        let mut mismatch = expected.clone();
+        mismatch[1].count += 1;
+        assert_eq!(
+            verify_automatic_backup_source_counts(&mismatch, &expected),
+            Err("AUTOMATIC_BACKUP_SOURCE_COUNT_MISMATCH".into())
+        );
+    }
+
+    #[test]
+    fn source_count_mismatch_creates_nothing_and_prunes_nothing() {
+        let directory = temporary_backup_directory("count-mismatch");
+        for timestamp in 1..=7 {
+            create_backup_file(&directory, timestamp);
+        }
+        let raw = source_counts(1);
+        let mut provided = raw.clone();
+        provided[1].count = 0;
+        assert_eq!(
+            verify_automatic_backup_source_counts(&provided, &raw),
+            Err("AUTOMATIC_BACKUP_SOURCE_COUNT_MISMATCH".into())
+        );
+        assert_eq!(automatic_backup_files(&directory).unwrap().valid.len(), 7);
+        assert!(!directory
+            .join(format!(
+                "{AUTOMATIC_BACKUP_PREFIX}100000{AUTOMATIC_BACKUP_SUFFIX}"
+            ))
+            .exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn negative_source_count_is_rejected_during_deserialization() {
+        assert!(serde_json::from_str::<AutomaticBackupSourceCount>(
+            r#"{"collection":"stocks","count":-1}"#
         )
-        .unwrap();
+        .is_err());
+    }
+
+    #[test]
+    fn automatic_backup_summary_rejects_invalid_or_unsupported_payloads() {
+        assert_eq!(
+            automatic_backup_summary(b"not-json"),
+            Err("AUTOMATIC_BACKUP_INVALID_JSON".into())
+        );
+        assert_eq!(
+            automatic_backup_summary(br#"{"version":6,"stocks":[],"plans":[],"trades":[]}"#),
+            Err("AUTOMATIC_BACKUP_UNSUPPORTED_VERSION".into())
+        );
+        assert_eq!(
+            automatic_backup_summary(br#"{"version":5,"stocks":[],"trades":[]}"#),
+            Err("AUTOMATIC_BACKUP_INVALID_STRUCTURE".into())
+        );
+        let missing_settings = serde_json::json!({
+            "version": 5, "accounts": [], "stocks": [], "plans": [], "trades": [],
+            "observations": [], "reviews": [], "rules": [], "notes": []
+        });
+        assert_eq!(
+            automatic_backup_summary(missing_settings.to_string().as_bytes()),
+            Err("AUTOMATIC_BACKUP_INVALID_STRUCTURE".into())
+        );
+        assert_eq!(
+            automatic_backup_summary(backup_payload(3, 4).as_bytes()).unwrap(),
+            AutomaticBackupCounts {
+                accounts: 0,
+                stocks: 3,
+                plans: 0,
+                trades: 4,
+                observations: 0,
+                reviews: 0,
+                rules: 0,
+                notes: 0,
+            }
+        );
+
+        let legacy = br#"{"version":1,"stocks":[],"plans":[],"trades":[]}"#;
+        assert_eq!(automatic_backup_summary(legacy).unwrap().notes, 0);
     }
 
     #[test]
     fn automatic_backup_creates_and_reports_first_file() {
         let directory = temporary_backup_directory("first");
-        let result = ensure_automatic_backup_in_directory(&directory, "backup", 10_000).unwrap();
+        let content = backup_payload(3, 4);
+        let result = ensure_automatic_backup_in_directory(&directory, &content, 10_000).unwrap();
         assert!(result.created);
+        assert!(result.verified);
+        assert_eq!(result.counts.unwrap().stocks, 3);
         assert_eq!(result.created_at_ms, Some(10_000_000));
         assert_eq!(
             automatic_backup_status(&directory, 10_000).unwrap().path,
             result.path
         );
+        assert_eq!(fs::read_to_string(result.path.unwrap()).unwrap(), content);
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -1417,11 +1837,12 @@ mod encrypted_backup_tests {
     fn automatic_backup_reuses_recent_file_and_replaces_old_file() {
         let directory = temporary_backup_directory("age");
         create_backup_file(&directory, 100_000);
-        let recent = ensure_automatic_backup_in_directory(&directory, "new", 100_100).unwrap();
+        let content = backup_payload(1, 2);
+        let recent = ensure_automatic_backup_in_directory(&directory, &content, 100_100).unwrap();
         assert!(!recent.created);
         let old = ensure_automatic_backup_in_directory(
             &directory,
-            "new",
+            &content,
             100_000 + AUTOMATIC_BACKUP_INTERVAL_SECONDS,
         )
         .unwrap();
@@ -1440,7 +1861,9 @@ mod encrypted_backup_tests {
             &directory,
             20_000 + AUTOMATIC_BACKUP_FUTURE_TOLERANCE_SECONDS + 1,
         );
-        let result = ensure_automatic_backup_in_directory(&directory, "current", 20_000).unwrap();
+        let result =
+            ensure_automatic_backup_in_directory(&directory, &backup_payload(1, 2), 20_000)
+                .unwrap();
         assert!(result.created);
         assert_eq!(result.created_at_ms, Some(20_000_000));
         fs::remove_dir_all(directory).unwrap();
@@ -1451,10 +1874,75 @@ mod encrypted_backup_tests {
         let directory = temporary_backup_directory("failure");
         fs::write(&directory, b"not a directory").unwrap();
         assert_eq!(
-            ensure_automatic_backup_in_directory(&directory, "backup", 30_000),
-            Err("AUTOMATIC_BACKUP_DIRECTORY_FAILED".into())
+            ensure_automatic_backup_in_directory(&directory, &backup_payload(1, 2), 30_000),
+            Err("AUTOMATIC_BACKUP_STATUS_FAILED".into())
         );
         fs::remove_file(directory).unwrap();
+    }
+
+    #[test]
+    fn invalid_payload_never_creates_or_prunes_a_backup() {
+        let directory = temporary_backup_directory("invalid-payload");
+        for timestamp in 1..=7 {
+            create_backup_file(&directory, timestamp);
+        }
+        assert_eq!(
+            ensure_automatic_backup_in_directory(&directory, "{}", 100_000),
+            Err("AUTOMATIC_BACKUP_UNSUPPORTED_VERSION".into())
+        );
+        assert_eq!(automatic_backup_files(&directory).unwrap().valid.len(), 7);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn verification_failures_clean_up_and_preserve_prior_backups() {
+        for fault in [
+            AutomaticBackupWriteFault::TempReadFailure,
+            AutomaticBackupWriteFault::TempReadMismatch,
+            AutomaticBackupWriteFault::PublishFailure,
+            AutomaticBackupWriteFault::FinalReadFailure,
+            AutomaticBackupWriteFault::FinalReadMismatch,
+        ] {
+            let directory = temporary_backup_directory(&format!("fault-{fault:?}"));
+            for timestamp in 1..=7 {
+                create_backup_file(&directory, timestamp);
+            }
+            assert!(ensure_automatic_backup_in_directory_with_fault(
+                &directory,
+                &backup_payload(1, 2),
+                100_000,
+                fault,
+            )
+            .is_err());
+            let inventory = automatic_backup_files(&directory).unwrap();
+            assert_eq!(inventory.valid.len(), 7);
+            assert!(!directory
+                .join(format!(
+                    "{AUTOMATIC_BACKUP_PREFIX}100000{AUTOMATIC_BACKUP_SUFFIX}"
+                ))
+                .exists());
+            assert!(fs::read_dir(&directory)
+                .unwrap()
+                .filter_map(Result::ok)
+                .all(|entry| !entry.file_name().to_string_lossy().ends_with(".tmp")));
+            fs::remove_dir_all(directory).unwrap();
+        }
+    }
+
+    #[test]
+    fn existing_destination_is_never_overwritten_or_deleted() {
+        let directory = temporary_backup_directory("no-overwrite");
+        fs::create_dir_all(&directory).unwrap();
+        let final_path = directory.join(format!(
+            "{AUTOMATIC_BACKUP_PREFIX}100000{AUTOMATIC_BACKUP_SUFFIX}"
+        ));
+        fs::write(&final_path, b"diagnostic-invalid-file").unwrap();
+        assert_eq!(
+            ensure_automatic_backup_in_directory(&directory, &backup_payload(1, 2), 100_000),
+            Err("AUTOMATIC_BACKUP_RENAME_FAILED".into())
+        );
+        assert_eq!(fs::read(&final_path).unwrap(), b"diagnostic-invalid-file");
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
@@ -1467,7 +1955,8 @@ mod encrypted_backup_tests {
                 let barrier = Arc::clone(&barrier);
                 std::thread::spawn(move || {
                     barrier.wait();
-                    ensure_automatic_backup_in_directory(&directory, "backup", 40_000).unwrap()
+                    ensure_automatic_backup_in_directory(&directory, &backup_payload(1, 2), 40_000)
+                        .unwrap()
                 })
             })
             .collect::<Vec<_>>();
@@ -1476,27 +1965,72 @@ mod encrypted_backup_tests {
             .map(|handle| handle.join().unwrap())
             .collect::<Vec<_>>();
         assert_eq!(results.iter().filter(|result| result.created).count(), 1);
-        assert_eq!(automatic_backup_files(&directory).unwrap().len(), 1);
+        assert_eq!(automatic_backup_files(&directory).unwrap().valid.len(), 1);
         fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
-    fn retention_keeps_seven_normal_files_and_ignores_temporary_files() {
+    fn invalid_newest_file_is_ignored_and_reported() {
+        let directory = temporary_backup_directory("invalid-newest");
+        create_backup_file(&directory, 50_000);
+        let invalid = directory.join(format!(
+            "{AUTOMATIC_BACKUP_PREFIX}60000{AUTOMATIC_BACKUP_SUFFIX}"
+        ));
+        fs::write(&invalid, b"not-json").unwrap();
+        let status = automatic_backup_status(&directory, 50_100).unwrap();
+        assert_eq!(status.created_at_ms, Some(50_000_000));
+        assert!(status.verified);
+        assert_eq!(status.ignored_invalid_file_count, 1);
+        assert_eq!(status.counts.unwrap().trades, 2);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn malformed_or_far_future_backup_does_not_suppress_a_due_backup() {
+        let directory = temporary_backup_directory("malformed-due");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join(format!(
+                "{AUTOMATIC_BACKUP_PREFIX}999999{AUTOMATIC_BACKUP_SUFFIX}"
+            )),
+            b"not-json",
+        )
+        .unwrap();
+        let status = automatic_backup_status(&directory, 10_000).unwrap();
+        assert!(status.backup_needed);
+        assert!(!status.verified);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn retention_runs_only_after_success_and_preserves_invalid_and_temporary_files() {
         let directory = temporary_backup_directory("retention");
-        for timestamp in 50_000..50_008 {
+        for timestamp in 1..=7 {
             create_backup_file(&directory, timestamp);
         }
+        let invalid = directory.join(format!(
+            "{AUTOMATIC_BACKUP_PREFIX}8{AUTOMATIC_BACKUP_SUFFIX}"
+        ));
+        fs::write(&invalid, b"invalid").unwrap();
         fs::write(
             directory.join(".tradejournal-auto-99999.json.tmp"),
             b"partial",
         )
         .unwrap();
-        let result = ensure_automatic_backup_in_directory(&directory, "unused", 50_008).unwrap();
-        assert!(!result.created);
-        assert_eq!(
-            automatic_backup_files(&directory).unwrap().len(),
-            AUTOMATIC_BACKUP_RETENTION
-        );
+        let result = ensure_automatic_backup_in_directory(
+            &directory,
+            &backup_payload(1, 2),
+            AUTOMATIC_BACKUP_INTERVAL_SECONDS + 100,
+        )
+        .unwrap();
+        assert!(result.created);
+        assert_eq!(automatic_backup_files(&directory).unwrap().valid.len(), 7);
+        assert!(!directory
+            .join(format!(
+                "{AUTOMATIC_BACKUP_PREFIX}1{AUTOMATIC_BACKUP_SUFFIX}"
+            ))
+            .exists());
+        assert!(invalid.exists());
         assert!(directory.join(".tradejournal-auto-99999.json.tmp").exists());
         fs::remove_dir_all(directory).unwrap();
     }

@@ -55,6 +55,14 @@ describe("Sync Contract v1", () => {
     expect(() => validateSyncCandidate(collections([{ ...trade("bad", 1), stockId: "missing" }]))).toThrow("SYNC_INVALID_STOCK_REFERENCE");
   });
 
+  it("accepts EODHD Stock metadata and rejects unknown Sync provider values", () => {
+    const eodhd = { ...stock, providerRefs: [{ provider: "eodhd" as const, symbol: "NVDA.US", exchangeCode: "US" }], quotePreference: "auto" as const };
+    expect(() => validateSyncCandidate({ ...collections(), stocks: [eodhd] })).not.toThrow();
+    const projected = toStockSyncPayload(eodhd);
+    expect(projected.providerRefs).toEqual(eodhd.providerRefs);
+    expect(() => validateSyncCandidate({ ...collections(), stocks: [{ ...eodhd, providerRefs: [{ provider: "future-provider", symbol: "NVDA.US" }] }] as unknown as Stock[] })).toThrow("provider 연결");
+  });
+
   it("proves local to mock cloud to remote merge without quantity drift or echo persistence", async () => {
     const local = collections(); const cloud = new MockSyncTransport(); const save = vi.fn(async () => undefined); const acknowledge = vi.fn(async () => undefined);
     const first = await runForegroundSync(cloud, { load: async () => local, save, acknowledge }); expect(first.outgoing).toHaveLength(3);

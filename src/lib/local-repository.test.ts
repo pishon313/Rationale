@@ -61,6 +61,23 @@ describe("browser local repository", () => {
     expect(localStorage.getItem("tradejournal.stocks.v1")).toBe(raw);
   });
 
+  it("loads mixed valid Stocks including EODHD without creating quarantine", async () => {
+    const eodhd = { ...sampleStocks[0], providerRefs: [{ provider: "eodhd" as const, symbol: "005930.KO" }], quotePreference: "auto" as const, priceSource: "eodhd" as const, priceFreshness: "eod" as const, priceStatus: "online" as const };
+    const manual = { ...sampleStocks[1], providerRefs: [], quotePreference: "manual" as const };
+    localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([eodhd, manual]));
+
+    await expect(loadCollection<Stock>("stocks", [])).resolves.toEqual([eodhd, manual]);
+    expect(getCorruptionSnapshot().collections).toEqual([]);
+    expect(Object.keys(localStorage).some((key) => key.startsWith("tradejournal.corrupt.stocks."))).toBe(false);
+  });
+
+  it("still quarantines invalid Stock provider metadata", async () => {
+    const invalid = { ...sampleStocks[0], providerRefs: [{ provider: "manual", symbol: "005930.KO" }], quotePreference: "auto" };
+    localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([invalid]));
+    await expect(loadCollection<Stock>("stocks", [])).resolves.toEqual([]);
+    expect(getCorruptionSnapshot().collections[0]).toMatchObject({ collection: "stocks", errorType: "INVALID_RECORD" });
+  });
+
   it("persists valid mapping profiles and quarantines invalid browser profiles", async () => {
     await saveCollection("import-mapping-profiles", [mappingProfile]);
     await expect(loadCollection<ImportMappingProfile>("import-mapping-profiles", [])).resolves.toEqual([mappingProfile]);
@@ -290,6 +307,15 @@ describe("Tauri local repository", () => {
       expect.objectContaining({ recordId: "broken-shape", errorType: "INVALID_RECORD" }),
     ] });
     expect(getCorruptionSnapshot().collections[0]).toMatchObject({ collection: "stocks", source: "sqlite", affectedRecordCount: 2, validRecordCount: 2, invalidIndexes: [2, 3] });
+  });
+
+  it("loads an EODHD SQLite Stock without creating a quarantine entry", async () => {
+    const eodhd = { ...sampleStocks[0], providerRefs: [{ provider: "eodhd" as const, symbol: "005930.KO" }], quotePreference: "auto" as const, priceSource: "eodhd" as const, priceFreshness: "eod" as const, priceStatus: "online" as const };
+    sqlMocks.load.mockResolvedValue({ select: vi.fn().mockResolvedValue([{ id: eodhd.id, data: JSON.stringify(eodhd), updated_at: eodhd.updatedAt }]), execute: vi.fn() });
+
+    await expect(loadCollection<Stock>("stocks", [])).resolves.toEqual([eodhd]);
+    expect(sqlMocks.invoke).not.toHaveBeenCalledWith("quarantine_corrupt_records", expect.anything());
+    expect(getCorruptionSnapshot().collections).toEqual([]);
   });
 
   it("loads valid SQLite mapping profiles and quarantines invalid ones", async () => {

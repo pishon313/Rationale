@@ -86,6 +86,13 @@ describe("validateBackupPayload", () => {
     expect(parsed.trades.every((trade) => parsed.accounts.some((account) => account.id === trade.accountId))).toBe(true);
   });
 
+  it("preserves EODHD metadata through Backup V5 validation and restore writes", () => {
+    const eodhdStock = { ...sampleStocks[0], countryCode: "US", exchangeCode: "US", providerRefs: [{ provider: "eodhd" as const, symbol: "SHOP.US", exchangeCode: "US" }], quotePreference: "auto" as const, priceSource: "eodhd" as const, priceFreshness: "eod" as const, priceStatus: "online" as const };
+    const parsed = validateBackupPayload(version5({ stocks: [eodhdStock] }));
+    expect(parsed.stocks[0]).toEqual(eodhdStock);
+    expect(backupWrites(parsed).find((write) => write.collection === "stocks")?.values).toEqual([eodhdStock]);
+  });
+
   it("preserves imported Trade provenance and journal status in Backup V5", () => {
     const backup = version5();
     const imported = { ...backup.trades[0], journalStatus: "recorded" as const, memo: "restored journal", deletedAt: null, origin: { kind: "fileImport" as const, sourceKey: "file:v2:abc", importBatchId: "file:v1:batch:abc", provider: "broker-renamed", externalExecutionId: "exec-1", importedAt: valid.exportedAt, sourceRow: 2, timePrecision: "second" as const } };

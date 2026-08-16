@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { currencies, investmentTypes, markets, stockStatuses, stockViews } from "./types";
+import { currencies, investmentTypes, marketDataProviders, markets, stockStatuses, stockViews } from "./types";
 
 const optionalNumber = z.preprocess(
   (value) => value === "" || value == null ? null : Number(value),
@@ -14,7 +14,7 @@ export const stockFormSchema = z.object({
   countryCode: z.string().trim().toUpperCase().regex(/^$|^[A-Z]{2}$/, "국가 코드는 ISO 두 글자로 입력해 주세요."),
   exchangeCode: z.string().trim().max(30),
   providerSymbol: z.string().trim().max(40),
-  provider: z.enum(["manual", "eodhd", "twelve-data"]),
+  provider: z.enum(marketDataProviders),
   assetType: z.string().trim().min(1, "자산 유형을 입력해 주세요."),
   sector: z.string().trim().max(60),
   status: z.enum(stockStatuses),

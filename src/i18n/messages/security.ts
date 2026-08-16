@@ -30,6 +30,15 @@ const en = {
   "초기화하지 못했습니다. 손상 데이터 보호 상태를 유지합니다.": "Reset failed. Corruption protection remains active.",
   "진단 파일에는 투자 기록과 메모가 포함될 수 있습니다. 안전한 위치에 저장할까요?": "The diagnostic file may contain investment records and notes. Save it in a secure location?",
   "격리된 원본을 내보내지 못했습니다.": "Could not export quarantined originals.",
+  "자동 백업 오류": "Automatic backup error",
+  "기존 자동 백업은 그대로 보존되었습니다.": "Existing automatic backups were preserved.",
+  "자동 백업 상태를 확인하지 못했습니다.": "Could not check automatic backup status.",
+  "손상된 데이터를 먼저 복구해야 완전한 자동 백업을 만들 수 있습니다.": "Recover the damaged data before creating a complete automatic backup.",
+  "저장 원본과 백업 항목 수가 달라 자동 백업을 중단했습니다.": "Automatic backup stopped because the source and backup item counts differ.",
+  "백업 데이터 검증에 실패하여 자동 백업을 중단했습니다.": "Automatic backup stopped because backup validation failed.",
+  "자동 백업 파일을 안전하게 기록하고 검증하지 못했습니다.": "Could not safely write and verify the automatic backup file.",
+  "검증 상태": "Verification status", "검증됨": "Verified",
+  "읽을 수 없는 기존 자동 백업 파일을 무시했습니다.": "An unreadable existing automatic backup file was ignored.",
 };
 
 export const securityMessages: MessageCatalog = {

@@ -5,11 +5,17 @@ export const stockStatuses = ["보유", "매수 대기", "관찰", "매도 완�
 export const investmentTypes = ["장기 코어", "중기 투자", "스윙", "단기", "관찰 전용"] as const;
 export const stockViews = ["강세", "중립", "약세", "판단 보류"] as const;
 
-export const marketDataProviders = ["manual", "eodhd", "twelve-data"] as const;
+export const remoteMarketDataProviders = ["eodhd", "twelve-data"] as const;
+export const marketDataProviders = ["manual", ...remoteMarketDataProviders] as const;
+export const quotePreferences = ["auto", ...marketDataProviders] as const;
+export const quoteFreshnessValues = ["realtime", "delayed", "eod", "manual", "unknown"] as const;
+export const priceStatuses = ["manual", "online", "offline", "error"] as const;
 export type MarketDataProvider = (typeof marketDataProviders)[number];
-export type ProviderInstrumentRef = { provider: Exclude<MarketDataProvider, "manual">; symbol: string; exchangeCode?: string | null };
-export type QuotePreference = "auto" | "manual" | "eodhd" | "twelve-data";
-export type QuoteFreshness = "realtime" | "delayed" | "eod" | "manual" | "unknown";
+export type RemoteMarketDataProvider = (typeof remoteMarketDataProviders)[number];
+export type ProviderInstrumentRef = { provider: RemoteMarketDataProvider; symbol: string; exchangeCode?: string | null };
+export type QuotePreference = (typeof quotePreferences)[number];
+export type QuoteFreshness = (typeof quoteFreshnessValues)[number];
+export type PriceStatus = (typeof priceStatuses)[number];
 
 export type Stock = {
   id: string;
@@ -34,7 +40,7 @@ export type Stock = {
   priceSource?: MarketDataProvider;
   priceFreshness?: QuoteFreshness;
   priceDelayMinutes?: number | null;
-  priceStatus?: "manual" | "online" | "offline" | "error";
+  priceStatus?: PriceStatus;
   targetPrice: number | null;
   averagePrice: number;
   quantity: number;

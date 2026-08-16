@@ -4,7 +4,7 @@ import type { Currency } from "@/domain/currency";
 import { conditionTypes, planStatuses, scenarioTypes, type BuyPlan } from "@/features/plans/types";
 import { reviewEvaluations, type Review } from "@/features/reviews/types";
 import { ruleTypes, severities, type InvestmentRule } from "@/features/rules/types";
-import { currencies, investmentTypes, markets, stockStatuses, stockViews, type Stock } from "@/features/stocks/types";
+import { currencies, investmentTypes, marketDataProviders, markets, priceStatuses, quoteFreshnessValues, quotePreferences, remoteMarketDataProviders, stockStatuses, stockViews, type Stock } from "@/features/stocks/types";
 import { tradeJournalStatuses, tradeOriginKinds, tradeTypes, type Trade } from "@/features/trades/types";
 import { accountKinds } from "@/features/accounts/types";
 import type { InvestmentAccount } from "@/features/accounts/types";
@@ -176,9 +176,9 @@ function validateStockRecord(stock: Record<string, unknown>, index: number) {
   requireEnum(stock.investmentType, investmentTypes, label, "투자 유형");
   requireEnum(stock.currentView, stockViews, label, "현재 판단");
   if (stock.countryCode !== undefined && stock.countryCode !== null && (typeof stock.countryCode !== "string" || !/^[A-Z]{2}$/.test(stock.countryCode))) throw new Error(`${label}의 국가 코드가 올바르지 않습니다.`);
-  if (stock.providerRefs !== undefined) { if (!Array.isArray(stock.providerRefs)) throw new Error(`${label}의 provider 연결이 올바르지 않습니다.`); for (const ref of stock.providerRefs) { if (!isRecord(ref) || !["eodhd", "twelve-data"].includes(String(ref.provider)) || typeof ref.symbol !== "string" || !ref.symbol.trim()) throw new Error(`${label}의 provider 연결이 올바르지 않습니다.`); } }
-  if (stock.quotePreference !== undefined && !["auto", "manual", "eodhd", "twelve-data"].includes(String(stock.quotePreference))) throw new Error(`${label}의 가격 제공자 설정이 올바르지 않습니다.`);
-  if (stock.priceFreshness !== undefined && !["realtime", "delayed", "eod", "manual", "unknown"].includes(String(stock.priceFreshness))) throw new Error(`${label}의 가격 시점이 올바르지 않습니다.`);
+  if (stock.providerRefs !== undefined) { if (!Array.isArray(stock.providerRefs)) throw new Error(`${label}의 provider 연결이 올바르지 않습니다.`); for (const ref of stock.providerRefs) { if (!isRecord(ref) || !remoteMarketDataProviders.includes(ref.provider as typeof remoteMarketDataProviders[number]) || typeof ref.symbol !== "string" || !ref.symbol.trim()) throw new Error(`${label}의 provider 연결이 올바르지 않습니다.`); } }
+  if (stock.quotePreference !== undefined) requireEnum(stock.quotePreference, quotePreferences, label, "가격 제공자 설정");
+  if (stock.priceFreshness !== undefined) requireEnum(stock.priceFreshness, quoteFreshnessValues, label, "가격 시점");
   requireNonNegativeNumbers(stock, ["currentPrice", "averagePrice", "quantity"], label);
   requireNullableNumber(stock.targetPrice, label, "목표 가격");
   requireStringArray(stock.tags, label, "태그");
@@ -191,8 +191,8 @@ function validateStockRecord(stock: Record<string, unknown>, index: number) {
   if (stock.reviewNote !== undefined && typeof stock.reviewNote !== "string") throw new Error(`${label}의 검토 메모가 올바르지 않습니다.`);
   if (stock.priceUpdatedAt !== undefined) requireNullableTimestamp(stock.priceUpdatedAt, label, "가격 수정 일시");
   if (stock.priceQuotedAt !== undefined) requireNullableTimestamp(stock.priceQuotedAt, label, "시세 기준 일시");
-  if (stock.priceSource !== undefined) requireEnum(stock.priceSource, ["manual", "twelve-data"] as const, label, "가격 출처");
-  if (stock.priceStatus !== undefined) requireEnum(stock.priceStatus, ["manual", "online", "offline", "error"] as const, label, "가격 상태");
+  if (stock.priceSource !== undefined) requireEnum(stock.priceSource, marketDataProviders, label, "가격 출처");
+  if (stock.priceStatus !== undefined) requireEnum(stock.priceStatus, priceStatuses, label, "가격 상태");
 }
 
 function validatePlanRecord(plan: Record<string, unknown>, index: number) {

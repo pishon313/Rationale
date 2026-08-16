@@ -1,9 +1,9 @@
 import type { Currency } from "@/domain/currency";
-import type { MarketDataProvider, QuoteFreshness, Stock } from "./types";
+import type { QuoteFreshness, RemoteMarketDataProvider, Stock } from "./types";
 
 export type InstrumentSearchResult = { provider: "eodhd"; providerSymbol: string; ticker: string; name: string; countryCode: string | null; countryName: string | null; exchangeCode: string; exchangeMic: string | null; exchangeName: string | null; currency: string; assetType: string; isin: string | null; previousClose: number | null; previousCloseDate: string | null; isPrimary: boolean | null };
-export type MarketQuote = { provider: Exclude<MarketDataProvider, "manual">; providerSymbol: string; price: number; currency: string; exchangeCode: string | null; countryCode: string | null; quotedAt: string; freshness: QuoteFreshness; delayMinutes: number | null; isMarketOpen: boolean | null };
-export type QuoteRequest = { provider: "eodhd" | "twelve-data"; providerSymbol: string; exchangeCode?: string | null; expectedCurrency: Currency; expectedCountryCode?: string | null };
+export type MarketQuote = { provider: RemoteMarketDataProvider; providerSymbol: string; price: number; currency: string; exchangeCode: string | null; countryCode: string | null; quotedAt: string; freshness: QuoteFreshness; delayMinutes: number | null; isMarketOpen: boolean | null };
+export type QuoteRequest = { provider: RemoteMarketDataProvider; providerSymbol: string; exchangeCode?: string | null; expectedCurrency: Currency; expectedCountryCode?: string | null };
 
 export function marketFromCountry(countryCode: string | null | undefined): Stock["market"] {
   return ({ KR: "한국", US: "미국", JP: "일본", HK: "홍콩", CA: "캐나다" } as const)[countryCode?.toUpperCase() as "KR"] ?? "기타";

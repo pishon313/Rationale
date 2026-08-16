@@ -13,7 +13,26 @@ import { migrateLegacyAccounts } from "@/features/accounts/migrate-accounts";
 import { fallbackLanguagePreference, type LanguagePreference } from "@/i18n/i18n-provider";
 import type { Locale } from "@/i18n/types";
 import { getCorruptionSnapshot, loadCollection, saveCollectionsAtomically, type CollectionWrite } from "@/lib/local-repository";
-import type { DashboardNoteBackup, EarningsEventBackup, ValidatedBackup } from "./backup";
+import { validateBackupPayload, type DashboardNoteBackup, type EarningsEventBackup, type ValidatedBackup } from "./backup";
+
+export const automaticBackupSourceCollections = [
+  "accounts",
+  "stocks",
+  "plans",
+  "trades",
+  "observations",
+  "reviews",
+  "rules",
+  "notes",
+  "language-preferences",
+  "dashboard-notes",
+  "earnings-events",
+  "preferences",
+] as const;
+
+export type AutomaticBackupSourceCollection = (typeof automaticBackupSourceCollections)[number];
+export type AutomaticBackupSourceCount = { collection: AutomaticBackupSourceCollection; count: number };
+export type BackupCandidate = { backup: BackupV5; sourceCounts: AutomaticBackupSourceCount[] };
 
 export type BackupV5 = {
   version: 5;
@@ -35,7 +54,7 @@ export type BackupV5 = {
 export type RestoreSnapshot = { id: "latest"; content: string; createdAt: string; updatedAt: string };
 export const restoreSnapshotCollection = "restore-snapshots";
 
-export async function createBackupPayload(localeOverride?: Locale, options: { allowCorrupted?: boolean } = {}): Promise<BackupV5> {
+export async function createBackupCandidate(localeOverride?: Locale, options: { allowCorrupted?: boolean } = {}): Promise<BackupCandidate> {
   const [accounts, stocks, plans, trades, observations, reviews, rules, notes, languages, dashboardNotes, earningsEvents, preferences] = await Promise.all([
     loadCollection<InvestmentAccount>("accounts", []),
     loadCollection<Stock>("stocks", []),
@@ -50,13 +69,15 @@ export async function createBackupPayload(localeOverride?: Locale, options: { al
     loadCollection<EarningsEventBackup>("earnings-events", []),
     loadCollection<CurrencyPreference>("preferences", [fallbackCurrencyPreference]),
   ]);
-  const backupCollections = new Set(["accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences"]);
-  if (!options.allowCorrupted && getCorruptionSnapshot().collections.some((item) => backupCollections.has(item.collection))) {
-    throw new Error("손상된 컬렉션을 복구하기 전에는 불완전한 백업을 만들 수 없습니다.");
+  const sourceValues = [accounts, stocks, plans, trades, observations, reviews, rules, notes, languages, dashboardNotes, earningsEvents, preferences] as const;
+  const sourceCounts = automaticBackupSourceCollections.map((collection, index) => ({ collection, count: sourceValues[index].length }));
+  const sourceCollectionSet = new Set<string>(automaticBackupSourceCollections);
+  if (!options.allowCorrupted && getCorruptionSnapshot().collections.some((item) => sourceCollectionSet.has(item.collection))) {
+    throw new Error("AUTOMATIC_BACKUP_SOURCE_CORRUPTED");
   }
   const exportedAt = new Date().toISOString();
   const migrated = migrateLegacyAccounts(accounts, trades, exportedAt);
-  return {
+  const backup: BackupV5 = {
     version: 5,
     exportedAt,
     accounts: migrated.accounts,
@@ -72,6 +93,18 @@ export async function createBackupPayload(localeOverride?: Locale, options: { al
     earningsEvents,
     displayCurrency: preferences[0]?.displayCurrency ?? fallbackCurrencyPreference.displayCurrency,
   };
+  for (const collection of ["accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "dashboardNotes", "earningsEvents"] as const) {
+    if (!Array.isArray(backup[collection])) throw new Error("AUTOMATIC_BACKUP_VALIDATION_FAILED");
+  }
+  let validated: ValidatedBackup;
+  try { validated = validateBackupPayload(backup); }
+  catch { throw new Error("AUTOMATIC_BACKUP_VALIDATION_FAILED"); }
+  if (validated.version !== 5) throw new Error("AUTOMATIC_BACKUP_VALIDATION_FAILED");
+  return { backup: validated, sourceCounts };
+}
+
+export async function createBackupPayload(localeOverride?: Locale, options: { allowCorrupted?: boolean } = {}): Promise<BackupV5> {
+  return (await createBackupCandidate(localeOverride, options)).backup;
 }
 
 export function backupWrites(parsed: ValidatedBackup): CollectionWrite[] {

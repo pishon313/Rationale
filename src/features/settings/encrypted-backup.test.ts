@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { samplePlans } from "@/features/plans/sample-data";
 import { sampleStocks } from "@/features/stocks/sample-data";
 import { sampleTrades } from "@/features/trades/sample-data";
-import { decryptBackupPayload, encryptedBackupFormat, parseSelectedBackup, validateNewBackupPassword } from "./encrypted-backup";
+import { migrateLegacyAccounts } from "@/features/accounts/migrate-accounts";
+import { decryptBackupPayload, encryptedBackupFormat, encryptBackupPayload, parseSelectedBackup, validateNewBackupPassword } from "./encrypted-backup";
+import type { BackupV5 } from "./backup-service";
 
 const invokeMock = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
@@ -41,6 +43,17 @@ describe("encrypted backup routing", () => {
     invokeMock.mockResolvedValue(JSON.stringify({ ...legacy, trades: [{ ...sampleTrades[0], journalStatus: "unreviewed", origin }, ...sampleTrades.slice(1)] }));
     const restored = await decryptBackupPayload("encrypted", "password123");
     expect(restored.trades[0]).toMatchObject({ journalStatus: "unreviewed", origin });
+  });
+
+  it("preserves EODHD Stock metadata through the encrypted restore validation path", async () => {
+    const eodhdStock = { ...sampleStocks[0], providerRefs: [{ provider: "eodhd" as const, symbol: "SHOP.US" }], quotePreference: "auto" as const, priceSource: "eodhd" as const, priceFreshness: "eod" as const, priceStatus: "online" as const };
+    const migrated = migrateLegacyAccounts([], sampleTrades, legacy.exportedAt);
+    const backup: BackupV5 = { version: 5, exportedAt: legacy.exportedAt, accounts: migrated.accounts, stocks: [eodhdStock], plans: samplePlans, trades: migrated.trades, observations: [], reviews: [], rules: [], notes: [], language: "en", dashboardNotes: [], earningsEvents: [], displayCurrency: "KRW" };
+    invokeMock.mockImplementation((command: string) => Promise.resolve(command === "encrypt_backup" ? "encrypted" : JSON.stringify(backup)));
+    await expect(encryptBackupPayload(backup, "password123")).resolves.toBe("encrypted");
+    expect(invokeMock).toHaveBeenCalledWith("encrypt_backup", { content: JSON.stringify(backup), password: "password123" });
+    const restored = await decryptBackupPayload("encrypted", "password123");
+    expect(restored.stocks[0]).toEqual(eodhdStock);
   });
 
   it("validates password length and exact confirmation without trimming", () => {
