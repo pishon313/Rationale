@@ -3,7 +3,9 @@
 import { FileSpreadsheet, Trash2, X } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { columnReferenceKey, detectImportMapping, exactProfileToAutoApply, hasDuplicateMappingProfileName, headerSignature, profileMatch, updatedMappingProfile, validateImportMapping } from "@/features/import/column-mapping";
-import { buildImportPreview, preflightImport } from "@/features/import/import-pipeline";
+import { buildImportPreview, buildPreparedImportPreview, preflightImport } from "@/features/import/import-pipeline";
+import { detectSuggestedFileAdapter, fileImportAdapterById } from "@/features/import/file-adapters/adapter-registry";
+import type { FileImportAdapterId } from "@/features/import/file-adapters/adapter-types";
 import { applySourceColumnAssignment, mappedSourceColumnKeys, mappingAdvisories, mappingReady, requiredMappingCoverage, sourceColumnAssignments, type MappingAdvisoryCode, type SourceColumnAssignment, type SourceColumnAssignmentTarget } from "@/features/import/source-column-mapping";
 import type { ImportCandidateStatus, ImportIssue, ImportMapping, ImportMappingProfile, ImportMutationPlan, ParsedTabularFile } from "@/features/import/import-types";
 import { parseImportFile } from "@/features/import/tabular-parser";
@@ -17,6 +19,7 @@ import type { Trade } from "./types";
 
 const statusLabels: Record<ImportCandidateStatus, string> = {
   ready: "추가 가능", exact_duplicate: "정확한 중복", possible_duplicate: "중복 가능성", previously_deleted: "삭제된 기록", source_conflict: "원본 충돌", rejected: "제외됨",
+  excluded_settlement: "정산 대응 행", excluded_non_trade: "비매매 계좌 활동", unsupported_activity: "지원하지 않는 거래",
 };
 const pageSize = 100;
 type ImportStage = "file" | "mapping" | "review";
@@ -27,6 +30,9 @@ export function CsvImportDialog({ stocks, accounts, existing, onCancel, onImport
   const [parsed, setParsed] = useState<ParsedTabularFile | null>(null);
   const [stage, setStage] = useState<ImportStage>("file");
   const [mapping, setMapping] = useState<ImportMapping>({});
+  const [genericMapping, setGenericMapping] = useState<ImportMapping>({});
+  const [suggestedAdapterId, setSuggestedAdapterId] = useState<FileImportAdapterId | "">("");
+  const [activeAdapterId, setActiveAdapterId] = useState<FileImportAdapterId | "">("");
   const [detectionIssues, setDetectionIssues] = useState<ImportIssue[]>([]);
   const [preview, setPreview] = useState<Awaited<ReturnType<typeof buildImportPreview>> | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -48,6 +54,8 @@ export function CsvImportDialog({ stocks, accounts, existing, onCancel, onImport
   const activeAccounts = accounts.filter((account) => !account.archivedAt);
   const [targetAccountId, setTargetAccountId] = useState(activeAccounts.find((account) => account.isDefault)?.id ?? activeAccounts[0]?.id ?? "");
   const mappingIssues = parsed ? [...detectionIssues, ...validateImportMapping(mapping, parsed.columns)] : [];
+  const suggestedAdapter = fileImportAdapterById(suggestedAdapterId);
+  const activeAdapter = fileImportAdapterById(activeAdapterId);
   const mappingDetailIssues = mappingIssues.filter((issue) => issue.code !== "IMPORT_REQUIRED_COLUMN" && issue.code !== "IMPORT_INSTRUMENT_COLUMN");
   const hasMappingErrors = mappingIssues.some((issue) => issue.severity === "error");
   const matchingProfiles = useMemo(() => parsed ? profileStore.items.map((profile) => ({ profile, match: profileMatch(profile, parsed.columns) })).filter((item) => item.match !== "incompatible") : [], [parsed, profileStore.items]);
@@ -63,7 +71,7 @@ export function CsvImportDialog({ stocks, accounts, existing, onCancel, onImport
   const pageCandidateIds = new Set(pageCandidates.map((candidate) => candidate.id));
   const selectedOnPage = [...selectedIds].filter((id) => pageCandidateIds.has(id)).length;
   const selectedOutsidePage = selectedIds.size - selectedOnPage;
-  const blockedCount = preview ? preview.summary.exact_duplicate + preview.summary.source_conflict + preview.summary.rejected : 0;
+  const blockedCount = preview ? preview.summary.exact_duplicate + preview.summary.source_conflict + preview.summary.rejected + preview.summary.unsupported_activity : 0;
 
   function cancelPendingPreviewBuild() {
     previewGeneration.current += 1;
@@ -81,10 +89,14 @@ export function CsvImportDialog({ stocks, accounts, existing, onCancel, onImport
       if (generation !== previewGeneration.current) return;
       if (!next.columns.length || !next.rows.length) throw new Error("첫 번째 시트에서 헤더와 거래 행을 찾지 못했습니다.");
       const detected = detectImportMapping(next.columns);
+      const adapterDetection = detectSuggestedFileAdapter(next);
       const exact = exactProfileToAutoApply(profileStore.items, next.columns);
       setParsed(next); setImportBatchId(`file:v1:batch:${crypto.randomUUID()}`);
       setPreview(null); setSelectedIds(new Set());
-      setMapping(exact?.bindings ?? detected.mapping);
+      const initialMapping = exact?.bindings ?? detected.mapping;
+      setMapping(initialMapping); setGenericMapping(initialMapping);
+      setSuggestedAdapterId(adapterDetection.match === "suggested" ? adapterDetection.adapterId : "");
+      setActiveAdapterId("");
       setDetectionIssues(exact ? [] : detected.issues.filter((issue) => issue.code === "IMPORT_AMBIGUOUS_COLUMN"));
       setSelectedProfileId(exact?.id ?? "");
       setProfileName(exact?.name ?? "");
@@ -108,6 +120,7 @@ export function CsvImportDialog({ stocks, accounts, existing, onCancel, onImport
   }
 
   function assignSource(assignment: SourceColumnAssignment, target: SourceColumnAssignmentTarget) {
+    if (activeAdapterId) return;
     const result = applySourceColumnAssignment(mapping, assignment.column, target);
     if (!result.ok) { setProfileError("선택한 Rationale 필드는 다른 업로드 열에서 이미 사용 중입니다."); return; }
     invalidatePreview(); setProfileError(""); setMapping(result.mapping); setIsProfileDirty(true);
@@ -119,6 +132,7 @@ export function CsvImportDialog({ stocks, accounts, existing, onCancel, onImport
   }
 
   function applyProfile(id: string) {
+    if (activeAdapterId) return;
     invalidatePreview();
     const profile = profileStore.items.find((item) => item.id === id);
     if (!profile) { detachProfileKeepingCurrentMapping(); return; }
@@ -131,7 +145,10 @@ export function CsvImportDialog({ stocks, accounts, existing, onCancel, onImport
     const generation = ++previewGeneration.current;
     setBuildingPreview(true); setFileError("");
     try {
-      const next = await buildImportPreview(parsed, mapping, { stocks, accounts, existingTrades: existing, targetAccountId, provider, importBatchId });
+      const context = { stocks, accounts, existingTrades: existing, targetAccountId, provider, importBatchId };
+      const next = activeAdapter
+        ? await buildPreparedImportPreview(activeAdapter.prepare(parsed, { importBatchId, provider: provider.trim() || null, targetAccountId }), context)
+        : await buildImportPreview(parsed, mapping, context);
       if (generation !== previewGeneration.current) return;
       setPreview(next); setPage(0);
       const defaults = next.candidates.length > pageSize ? next.candidates.slice(0, pageSize) : next.candidates;
@@ -139,6 +156,26 @@ export function CsvImportDialog({ stocks, accounts, existing, onCancel, onImport
       setStage("review");
     } catch { if (generation === previewGeneration.current) setFileError("가져오기 미리보기를 만들지 못했습니다."); }
     finally { if (generation === previewGeneration.current) setBuildingPreview(false); }
+  }
+
+  function applySuggestedAdapter() {
+    if (!parsed || !suggestedAdapter) return;
+    invalidatePreview();
+    setGenericMapping(mapping);
+    setActiveAdapterId(suggestedAdapter.id);
+    setMapping(suggestedAdapter.defaultMapping(parsed));
+    setDetectionIssues([]);
+  }
+
+  function useGenericImport() {
+    if (!activeAdapterId) {
+      setSuggestedAdapterId("");
+      return;
+    }
+    invalidatePreview();
+    setActiveAdapterId("");
+    setMapping(genericMapping);
+    setDetectionIssues([]);
   }
 
   async function saveProfile(mode: "update" | "new") {
@@ -206,26 +243,37 @@ export function CsvImportDialog({ stocks, accounts, existing, onCancel, onImport
               {mapping.accountName === undefined && <label className="text-sm font-medium">{t("이 거래를 어느 계좌로 가져올까요?")}<select required className="mt-2 h-10 w-full rounded-lg border bg-[var(--surface)] px-3" value={targetAccountId} onChange={(event) => { invalidatePreview(); setTargetAccountId(event.target.value); }}><option value="">{t("계좌 추가 필요")}</option>{activeAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>}
             </section>}
 
+            {stage === "mapping" && suggestedAdapter && !activeAdapter && <section className="rounded-xl border border-[var(--accent)] bg-[var(--accent-soft)] p-5" aria-labelledby="adapter-suggestion-title">
+              <h3 id="adapter-suggestion-title" className="font-semibold text-[var(--accent)]">{t(suggestedAdapter.suggestionTitle)}</h3>
+              <p className="mt-2 max-w-3xl text-sm leading-6">{t(suggestedAdapter.suggestionDescription)}</p>
+              <div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={applySuggestedAdapter} className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm text-white">{t(suggestedAdapter.applyLabel)}</button><button type="button" onClick={useGenericImport} className="rounded-lg border px-4 py-2 text-sm">{t("범용 가져오기 사용")}</button></div>
+            </section>}
+
+            {stage === "mapping" && activeAdapter && <section className="rounded-xl border border-[var(--accent)] p-5" aria-labelledby="adapter-active-title">
+              <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 id="adapter-active-title" className="font-semibold">{t(activeAdapter.label)}</h3><p className="mt-2 max-w-3xl text-sm text-[var(--muted)]">{t(activeAdapter.activeDescription)}</p></div><button type="button" onClick={useGenericImport} className="rounded-lg border px-4 py-2 text-sm">{t("범용 가져오기로 전환")}</button></div>
+            </section>}
+
             {stage === "mapping" && <section className="overflow-hidden rounded-xl border">
               <div className="p-5">
               <div className="flex flex-wrap items-end justify-between gap-3"><div><h3 className="font-semibold">{t("열 연결")}</h3><p className="mt-1 text-xs text-[var(--muted)]">{t("중복된 헤더도 이름과 출현 순서로 안정적으로 구분합니다.")}</p></div>
-                <div className="flex flex-wrap items-end gap-2"><label className="text-xs text-[var(--muted)]">{t("매핑 프로필")}<select className="mt-1 block h-9 min-w-40 rounded-lg border bg-[var(--surface)] px-2 text-sm" value={selectedProfileId} onChange={(event) => applyProfile(event.target.value)}><option value="">{t("프로필 선택")}</option>{matchingProfiles.map(({ profile, match }) => <option key={profile.id} value={profile.id}>{profile.name} · {t(match === "exact" ? "정확히 일치" : "호환 가능")}</option>)}</select></label></div>
+                {!activeAdapter && <div className="flex flex-wrap items-end gap-2"><label className="text-xs text-[var(--muted)]">{t("매핑 프로필")}<select className="mt-1 block h-9 min-w-40 rounded-lg border bg-[var(--surface)] px-2 text-sm" value={selectedProfileId} onChange={(event) => applyProfile(event.target.value)}><option value="">{t("프로필 선택")}</option>{matchingProfiles.map(({ profile, match }) => <option key={profile.id} value={profile.id}>{profile.name} · {t(match === "exact" ? "정확히 일치" : "호환 가능")}</option>)}</select></label></div>}
               </div>
               </div>
-              <SourceColumnMappingTable assignments={assignments} onAssign={assignSource} />
+              <SourceColumnMappingTable assignments={assignments} onAssign={assignSource} readOnly={Boolean(activeAdapter)} />
               <div className="grid gap-4 border-t p-5 md:grid-cols-2">
                 <section aria-labelledby="mapping-coverage"><div className="flex items-center justify-between"><h4 id="mapping-coverage" className="text-sm font-semibold">{t("필수 연결")}</h4><span className="text-xs text-[var(--muted)]">{t("필수 {complete}/{total}", { complete: coverage.filter((item) => item.complete).length, total: coverage.length })}</span></div><ul className="mt-2 grid gap-1 text-sm">{coverage.map((item) => <li key={item.id}>{item.complete ? "✓" : "○"} {t(item.label)}</li>)}</ul></section>
                 <details open className="rounded-lg bg-[var(--surface-muted)] p-3"><summary className="cursor-pointer text-sm font-semibold">{t("정확도 및 안전성 확인")}</summary><div role="status" className="mt-2 space-y-1 text-xs text-[var(--muted)]">{advisories.map((code) => <p key={code}>{t(advisoryMessage(code))}</p>)}</div></details>
               </div>
+              {mapping.grossAmount && <p className="border-t px-5 py-3 text-sm text-[var(--accent)]">{t("단가는 총 거래금액 ÷ 수량으로 계산됩니다.")}</p>}
               {mappingDetailIssues.length > 0 && <div role={mappingDetailIssues.some((issue) => issue.severity === "error") ? "alert" : undefined} className="space-y-1 border-t p-4 text-sm">{mappingDetailIssues.map((issue, index) => <p key={`${issue.code}-${issue.field}-${index}`} className={issue.severity === "error" ? "text-red-600" : "text-amber-700"}>{localizeIssue(issue, t, formatNumber)}</p>)}</div>}
-              <div className="flex flex-wrap items-end gap-2 border-t p-5"><label className="text-xs text-[var(--muted)]">{t("프로필 이름")}<input className="mt-1 block h-9 rounded-lg border bg-[var(--surface)] px-3 text-sm" value={profileName} onChange={(event) => { setProfileName(event.target.value); setIsProfileDirty(true); }} /></label>{selectedProfileId && <button type="button" disabled={!isProfileDirty || !profileName.trim() || hasMappingErrors} onClick={() => void saveProfile("update")} className="h-9 rounded-lg border px-3 text-sm disabled:opacity-50">{t("프로필 업데이트")}</button>}<button type="button" disabled={!profileName.trim() || hasMappingErrors} onClick={() => void saveProfile("new")} className="h-9 rounded-lg border px-3 text-sm disabled:opacity-50">{t("새 프로필로 저장")}</button>{selectedProfileId && <button type="button" aria-label={t("프로필 삭제")} onClick={() => void deleteProfile()} className="destructive-icon-action grid size-9 place-items-center rounded-lg border"><Trash2 size={15}/></button>}{isProfileDirty && <span className="pb-2 text-xs text-amber-700">{t("저장되지 않은 변경")}</span>}</div>
+              {!activeAdapter && <div className="flex flex-wrap items-end gap-2 border-t p-5"><label className="text-xs text-[var(--muted)]">{t("프로필 이름")}<input className="mt-1 block h-9 rounded-lg border bg-[var(--surface)] px-3 text-sm" value={profileName} onChange={(event) => { setProfileName(event.target.value); setIsProfileDirty(true); }} /></label>{selectedProfileId && <button type="button" disabled={!isProfileDirty || !profileName.trim() || hasMappingErrors} onClick={() => void saveProfile("update")} className="h-9 rounded-lg border px-3 text-sm disabled:opacity-50">{t("프로필 업데이트")}</button>}<button type="button" disabled={!profileName.trim() || hasMappingErrors} onClick={() => void saveProfile("new")} className="h-9 rounded-lg border px-3 text-sm disabled:opacity-50">{t("새 프로필로 저장")}</button>{selectedProfileId && <button type="button" aria-label={t("프로필 삭제")} onClick={() => void deleteProfile()} className="destructive-icon-action grid size-9 place-items-center rounded-lg border"><Trash2 size={15}/></button>}{isProfileDirty && <span className="pb-2 text-xs text-amber-700">{t("저장되지 않은 변경")}</span>}</div>}
               {profileError && <p role="alert" className="mt-2 text-sm text-red-600">{t(profileError)}</p>}
             </section>}
 
             {stage === "review" && preview && <><div className="flex items-center justify-between rounded-xl border p-4"><div><p className="text-sm font-medium">{t("열 연결 완료")}</p><p className="text-xs text-[var(--muted)]">{t("{mapped}개 필드 연결 · {ignored}개 열 제외", { mapped: Object.keys(mapping).length, ignored: assignments.filter((item) => item.target === "ignore").length })}</p></div><button type="button" className="rounded-lg border px-3 py-2 text-sm" onClick={() => setStage("mapping")}>{t("열 연결로 돌아가기")}</button></div><section className="overflow-hidden rounded-xl border">
               <div className="flex flex-wrap items-center justify-between gap-2 p-4"><div><h3 className="font-semibold">{t("가져오기 후보")}</h3><p className="mt-1 text-xs text-[var(--muted)]">{t("가능한 중복과 삭제된 기록은 기본 선택되지 않으며 직접 확인해야 합니다.")}</p></div>{preview && <div className="flex flex-wrap gap-2 text-xs">{(Object.keys(statusLabels) as ImportCandidateStatus[]).map((status) => <span key={status} className="rounded-full bg-[var(--surface-muted)] px-2 py-1">{t(statusLabels[status])} {formatNumber(preview.summary[status])}</span>)}<span className="rounded-full bg-[var(--accent-soft)] px-2 py-1 text-[var(--accent)]">{t("전체 선택 {count}건", { count: formatNumber(selectedIds.size) })}</span><span>{t("현재 페이지 선택 {count}건", { count: formatNumber(selectedOnPage) })}</span><span>{t("다른 페이지 선택 {count}건", { count: formatNumber(selectedOutsidePage) })}</span><span>{t("차단 {count}건", { count: formatNumber(blockedCount) })}</span></div>}</div>
               {preview && <div className="flex flex-wrap gap-2 border-t p-3"><button type="button" className="rounded-md border px-3 py-1.5 text-xs" onClick={() => selectCandidates(pageCandidates.filter((item) => item.status === "ready").map((item) => item.id))}>{t("이 페이지의 추가 가능 항목 선택")}</button><button type="button" className="rounded-md border px-3 py-1.5 text-xs" onClick={() => deselectCandidates(pageCandidates.map((item) => item.id))}>{t("이 페이지 선택 해제")}</button><button type="button" className="rounded-md border px-3 py-1.5 text-xs" onClick={() => selectCandidates(preview.candidates.filter((item) => item.status === "ready").map((item) => item.id))}>{t("모든 추가 가능 항목 선택")}</button><button type="button" className="rounded-md border px-3 py-1.5 text-xs" onClick={() => setSelectedIds(new Set())}>{t("전체 선택 해제")}</button></div>}
-              <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="bg-[var(--surface-muted)]"><tr><th className="px-3 py-2">{t("선택")}</th><th className="px-3 py-2">{t("행")}</th><th className="px-3 py-2">{t("상태")}</th><th className="px-3 py-2">{t("거래 일시")}</th><th className="px-3 py-2">{t("종목")}</th><th className="px-3 py-2">{t("유형")}</th><th className="px-3 py-2">{t("수량")}</th><th className="px-3 py-2">{t("체결 가격")}</th><th className="px-3 py-2">{t("검토")}</th></tr></thead><tbody>{pageCandidates.map((candidate) => { const selectable = candidate.action !== "none"; return <tr key={candidate.id} className="border-t align-top"><td className="px-3 py-2"><input aria-label={t("행 {row} 선택", { row: formatNumber(candidate.row) })} type="checkbox" disabled={!selectable} checked={selectedIds.has(candidate.id)} onChange={() => toggleCandidate(candidate.id)} /></td><td className="px-3 py-2">{formatNumber(candidate.row)}</td><td className="whitespace-nowrap px-3 py-2">{t(statusLabels[candidate.status])}</td><td className="whitespace-nowrap px-3 py-2 tabular-nums">{candidate.trade?.tradedAt ?? "—"}</td><td className="whitespace-nowrap px-3 py-2">{candidate.trade?.stockName ?? "—"}</td><td className="px-3 py-2">{candidate.trade ? t(candidate.trade.tradeType) : "—"}</td><td className="px-3 py-2 tabular-nums">{candidate.trade ? formatNumber(candidate.trade.quantity) : "—"}</td><td className="px-3 py-2 tabular-nums">{candidate.trade ? formatNumber(candidate.trade.price) : "—"}</td><td className="min-w-56 px-3 py-2">{candidate.issues.map((issue, index) => <p key={`${issue.code}-${index}`} className={issue.severity === "error" ? "text-red-600" : issue.severity === "warning" ? "text-amber-700" : "text-[var(--muted)]"}>{localizeIssue(issue, t, formatNumber)}</p>)}{candidate.trade && <details className="mt-1"><summary className="cursor-pointer">{t("세부 정보")}</summary><p>{t("계좌")}: {candidate.trade.accountName}</p><p>{t("통화")}: {candidate.trade.currency} · {t("환율")}: {formatNumber(candidate.trade.exchangeRate)}</p><p>{t("수수료")}: {formatNumber(candidate.trade.fee)} · {t("세금")}: {formatNumber(candidate.trade.tax)}</p><p>{t("출처")}: {candidate.execution?.provider || t("일반 파일")}</p>{candidate.execution?.externalExecutionId && <p>{t("체결 ID")}: {candidate.execution.externalExecutionId}</p>}{candidate.matchedTradeIds.length > 0 && <p>{t("연결된 기존 기록")}: {candidate.matchedTradeIds.join(", ")}</p>}</details>}</td></tr>; })}</tbody></table></div>
+              <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="bg-[var(--surface-muted)]"><tr><th className="px-3 py-2">{t("선택")}</th><th className="px-3 py-2">{t("행")}</th><th className="px-3 py-2">{t("상태")}</th><th className="px-3 py-2">{t("거래 일시")}</th><th className="px-3 py-2">{t("종목")}</th><th className="px-3 py-2">{t("유형")}</th><th className="px-3 py-2">{t("수량")}</th><th className="px-3 py-2">{t("체결 가격")}</th><th className="px-3 py-2">{t("검토")}</th></tr></thead><tbody>{pageCandidates.map((candidate) => { const selectable = candidate.action !== "none"; const derived = candidate.execution?.priceEvidence?.kind === "gross_amount_divided_by_quantity" ? candidate.execution.priceEvidence : null; return <tr key={candidate.id} className={`border-t align-top ${candidate.status === "unsupported_activity" ? "bg-amber-50/50 dark:bg-amber-950/10" : candidate.status === "excluded_settlement" || candidate.status === "excluded_non_trade" ? "bg-[var(--surface-muted)]/40" : ""}`}><td className="px-3 py-2"><input aria-label={t("행 {row} 선택", { row: formatNumber(candidate.row) })} type="checkbox" disabled={!selectable} checked={selectedIds.has(candidate.id)} onChange={() => toggleCandidate(candidate.id)} /></td><td className="px-3 py-2">{formatNumber(candidate.row)}</td><td className="whitespace-nowrap px-3 py-2">{t(statusLabels[candidate.status])}</td><td className="whitespace-nowrap px-3 py-2 tabular-nums">{candidate.trade?.tradedAt ?? "—"}</td><td className="whitespace-nowrap px-3 py-2">{candidate.trade?.stockName ?? "—"}</td><td className="px-3 py-2">{candidate.trade ? t(candidate.trade.tradeType) : candidate.sourceActivity || "—"}</td><td className="px-3 py-2 tabular-nums">{candidate.trade ? formatNumber(candidate.trade.quantity) : "—"}</td><td className="px-3 py-2 tabular-nums">{candidate.trade ? formatNumber(candidate.trade.price) : "—"}{derived && <p className="mt-1 whitespace-nowrap text-[var(--muted)]">{t("총액 {grossAmount} ÷ 수량 {quantity} = 단가 {price}", { grossAmount: formatNumber(derived.grossAmount ?? 0), quantity: formatNumber(candidate.execution!.quantity), price: formatNumber(candidate.execution!.price) })}</p>}</td><td className="min-w-56 px-3 py-2">{candidate.issues.map((issue, index) => <p key={`${issue.code}-${index}`} className={issue.severity === "error" ? "text-red-600" : issue.severity === "warning" ? "text-amber-700" : "text-[var(--muted)]"}>{localizeIssue(issue, t, formatNumber)}</p>)}{candidate.trade && <details className="mt-1"><summary className="cursor-pointer">{t("세부 정보")}</summary><p>{t("계좌")}: {candidate.trade.accountName}</p><p>{t("통화")}: {candidate.trade.currency} · {t("환율")}: {formatNumber(candidate.trade.exchangeRate)}</p><p>{t("수수료")}: {formatNumber(candidate.trade.fee)} · {t("세금")}: {formatNumber(candidate.trade.tax)}</p><p>{t("출처")}: {candidate.execution?.provider || t("일반 파일")}</p>{candidate.execution?.externalExecutionId && <p>{t("체결 ID")}: {candidate.execution.externalExecutionId}</p>}{candidate.matchedTradeIds.length > 0 && <p>{t("연결된 기존 기록")}: {candidate.matchedTradeIds.join(", ")}</p>}</details>}</td></tr>; })}</tbody></table></div>
               {preview && <nav aria-label={t("가져오기 후보 페이지")} className="flex items-center justify-between border-t p-3"><button type="button" disabled={page === 0} onClick={() => setPage((value) => Math.max(0, value - 1))} className="rounded-md border px-3 py-1.5 text-xs disabled:opacity-50">{t("이전")}</button><span aria-live="polite" className="text-xs">{t("현재 페이지 {current} / {total}", { current: formatNumber(page + 1), total: formatNumber(pageCount) })}</span><button type="button" disabled={page + 1 >= pageCount} onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))} className="rounded-md border px-3 py-1.5 text-xs disabled:opacity-50">{t("다음")}</button></nav>}
             </section></>}
 
@@ -241,10 +289,13 @@ export function CsvImportDialog({ stocks, accounts, existing, onCancel, onImport
 
 function localizeIssue(issue: ImportIssue, t: (key: string, params?: Record<string, string | number>) => string, formatNumber: (value: number) => string) {
   const labels: Record<string, string> = {
-    IMPORT_AMBIGUOUS_COLUMN: "자동으로 연결할 수 없는 열이 있습니다. 직접 선택해 주세요.", IMPORT_COLUMN_MISSING: "저장된 매핑의 열을 현재 파일에서 찾을 수 없습니다.", IMPORT_COLUMN_COLLISION: "하나의 열을 여러 필드에 동시에 연결할 수 없습니다.", IMPORT_REQUIRED_COLUMN: "필수 열을 연결해 주세요.", IMPORT_INSTRUMENT_COLUMN: "종목코드 또는 종목명 열을 연결해 주세요.",
+    IMPORT_AMBIGUOUS_COLUMN: "자동으로 연결할 수 없는 열이 있습니다. 직접 선택해 주세요.", IMPORT_COLUMN_MISSING: "저장된 매핑의 열을 현재 파일에서 찾을 수 없습니다.", IMPORT_COLUMN_COLLISION: "하나의 열을 여러 필드에 동시에 연결할 수 없습니다.", IMPORT_REQUIRED_COLUMN: "필수 열을 연결해 주세요.", IMPORT_INSTRUMENT_COLUMN: "종목코드 또는 종목명 열을 연결해 주세요.", IMPORT_GROSS_AMOUNT_MAPPED_AS_UNIT_PRICE: "총 거래금액 열을 체결 단가로 연결할 수 없습니다. 총 거래금액으로 연결해 주세요.",
     IMPORT_EXACT_DUPLICATE: "이미 가져온 동일 체결입니다.", IMPORT_POSSIBLE_DUPLICATE: "기존 기록과 같은 체결일 가능성이 있습니다.", IMPORT_PREVIOUSLY_DELETED: "이전에 삭제한 동일 기록입니다. 선택하면 기존 기록을 그대로 복원합니다.", IMPORT_AMBIGUOUS_IDENTICAL_ROW: "파일 안에 동일한 체결 행이 있어 직접 포함 여부를 확인해야 합니다.", IMPORT_BATCH_EXACT_DUPLICATE: "같은 파일에 동일한 체결 ID와 동일한 내용이 반복되어 한 건만 가져옵니다.", IMPORT_BATCH_SOURCE_IDENTITY_CONFLICT: "같은 파일의 동일한 체결 ID에 서로 다른 내용이 있어 모든 관련 행을 가져올 수 없습니다.", IMPORT_SOURCE_CONFLICT: "같은 원본 체결 ID가 기존 기록과 다른 값을 가집니다.", IMPORT_SOURCE_IDENTITY_AMBIGUOUS: "같은 원본 식별자를 가진 기존 기록이 여러 개여서 가져올 수 없습니다.", IMPORT_PREVIEW_STALE: "원장이 변경되어 미리보기가 오래되었습니다. 후보를 다시 확인해 주세요.", IMPORT_TIME_MISSING: "거래 시간이 없어 오전 9시로 해석했습니다.", IMPORT_TIME_CONFLICT: "거래일시의 시간과 별도 시간 열의 값이 서로 다릅니다.", IMPORT_UNSUPPORTED_TIMEZONE: "일반 파일 가져오기는 시간대가 포함된 값을 지원하지 않습니다.", IMPORT_AMBIGUOUS_INTRADAY_ORDER: "같은 날짜의 거래 순서를 확정할 수 없어 시간을 입력해야 합니다.",
     IMPORT_DATE_MISSING: "거래일이 없습니다.", IMPORT_AMBIGUOUS_DATE: "날짜가 모호합니다. YYYY-MM-DD 형식을 사용해 주세요.", IMPORT_INVALID_DATE: "거래일 형식을 확인해 주세요.", IMPORT_INVALID_TIME: "거래 시간을 확인해 주세요.", IMPORT_INVALID_NUMBER: "숫자 형식을 확인해 주세요.", IMPORT_NON_POSITIVE_NUMBER: "수량과 체결가는 0보다 커야 합니다.", IMPORT_NEGATIVE_NUMBER: "수수료와 세금은 0 이상이어야 합니다.", IMPORT_INVALID_SIDE: "매수/매도 구분을 확인해 주세요.", IMPORT_INVALID_CURRENCY: "지원하지 않는 통화입니다.", IMPORT_CURRENCY_CONFLICT: "파일 통화와 등록된 종목 통화가 다릅니다.", IMPORT_CURRENCY_FALLBACK: "통화가 없어 등록된 종목 통화를 사용했습니다.", IMPORT_EXCHANGE_RATE_FALLBACK: "환율이 없어 현재 기본 환율을 사용했습니다.",
     IMPORT_AMBIGUOUS_INSTRUMENT: "종목 연결 후보가 여러 개입니다.", IMPORT_INSTRUMENT_CONFLICT: "종목코드와 종목명이 서로 다른 종목을 가리킵니다.", IMPORT_INSTRUMENT_NOT_FOUND: "연결할 종목을 찾을 수 없습니다.", IMPORT_AMBIGUOUS_ACCOUNT: "같은 이름의 계좌가 여러 개입니다.", IMPORT_ACCOUNT_NOT_FOUND: "등록되지 않은 계좌입니다.", IMPORT_ARCHIVED_ACCOUNT: "보관된 계좌로는 가져올 수 없습니다.", IMPORT_ACCOUNT_REQUIRED: "가져올 대상 계좌를 선택해 주세요.", IMPORT_ROW_REJECTED: "가져오기 행을 확인해 주세요.", IMPORT_NOTHING_SELECTED: "가져올 거래를 하나 이상 선택해 주세요.", IMPORT_LEDGER_CONFLICT: "선택한 거래가 원장 사전 검증을 통과하지 못했습니다.",
+    IMPORT_PRICE_DERIVED_FROM_GROSS_AMOUNT: "총 거래금액을 수량으로 나누어 체결 단가를 계산했습니다.", IMPORT_PRICE_AMOUNT_CONFLICT: "체결 단가와 총 거래금액이 서로 맞지 않습니다.",
+    IMPORT_BROKER_LEDGER_NON_TRADE: "매매가 아닌 계좌 활동이므로 저장하지 않습니다.", IMPORT_BROKER_LEDGER_SETTLEMENT_MIRROR: "주식 체결에 대응하는 정산 행이므로 별도 거래로 저장하지 않습니다.", IMPORT_BROKER_LEDGER_UNSUPPORTED_ACTIVITY: "현재 지원하지 않는 거래 유형입니다.", IMPORT_BROKER_LEDGER_UNKNOWN_ACTIVITY: "알 수 없는 계좌 활동입니다. 직접 확인해 주세요.",
+    IMPORT_SETTLEMENT_RECONCILED: "주식 체결 금액과 대응 정산 행이 일치합니다.", IMPORT_SETTLEMENT_MISMATCH: "주식 체결 금액과 대응 정산 행이 일치하지 않아 관련 매매를 가져올 수 없습니다.", IMPORT_SETTLEMENT_MIRROR_MISSING: "대응 정산 행을 찾지 못했지만 매매 후보로 계속 검토할 수 있습니다.", IMPORT_SETTLEMENT_EXECUTION_MISSING: "대응하는 주식 체결 행을 찾지 못한 정산 행입니다.", IMPORT_MIRAE_FOREIGN_ACTIVITY_UNSUPPORTED: "외화거래금액이 있는 미래에셋 행은 현재 지원하지 않습니다.",
   };
   const message = t(labels[issue.code] ?? "가져오기 행을 확인해 주세요.");
   const duplicateOf = issue.code === "IMPORT_BATCH_EXACT_DUPLICATE" && typeof issue.details?.duplicateOfRow === "number" ? t("대표 행: {row}", { row: formatNumber(issue.details.duplicateOfRow) }) : "";

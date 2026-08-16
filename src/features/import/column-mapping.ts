@@ -1,11 +1,11 @@
 import type { ColumnReference, ImportField, ImportIssue, ImportMapping, ImportMappingProfile, TabularColumn } from "./import-types";
 
-export const requiredImportFields: ImportField[] = ["tradedAt", "tradeType", "quantity", "price"];
-export const optionalImportFields: ImportField[] = ["time", "ticker", "stockName", "fee", "tax", "currency", "exchangeRate", "accountName", "externalExecutionId", "orderId"];
+export const requiredImportFields: ImportField[] = ["tradedAt", "tradeType", "quantity"];
+export const optionalImportFields: ImportField[] = ["price", "grossAmount", "time", "ticker", "stockName", "fee", "tax", "currency", "exchangeRate", "accountName", "externalExecutionId", "orderId"];
 
 export const importFieldLabels: Record<ImportField, string> = {
   tradedAt: "거래일", time: "시간", ticker: "종목코드", stockName: "종목명", tradeType: "매수/매도",
-  quantity: "수량", price: "체결가", fee: "수수료", tax: "세금", currency: "통화", exchangeRate: "환율",
+  quantity: "수량", price: "체결가", grossAmount: "총 거래금액", fee: "수수료", tax: "세금", currency: "통화", exchangeRate: "환율",
   accountName: "계좌명", externalExecutionId: "체결 ID", orderId: "주문 ID",
 };
 
@@ -14,9 +14,10 @@ const aliases: Record<ImportField, string[]> = {
   time: ["거래시간", "체결시간", "시간", "取引時間", "約定時間", "時刻", "time", "execution time", "heure", "heure d’exécution", "ora", "ora di esecuzione", "hora", "hora de ejecución"],
   ticker: ["종목코드", "티커", "코드", "銘柄コード", "証券コード", "ティッカー", "コード", "symbol", "ticker", "code", "code valeur", "symbole", "codice titolo", "simbolo", "código del valor", "símbolo"],
   stockName: ["종목명", "상품명", "銘柄名", "商品名", "証券名", "name", "stock name", "security", "security name", "nom du titre", "nom de la valeur", "nome titolo", "nome del titolo", "nombre del valor", "nombre del título"],
-  tradeType: ["매매구분", "거래구분", "구분", "매수매도", "売買区分", "取引区分", "売買", "区分", "type", "side", "trade type", "transaction type", "type d’opération", "type d'operation", "sens", "tipo operazione", "tipo di operazione", "tipo de operación", "lado"],
+  tradeType: ["매매구분", "거래구분", "거래종류", "구분", "매수매도", "売買区分", "取引区分", "売買", "区分", "type", "side", "trade type", "transaction type", "type d’opération", "type d'operation", "sens", "tipo operazione", "tipo di operazione", "tipo de operación", "lado"],
   quantity: ["체결수량", "거래수량", "수량", "約定数量", "取引数量", "数量", "株数", "quantity", "qty", "shares", "quantité", "nombre de titres", "quantità", "numero titoli", "cantidad", "número de títulos"],
   price: ["체결가", "체결가격", "거래단가", "단가", "가격", "約定価格", "約定単価", "取引価格", "単価", "価格", "price", "unit price", "execution price", "prix", "prix d’exécution", "cours", "prezzo", "prezzo di esecuzione", "prezzo unitario", "precio", "precio de ejecución", "precio unitario"],
+  grossAmount: ["거래금액", "거래대금", "총거래금액", "체결금액", "약정금액", "gross amount", "trade amount", "transaction amount", "notional amount", "取引金額", "約定金額", "売買代金"],
   fee: ["수수료", "手数料", "commission", "commissions", "fee", "fees", "frais", "commissioni", "comisión", "comisiones"],
   tax: ["세금", "제세금", "税", "税金", "tax", "taxes", "impôt", "impôts", "imposta", "imposte", "impuesto", "impuestos"],
   currency: ["통화", "通貨", "currency", "ccy", "devise", "valuta", "moneda", "divisa"],
@@ -85,7 +86,12 @@ export function validateImportMapping(mapping: ImportMapping, columns: TabularCo
     else used.set(key, field);
   }
   for (const field of requiredImportFields) if (!mapping[field]) issues.push({ code: "IMPORT_REQUIRED_COLUMN", severity: "error", field });
+  if (!mapping.price && !mapping.grossAmount) issues.push({ code: "IMPORT_REQUIRED_COLUMN", severity: "error", field: "price" });
   if (!mapping.ticker && !mapping.stockName) issues.push({ code: "IMPORT_INSTRUMENT_COLUMN", severity: "error" });
+  if (mapping.price) {
+    const column = columns.find((item) => columnReferenceKey(item.reference) === columnReferenceKey(mapping.price!));
+    if (column && normalizedAliases.grossAmount.has(column.reference.normalizedHeader)) issues.push({ code: "IMPORT_GROSS_AMOUNT_MAPPED_AS_UNIT_PRICE", severity: "error", field: "price" });
+  }
   return issues;
 }
 

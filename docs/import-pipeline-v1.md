@@ -1,4 +1,4 @@
-# Import Pipeline v1.1
+# Import Pipeline v1.2
 
 Import Pipeline v1 converts broker-neutral tabular files into reviewed ledger candidates without creating Stocks or Accounts silently. CSV, TSV, XLS, and XLSX files are parsed locally; source files never leave the device.
 
@@ -6,11 +6,12 @@ Import Pipeline v1 converts broker-neutral tabular files into reviewed ledger ca
 
 1. `tabular-parser.ts` enforces the 10 MB limit, decodes supported legacy encodings, parses quoted delimited text, and reads the first Excel sheet.
 2. `column-mapping.ts` represents a column as `ColumnReference { normalizedHeader, occurrence }`, where occurrence is zero-based among equal normalized headers. Header order therefore does not change a saved binding, and duplicate headers remain distinct.
-3. `import-pipeline.ts` adapts each row to provider-neutral `CanonicalExecution`, resolves existing Account and Stock identities, classifies duplicates, and builds an unreviewed Trade candidate.
-4. `preflightImport` validates the complete selected batch with the production transfer and TradingLedger guards.
-5. The existing trade mutation path performs one normalized atomic replacement. A failed validation or write never appends a partial batch.
+3. The adapter registry may suggest a conservative broker-ledger adapter from stable headers. It never activates without explicit user confirmation.
+4. `import-pipeline.ts` adapts execution rows to provider-neutral `CanonicalExecution`, resolves existing Account and Stock identities, classifies duplicates, and builds unreviewed Trade candidates.
+5. `preflightImport` validates the complete selected batch with the production transfer and TradingLedger guards.
+6. The existing trade mutation path performs one normalized atomic replacement. A failed validation or write never appends a partial batch.
 
-No broker API or broker-specific domain model is part of v1. `provider` is optional metadata and `generic-tabular-v1` is the only adapter. `CanonicalExecution` contains source evidence and normalized execution values, but no Rationale Stock ID, Account ID, Trade ID, plan, memo, emotion, or rule fields.
+No broker API or broker-specific persisted domain model is part of v1. `provider` is optional metadata. `generic-tabular-v1` remains the default; built-in file adapters are pure, removable preparation modules with no network, credentials, persistence, React, or direct `Trade` construction. `CanonicalExecution` contains source evidence and normalized execution values, but no Rationale Stock ID, Account ID, Trade ID, plan, memo, emotion, or rule fields.
 
 ## Time and numeric policy
 
@@ -21,6 +22,31 @@ No broker API or broker-specific domain model is part of v1. `provider` is optio
 - A missing time defaults to `09:00:00`, records `timePrecision: "date"`, and produces a warning. Multiple same-Account/same-Stock date-only events are blocked because their intraday Ledger order is ambiguous.
 - Ambiguous DMY/MDY dates such as `08/09/2026` are rejected. ISO `YYYY-MM-DD` is the recommended form.
 - Locale-aware decimal and grouping separators are accepted only when their interpretation is structurally valid.
+
+## Unit price and gross transaction amount
+
+`price` always means a per-unit execution price. Qualified source columns such as `거래금액`, `거래대금`, `체결금액`, and `약정금액` map to the source-only `grossAmount` field instead. Unqualified `amount` or `금액` is not guessed, and a known gross-amount header mapped directly to `price` blocks review.
+
+Required price coverage is satisfied by either direct `price` or `grossAmount`. With gross amount only, Decimal arithmetic calculates `grossAmount ÷ quantity`; fee and tax are never subtracted. The proposed and persisted `Trade` contains only the final unit price. Derivation evidence stays on `CanonicalExecution` for preview and is excluded from Backup and Sync.
+
+When both fields are present, `price × quantity` must reconcile with gross amount. KRW and JPY allow one minor unit, while USD, EUR, CAD, and HKD allow 0.01; a tiny relative tolerance covers decimal serialization noise. A conflict blocks the row. Settlement and net-cash labels such as `정산금액`, `결제금액`, and `순입금액` are not gross amount and remain unsupported.
+
+## Broker account-ledger adapter boundary
+
+Adapter detection uses normalized headers and stable cardinality. A match is only a suggestion: generic import stays available and the adapter activates only after confirmation. Applying or removing an adapter invalidates preview while preserving the loaded file and import batch. Adapter selection is not stored in mapping profiles, Backup, or Sync.
+
+`mirae-account-ledger-v1` recognizes one observed domestic stock/ETF account-ledger shape with the exact required headers `거래일자`, `거래종류`, `종목명`, `거래수량`, `거래금액`, `외화거래금액`, `수수료`, and `예수금잔고`. The Mirae adapter supports one observed account-ledger format. It is not a claim of support for every Mirae export.
+
+Its exact activity rules are:
+
+- `주식매수입고`, `주식매도출고`: execution candidates; gross amount is converted to unit price.
+- `주식매수출금`, `주식매도입금`: settlement mirrors used for validation and never stored as Trades.
+- `이체송금`, `배당세출금`, `계좌대체입금`, `CMS자동이체입금`, `예탁금이용료입금`: visible non-trade exclusions.
+- `펀드정기자동매수`: visible unsupported activity.
+- Any other non-empty activity: blocking review; substring similarity never makes it a buy or sell.
+- Any execution row with a nonzero foreign transaction amount: unsupported; no currency or exchange rate is guessed.
+
+Classification precedes side, quantity, price, and Stock resolution, so settlement and non-trade rows never receive generic execution errors. Settlement mirrors are grouped by target Account, calendar date, and side. Decimal gross and fee totals reconcile separately. A mismatch blocks all related executions, a missing mirror warns but permits execution review, and a mirror without executions remains excluded with a warning. Foreign stocks, funds, cash flows, dividends, taxes, bonds, derivatives, and other Mirae formats are not supported by this adapter.
 
 ## Resolution and issues
 
@@ -33,6 +59,9 @@ Domain issues contain a stable code, severity, and optional row/field/candidate 
 - `possible_duplicate`: fuzzy/economic match to another record; never selected without explicit user action.
 - `source_conflict`: same source identity with different economic values; blocked.
 - `rejected`: parsing, mapping, or resolution failure; blocked.
+- `excluded_settlement`: visible settlement evidence; never selectable.
+- `excluded_non_trade`: visible non-trade account activity; never selectable.
+- `unsupported_activity`: visible warning for an out-of-scope activity; never selectable.
 
 ## Identity and deduplication
 
@@ -61,7 +90,7 @@ All economic ledger and performance calculations include imported Trades. Behavi
 
 The mapping editor is source-first: every uploaded column remains visible in file order and maps to one supported Rationale canonical field or to Ignore. Representative raw string samples are scanned from a bounded number of rows and shown only in memory; leading zeros are preserved, and samples, filenames, paths, assignment status, and ignored columns are never persisted. Duplicate headers remain distinct by occurrence, and one canonical destination cannot be owned by two source columns.
 
-Required coverage consists of trade date, side, quantity, price, and either ticker or Stock name. The editor separately explains non-blocking accuracy and safety effects when time, fees, tax, currency, exchange rate, Account, or external execution ID are not mapped. Unknown broker-specific columns can be ignored, but Rationale does not create arbitrary custom Trade fields. Candidate preview is built only after the user reviews a valid mapping; the existing duplicate, trusted-identity, Ledger, and atomic persistence boundaries remain unchanged.
+Required coverage consists of trade date, side, quantity, either direct unit price or gross transaction amount, and either ticker or Stock name. The editor separately explains non-blocking accuracy and safety effects when time, fees, tax, currency, exchange rate, Account, or external execution ID are not mapped. Unknown broker-specific columns can be ignored, but Rationale does not create arbitrary custom Trade fields. Candidate preview is built only after the user reviews a valid mapping; the existing duplicate, trusted-identity, Ledger, and atomic persistence boundaries remain unchanged.
 
 The UI projection is compiled back into the existing destination-keyed `ImportMapping`. Mapping profiles therefore remain version 1, retain stable `normalizedHeader + occurrence` bindings, and continue to be device-local. Reordered files apply the same bindings, compatible files expose additional columns independently, and ignored columns do not enter profile data.
 
