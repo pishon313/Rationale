@@ -65,6 +65,13 @@ or Tailwind utilities that follow the same rhythm.
 - App pages use no decorative enrichment; information is the visual material.
 - Content pages are typography-first.
 
+## Dashboard allocation charts
+
+- Asset allocation may be grouped by the user-authored My category or the fixed Market sector classification.
+- Bar and donut views share deterministic group-ID colors, so ranking and locale changes do not change a group's identity color.
+- Donut charts and their legends are top-aligned; narrow layouts stack the chart above a readable textual legend.
+- Color supplements semantic group headings, labels, values, and percentages and is never the only identifier.
+
 ## What pages MUST share
 
 - Rationale wordmark and mint decision mark

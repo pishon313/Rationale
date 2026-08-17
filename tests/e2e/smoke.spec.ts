@@ -36,6 +36,89 @@ test("대시보드 앱 셸을 표시한다", async ({ page }) => {
   await expect(page.getByRole("navigation", { name: "주요 메뉴" })).toBeVisible();
 });
 
+test("대시보드 자산을 내 분류와 시장 섹터로 전환하고 보기·색상·비중을 안정적으로 유지한다", async ({ page }) => {
+  const stocks = [
+    e2eStock("core-tech", "코어 기술", "Core", { marketSector: "information-technology", status: "보유", quantity: 6, averagePrice: 80, currentPrice: 100, ledgerInitializedAt: null }),
+    e2eStock("core-energy", "코어 에너지", " core ", { marketSector: "energy", status: "보유", quantity: 3, averagePrice: 80, currentPrice: 100, ledgerInitializedAt: null }),
+    e2eStock("satellite-tech", "위성 기술", "Satellite", { marketSector: "information-technology", status: "보유", quantity: 1, averagePrice: 80, currentPrice: 100, ledgerInitializedAt: null }),
+    e2eStock("tiny-unset", "아주 작은 미지정", "", { marketSector: null, status: "보유", quantity: 0.000001, averagePrice: 1, currentPrice: 1, ledgerInitializedAt: null }),
+  ];
+  await page.addInitScript((values) => {
+    if (localStorage.getItem("tradejournal.stocks.v1") === null) localStorage.setItem("tradejournal.stocks.v1", JSON.stringify(values));
+    if (localStorage.getItem("tradejournal.trades.v1") === null) localStorage.setItem("tradejournal.trades.v1", "[]");
+  }, stocks);
+
+  await page.goto("/dashboard");
+  const myCategory = page.getByRole("button", { name: "내 분류", exact: true });
+  const marketSector = page.getByRole("button", { name: "시장 섹터", exact: true });
+  await expect(myCategory).toHaveAttribute("aria-pressed", "true");
+  const core = page.locator('[data-group-id="portfolio-category:core"]');
+  await expect(core).toContainText("코어 기술");
+  await expect(core).toContainText("코어 에너지");
+  await expect(page.locator('[data-group-id="portfolio-category:satellite"]')).toContainText("위성 기술");
+  await expect(page.locator('[data-group-id="portfolio-category:__unspecified__"]')).toContainText("<0.1%");
+  const categoryTotal = await page.locator('[data-group-id^="portfolio-category:"]').evaluateAll((groups) => groups.reduce((sum, group) => sum + Number((group as HTMLElement).dataset.groupShare), 0));
+  expect(categoryTotal).toBeCloseTo(100, 7);
+
+  await marketSector.click();
+  await expect(marketSector).toHaveAttribute("aria-pressed", "true");
+  const technology = page.locator('[data-group-id="market-sector:information-technology"]');
+  await expect(technology).toContainText("코어 기술");
+  await expect(technology).toContainText("위성 기술");
+  await expect(page.locator('[data-group-id="market-sector:energy"]')).toContainText("코어 에너지");
+  await expect(page.locator('[data-group-id="market-sector:__unspecified__"]')).toContainText("<0.1%");
+  const marketTotal = await page.locator('[data-group-id^="market-sector:"]').evaluateAll((groups) => groups.reduce((sum, group) => sum + Number((group as HTMLElement).dataset.groupShare), 0));
+  expect(marketTotal).toBeCloseTo(100, 7);
+  const technologyColor = await technology.getAttribute("data-group-color");
+
+  await page.reload();
+  await expect(marketSector).toHaveAttribute("aria-pressed", "true");
+  await page.evaluate(() => {
+    const stored = JSON.parse(localStorage.getItem("tradejournal.stocks.v1") ?? "[]");
+    for (const stock of stored) {
+      if (stock.id === "core-tech" || stock.id === "satellite-tech") stock.currentPrice = 1;
+      if (stock.id === "core-energy") stock.currentPrice = 1000;
+    }
+    localStorage.setItem("tradejournal.stocks.v1", JSON.stringify(stored));
+  });
+  await page.reload();
+  const marketGroups = page.locator('[data-group-id^="market-sector:"]');
+  await expect(marketGroups.first()).toHaveAttribute("data-group-id", "market-sector:energy");
+  await expect(page.locator('[data-group-id="market-sector:information-technology"]')).toHaveAttribute("data-group-color", technologyColor ?? "");
+
+  await page.getByRole("button", { name: "도넛형" }).click();
+  const chart = page.getByTestId("asset-allocation-donut-chart");
+  const legend = page.getByTestId("asset-allocation-donut-legend");
+  await expect(chart).toHaveAttribute("role", "img");
+  const [chartBox, legendBox] = await Promise.all([chart.boundingBox(), legend.boundingBox()]);
+  expect(chartBox).not.toBeNull();
+  expect(legendBox).not.toBeNull();
+  expect(Math.abs((chartBox?.y ?? 0) - (legendBox?.y ?? 0))).toBeLessThanOrEqual(2);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const [mobileChartBox, mobileLegendBox, widths] = await Promise.all([
+    chart.boundingBox(),
+    legend.boundingBox(),
+    page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth })),
+  ]);
+  expect((mobileLegendBox?.y ?? 0)).toBeGreaterThan(mobileChartBox?.y ?? 0);
+  expect(widths.content).toBeLessThanOrEqual(widths.viewport);
+});
+
+test("대시보드 분류가 모두 비어 있으면 미지정 그룹과 설정 안내를 표시한다", async ({ page }) => {
+  const stock = e2eStock("unset", "분류 미지정 종목", "", { marketSector: null, status: "보유", quantity: 2, averagePrice: 80, currentPrice: 100, ledgerInitializedAt: null });
+  await page.addInitScript((value) => {
+    localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([value]));
+    localStorage.setItem("tradejournal.trades.v1", "[]");
+  }, stock);
+
+  await page.goto("/dashboard");
+  await expect(page.locator('[data-group-id="portfolio-category:__unspecified__"]')).toBeVisible();
+  await expect(page.getByRole("link", { name: "종목에서 내 분류 설정" })).toHaveAttribute("href", "/stocks");
+  await page.getByRole("button", { name: "시장 섹터", exact: true }).click();
+  await expect(page.locator('[data-group-id="market-sector:__unspecified__"]')).toBeVisible();
+  await expect(page.getByRole("link", { name: "종목에서 시장 섹터 설정" })).toHaveAttribute("href", "/stocks");
+});
+
 test("Mac 설정 언어를 따르다가 선택한 언어를 저장한다", async ({ page }) => {
   await page.goto("/settings");
   const language = page.getByLabel("표시 언어");
