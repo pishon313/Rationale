@@ -24,6 +24,8 @@ import { SampleOnboarding } from "@/features/sample-data/sample-onboarding";
 const VIEW_KEY = "tradejournal.dashboard.asset-view";
 const VIEW_EVENT = "tradejournal:asset-view";
 const COLORS = ["#5f57d9", "#9087ee", "#45a99a", "#e0a144", "#d96b76", "#5d8cc9", "#a477bd", "#7c8b57"];
+export type AssetAllocationItem = { id: string; name: string; sector: string; value: number; share: number };
+export type AssetAllocationGroup = { id: string; name: string; value: number; share: number; holdings: AssetAllocationItem[]; isUnspecified: boolean };
 export function DashboardPageClient() {
   const { t, localeTag, formatDate, formatNumber } = useI18n();
   const exchangeRates = useExchangeRates();
@@ -84,19 +86,42 @@ function AssetAllocation({ holdings, total }: { holdings: StockComputed[]; total
   const displayCurrency = currencyPreference.displayCurrency;
   const view = useSyncExternalStore(subscribeView, getView, () => "bar");
   const data = buildAssetAllocationData(holdings, total, rates);
+  const groups = buildAssetAllocationGroups(data, t("섹터 미지정"));
   const displayShare = (share: number) => formatNumber(share / 100, { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1 });
-  return <section className="rounded-xl border bg-[var(--surface)] p-5"><div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2"><Wallet size={19} className="text-[var(--muted)]" /><h2 className="font-semibold">{t("보유 자산")}</h2></div><div className="flex rounded-lg bg-[var(--surface-muted)] p-0.5" aria-label={t("자산 차트 보기")}><ViewButton active={view === "bar"} label={t("막대형")} onClick={() => setView("bar")}><BarChart3 size={15} /></ViewButton><ViewButton active={view === "donut"} label={t("도넛형")} onClick={() => setView("donut")}><CirclePie size={15} /></ViewButton></div></div>{!holdings.length ? <Empty text={t("보유 종목이 없습니다.")} /> : view === "bar" ? <div className="mt-4 space-y-3">{data.map((item, index) => <div key={item.id}><div className="mb-1.5 flex justify-between text-sm"><span>{item.name}</span><span>{displayShare(item.share)}</span></div><div className="h-2 rounded-full bg-[var(--surface-muted)]"><div className="h-full rounded-full" style={{ width: `${item.share}%`, backgroundColor: COLORS[index % COLORS.length] }} /></div></div>)}</div> : <DonutAllocation data={data} displayShare={displayShare} formatValue={(value) => formatCurrency(fromKrw(value, displayCurrency, rates), displayCurrency, localeTag)} />}</section>;
+  return <section className="rounded-xl border bg-[var(--surface)] p-5"><div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2"><Wallet size={19} className="text-[var(--muted)]" /><h2 className="font-semibold">{t("보유 자산")}</h2></div><div className="flex rounded-lg bg-[var(--surface-muted)] p-0.5" aria-label={t("자산 차트 보기")}><ViewButton active={view === "bar"} label={t("막대형")} onClick={() => setView("bar")}><BarChart3 size={15} /></ViewButton><ViewButton active={view === "donut"} label={t("도넛형")} onClick={() => setView("donut")}><CirclePie size={15} /></ViewButton></div></div>{!holdings.length ? <Empty text={t("보유 종목이 없습니다.")} /> : view === "bar" ? <BarAllocation groups={groups} displayShare={displayShare} /> : <DonutAllocation groups={groups} displayShare={displayShare} formatValue={(value) => formatCurrency(fromKrw(value, displayCurrency, rates), displayCurrency, localeTag)} />}</section>;
 }
 
 export function buildAssetAllocationData(holdings: StockComputed[], total: number, rates: RatesToKrw) {
   return holdings.map((stock) => {
     const value = convertToKrw(stock.marketValue, stock.currency, rates);
-    return { id: stock.id, name: stock.name, value, share: total ? value / total * 100 : 0 };
+    return { id: stock.id, name: stock.name, sector: stock.sector, value, share: total ? value / total * 100 : 0 };
   });
 }
 
-function DonutAllocation({ data, displayShare, formatValue }: { data: { id: string; name: string; value: number; share: number }[]; displayShare: (share: number) => string; formatValue: (value: number) => string }) {
-  return <div className="mt-4 grid items-center gap-5 sm:grid-cols-[minmax(0,11fr)_minmax(0,9fr)]"><div className="h-48 min-w-0" aria-label="asset-allocation-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={data} dataKey="value" nameKey="name" innerRadius={52} outerRadius={82} paddingAngle={2}>{data.map((item, index) => <Cell key={item.id} fill={COLORS[index % COLORS.length]} />)}</Pie><Tooltip formatter={(value) => formatValue(Number(value))} /></PieChart></ResponsiveContainer></div><div className="grid min-w-0 grid-cols-1 gap-y-2.5">{data.map((item, index) => <div key={item.id} className="flex min-w-0 items-center gap-2 text-sm"><span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} /><span className="truncate">{item.name}</span><span className="ml-auto shrink-0 tabular-nums text-[var(--muted)]">{displayShare(item.share)}</span></div>)}</div></div>;
+export function buildAssetAllocationGroups(data: AssetAllocationItem[], unspecifiedSector: string): AssetAllocationGroup[] {
+  const grouped = new Map<string, AssetAllocationGroup>();
+  for (const item of data) {
+    const sector = (item.sector ?? "").normalize("NFKC").trim().replace(/\s+/g, " ");
+    const isUnspecified = !sector;
+    const name = sector || unspecifiedSector;
+    const id = isUnspecified ? "sector:__unspecified__" : `sector:${sector.toLowerCase()}`;
+    const group = grouped.get(id) ?? { id, name, value: 0, share: 0, holdings: [], isUnspecified };
+    group.value += item.value;
+    group.share += item.share;
+    group.holdings.push(item);
+    grouped.set(id, group);
+  }
+  return [...grouped.values()]
+    .map((group) => ({ ...group, holdings: [...group.holdings].sort((left, right) => right.value - left.value || left.name.localeCompare(right.name)) }))
+    .sort((left, right) => Number(left.isUnspecified) - Number(right.isUnspecified) || right.value - left.value || left.name.localeCompare(right.name));
+}
+
+function BarAllocation({ groups, displayShare }: { groups: AssetAllocationGroup[]; displayShare: (share: number) => string }) {
+  return <div className="mt-4 space-y-5">{groups.map((group, groupIndex) => <section key={group.id}><div className="mb-3 flex items-center gap-2 border-b pb-2 text-sm font-semibold"><span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: COLORS[groupIndex % COLORS.length] }} /><span>{group.name}</span><span className="ml-auto tabular-nums text-[var(--muted)]">{displayShare(group.share)}</span></div><div className="space-y-3 border-l pl-4" style={{ borderColor: COLORS[groupIndex % COLORS.length] }}>{group.holdings.map((item) => <div key={item.id}><div className="mb-1.5 flex justify-between gap-3 text-sm"><span className="min-w-0 truncate">{item.name}</span><span className="shrink-0 tabular-nums">{displayShare(item.share)}</span></div><div className="h-2 rounded-full bg-[var(--surface-muted)]"><div className="h-full rounded-full" style={{ width: `${item.share}%`, backgroundColor: COLORS[groupIndex % COLORS.length] }} /></div></div>)}</div></section>)}</div>;
+}
+
+function DonutAllocation({ groups, displayShare, formatValue }: { groups: AssetAllocationGroup[]; displayShare: (share: number) => string; formatValue: (value: number) => string }) {
+  return <div className="mt-4 grid items-center gap-5 sm:grid-cols-[minmax(0,11fr)_minmax(0,9fr)]"><div className="h-48 min-w-0" aria-label="asset-allocation-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={groups} dataKey="value" nameKey="name" innerRadius={52} outerRadius={82} paddingAngle={2}>{groups.map((group, index) => <Cell key={group.id} fill={COLORS[index % COLORS.length]} />)}</Pie><Tooltip formatter={(value) => formatValue(Number(value))} /></PieChart></ResponsiveContainer></div><div className="grid min-w-0 grid-cols-1 gap-y-4">{groups.map((group, index) => <section key={group.id}><div className="flex min-w-0 items-center gap-2 text-sm font-semibold"><span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} /><span className="truncate">{group.name}</span><span className="ml-auto shrink-0 tabular-nums text-[var(--muted)]">{displayShare(group.share)}</span></div><div className="ml-4 mt-1.5 space-y-1">{group.holdings.map((item) => <div key={item.id} className="flex min-w-0 gap-2 text-xs text-[var(--muted)]"><span className="min-w-0 truncate">{item.name}</span><span className="ml-auto shrink-0 tabular-nums">{displayShare(item.share)}</span></div>)}</div></section>)}</div></div>;
 }
 
 function ViewButton({ active, label, onClick, children }: { active: boolean; label: string; onClick: () => void; children: React.ReactNode }) { return <button type="button" aria-label={label} aria-pressed={active} title={label} onClick={onClick} className={`grid size-7 place-items-center rounded-md ${active ? "bg-[var(--surface)] text-[var(--accent)] shadow-sm" : "text-[var(--muted)]"}`}>{children}</button>; }
