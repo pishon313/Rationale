@@ -43,7 +43,7 @@ describe("Mirae account-ledger adapter v1", () => {
     const parsed = file([`2026-08-16,${activity},합성 알파,2,100000,0,10,0`]);
     const prepared = miraeAccountLedgerAdapter.prepare(parsed, context)[0];
     expect(prepared.disposition).toBe(disposition);
-    if (side) expect(prepared.execution).toMatchObject({ adapter: "mirae-account-ledger-v1", side, price: 50000 });
+    if (side) expect(prepared.execution).toMatchObject({ adapter: "mirae-account-ledger-v1", side, price: 50000, fee: 10, feeProvided: true });
     if (disposition !== "execution") expect(prepared.execution).toBeUndefined();
   });
 
@@ -115,6 +115,7 @@ describe("Mirae account-ledger adapter v1", () => {
     const preview = await buildPreparedImportPreview(miraeAccountLedgerAdapter.prepare(parsed, context), { stocks, accounts: [account], existingTrades: [], targetAccountId: "account", importBatchId: context.importBatchId, importedAt: now });
     expect(preview.summary).toMatchObject({ ready: 2, excluded_settlement: 2, excluded_non_trade: 2, unsupported_activity: 1 });
     expect(preview.candidates.filter((candidate) => candidate.trade)).toHaveLength(2);
+    expect(preview.candidates.filter((candidate) => candidate.trade).every((candidate) => candidate.trade?.feeMode === "sourceProvided" && candidate.trade.feeCalculation === null)).toBe(true);
     expect(preview.candidates.filter((candidate) => candidate.status.startsWith("excluded_")).every((candidate) => candidate.action === "none" && !candidate.selectedByDefault)).toBe(true);
     expect(preview.candidates.filter((candidate) => candidate.trade).every((candidate) => candidate.trade?.price === 50000)).toBe(true);
     const selected = new Set([preview.candidates[0].id, ...preview.candidates.filter((candidate) => candidate.action === "none").map((candidate) => candidate.id)]);

@@ -3,6 +3,8 @@ import { sampleStocks } from "@/features/stocks/sample-data";
 import type { Stock } from "@/features/stocks/types";
 import type { ImportMappingProfile } from "@/features/import/import-types";
 import type { InvestmentAccount } from "@/features/accounts/types";
+import { sampleTrades } from "@/features/trades/sample-data";
+import type { Trade } from "@/features/trades/types";
 import { clearPersistenceError, getCorruptionSnapshot, getPersistenceSnapshot, loadCollection, resetCorruptedCollection, resolveCorruption, retryLastSave, saveCollection, saveCollectionsAtomically } from "./local-repository";
 
 const sqlMocks = vi.hoisted(() => ({ load: vi.fn(), invoke: vi.fn() }));
@@ -88,6 +90,22 @@ describe("browser local repository", () => {
     const quarantineKey = Object.keys(localStorage).find((key) => key.startsWith("tradejournal.corrupt.accounts."));
     expect(JSON.parse(localStorage.getItem(quarantineKey!) ?? "null")).toMatchObject({ rawData: raw, collection: "accounts" });
     expect(localStorage.getItem("tradejournal.accounts.v1")).toBe(raw);
+  });
+
+  it("loads mixed legacy and valid Trade fee provenance without quarantine", async () => {
+    const sourceProvided = { ...sampleTrades[1], feeMode: "sourceProvided" as const, feeCalculation: null };
+    localStorage.setItem("tradejournal.trades.v1", JSON.stringify([sampleTrades[0], sourceProvided]));
+    await expect(loadCollection<Trade>("trades", [])).resolves.toEqual([sampleTrades[0], sourceProvided]);
+    expect(getCorruptionSnapshot().collections).toEqual([]);
+  });
+
+  it("routes invalid Trade fee provenance through the existing quarantine path", async () => {
+    const invalid = { ...sampleTrades[1], feeMode: "accountPolicy", feeCalculation: null };
+    const raw = JSON.stringify([sampleTrades[0], invalid]);
+    localStorage.setItem("tradejournal.trades.v1", raw);
+    await expect(loadCollection<Trade>("trades", [])).resolves.toEqual([]);
+    expect(getCorruptionSnapshot().collections[0]).toMatchObject({ collection: "trades", source: "localStorage", errorType: "INVALID_RECORD", invalidIndexes: [1] });
+    expect(localStorage.getItem("tradejournal.trades.v1")).toBe(raw);
   });
 
   it("persists valid mapping profiles and quarantines invalid browser profiles", async () => {
@@ -340,6 +358,19 @@ describe("Tauri local repository", () => {
 
     await expect(loadCollection<ImportMappingProfile>("import-mapping-profiles", [])).resolves.toEqual([mappingProfile]);
     expect(sqlMocks.invoke).toHaveBeenCalledWith("quarantine_corrupt_records", { entries: [expect.objectContaining({ recordId: "profile-2", errorType: "INVALID_RECORD" })] });
+  });
+
+  it("keeps valid SQLite Trades while quarantining only an invalid fee-provenance row", async () => {
+    const invalid = { ...sampleTrades[1], feeMode: "accountPolicy", feeCalculation: null };
+    sqlMocks.load.mockResolvedValue({ select: vi.fn().mockResolvedValue([
+      { id: sampleTrades[0].id, data: JSON.stringify(sampleTrades[0]), updated_at: sampleTrades[0].createdAt },
+      { id: invalid.id, data: JSON.stringify(invalid), updated_at: invalid.createdAt },
+    ]), execute: vi.fn() });
+    sqlMocks.invoke.mockResolvedValue(undefined);
+
+    await expect(loadCollection<Trade>("trades", [])).resolves.toEqual([sampleTrades[0]]);
+    expect(sqlMocks.invoke).toHaveBeenCalledWith("quarantine_corrupt_records", { entries: [expect.objectContaining({ recordId: invalid.id, errorType: "INVALID_RECORD" })] });
+    expect(getCorruptionSnapshot().collections[0]).toMatchObject({ collection: "trades", source: "sqlite", affectedRecordCount: 1, validRecordCount: 1, invalidIndexes: [1] });
   });
 
   it("delegates a multi-collection save to the single-connection Rust command", async () => {

@@ -534,6 +534,8 @@ test("미래에셋 계좌 활동 원장을 명시적으로 적용해 체결 행�
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]").length)).toBe(2);
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]"));
   expect(stored.map((trade: { price: number }) => trade.price)).toEqual([50000, 50000]);
+  expect(stored.map((trade: { feeMode: string }) => trade.feeMode)).toEqual(["sourceProvided", "sourceProvided"]);
+  expect(stored.every((trade: { feeCalculation: unknown }) => trade.feeCalculation === null)).toBe(true);
   expect(stored.every((trade: Record<string, unknown>) => !("grossAmount" in trade) && !("priceEvidence" in trade))).toBe(true);
 });
 
@@ -890,6 +892,52 @@ test("계좌 수수료 규칙을 생성·미리보기·복제·삭제하고 기�
   const persisted = await page.evaluate(() => ({ account: JSON.parse(localStorage.getItem("tradejournal.accounts.v1") ?? "[]")[0], trade: JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]")[0] }));
   expect(persisted.account.feePolicy).toMatchObject({ version: 1, enabled: true, rules: [{ name: "KRW 기본", ratePercent: "0.15", fixedFee: "0", currency: "KRW" }, { name: "미국 기본", ratePercent: "0.2", currency: "USD", market: "미국", roundingUnit: "0.01" }] });
   expect(persisted.trade.fee).toBe(7);
+});
+
+test("새 매매 수수료를 계좌 정책으로 계산하고 직접 입력 전환의 출처를 보존한다", async ({ page }) => {
+  const account = {
+    ...e2eAccount("automatic-fee-account", "자동 수수료 계좌"),
+    baseCurrency: "USD",
+    feePolicy: {
+      version: 1,
+      enabled: true,
+      rules: [{ id: "automatic-usd", name: "미국 자동", market: "미국", currency: "USD", side: "both", ratePercent: "0.1", fixedFee: "0.25", minimumFee: null, maximumFee: null, grossAmountFrom: null, grossAmountTo: null, effectiveFrom: "2020-01-01", effectiveTo: null, roundingMode: "round", roundingUnit: "0.01" }],
+    },
+  };
+  const stock = e2eStock("automatic-fee-stock", "자동 수수료 종목");
+  await page.addInitScript(({ account, stock }) => {
+    localStorage.setItem("tradejournal.accounts.v1", JSON.stringify([account]));
+    localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([stock]));
+    localStorage.setItem("tradejournal.trades.v1", "[]");
+  }, { account, stock });
+
+  await page.goto("/trades");
+  await page.getByRole("button", { name: "원장 기록" }).click();
+  let dialog = page.getByRole("dialog", { name: "새 원장 기록" });
+  await dialog.getByLabel("종목").selectOption(stock.id);
+  await dialog.getByLabel("계좌").selectOption(account.id);
+  await dialog.getByLabel("수량").fill("10");
+  await dialog.getByLabel("체결 가격").fill("100");
+  await expect(dialog.getByRole("button", { name: "자동 계산" })).toHaveAttribute("aria-pressed", "true");
+  await expect(dialog.getByRole("spinbutton", { name: "수수료", exact: true })).toHaveValue("1.25");
+  await dialog.getByLabel("수량").fill("20");
+  await expect(dialog.getByRole("spinbutton", { name: "수수료", exact: true })).toHaveValue("2.25");
+  await dialog.getByLabel("세금").fill("4");
+  await dialog.getByRole("button", { name: "기록 저장" }).click();
+
+  const automatic = await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]")[0]);
+  expect(automatic).toMatchObject({ fee: 2.25, tax: 4, feeMode: "accountPolicy", feeCalculation: { version: 1, policyAccountId: "automatic-fee-account", ruleId: "automatic-usd", quantity: "20", price: "100", grossAmount: "2000", calculatedFee: "2.25" } });
+
+  const row = page.getByRole("row").filter({ hasText: "자동 수수료 종목" });
+  await row.getByRole("button", { name: "기록 수정", exact: true }).click();
+  dialog = page.getByRole("dialog", { name: "기록 수정" });
+  await expect(dialog.getByRole("spinbutton", { name: "수수료", exact: true })).toHaveValue("2.25");
+  await dialog.getByRole("button", { name: "직접 입력" }).click();
+  await dialog.getByRole("spinbutton", { name: "수수료", exact: true }).fill("7");
+  await dialog.getByRole("button", { name: "변경 저장" }).click();
+
+  const manual = await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]")[0]);
+  expect(manual).toMatchObject({ fee: 7, tax: 4, feeMode: "manual", feeCalculation: null });
 });
 
 test("계좌 병합은 대상 정책을 유지하고 원본 정책과 기존 거래 수수료를 보존한다", async ({ page }) => {

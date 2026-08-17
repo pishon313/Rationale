@@ -4,6 +4,7 @@ import { buildTradingLedger } from "@/domain/trading-ledger";
 import type { InvestmentAccount } from "./types";
 import { archiveAccount, buildAccountMerge, ledgerEconomicSnapshot, mergeAccounts, withSingleDefault } from "./account-operations";
 import type { AccountFeePolicyV1 } from "./account-fee-policy";
+import type { AccountFeeCalculationSnapshotV1 } from "@/features/trades/types";
 
 const repository = vi.hoisted(() => ({ save: vi.fn() }));
 vi.mock("@/lib/local-repository", () => ({ saveCollectionsAtomically: repository.save }));
@@ -29,13 +30,16 @@ describe("account operations", () => {
     const target = { ...account("b", "B"), feePolicy: targetPolicy };
     expect(withSingleDefault([source, target], { ...source, name: "Renamed" }).find((item) => item.id === "a")?.feePolicy).toEqual(feePolicy);
     expect(archiveAccount([source, target], "a", buildTradingLedger([], [source, target]), now).find((item) => item.id === "a")?.feePolicy).toEqual(feePolicy);
-    const historical = { ...security("history", "a", "AAPL", "매수", 1, 100, "2026-01-01"), fee: 7 };
+    const feeCalculation: AccountFeeCalculationSnapshotV1 = { version: 1, policyAccountId: "a", ruleId: "r1", ruleName: "기본", market: "all", currency: "KRW", side: "buy", ratePercent: "0", fixedFee: "7", minimumFee: null, maximumFee: null, grossAmountFrom: null, grossAmountTo: null, effectiveFrom: "2026-01-01", effectiveTo: null, roundingMode: "floor", roundingUnit: "1", tradedAtDate: "2026-01-01", quantity: "1", price: "100", grossAmount: "100", calculatedFee: "7", calculatedAt: "2026-01-01T00:00:00Z" };
+    const historical = { ...security("history", "a", "AAPL", "매수", 1, 100, "2026-01-01"), fee: 7, feeMode: "accountPolicy" as const, feeCalculation };
     const writes = buildAccountMerge([source, target], [historical], "a", "b", now);
     const accounts = writes.find((write) => write.collection === "accounts")!.values as InvestmentAccount[];
     const trades = writes.find((write) => write.collection === "trades")!.values as typeof historical[];
     expect(accounts.find((item) => item.id === "a")?.feePolicy).toEqual(feePolicy);
     expect(accounts.find((item) => item.id === "b")?.feePolicy).toEqual(targetPolicy);
     expect(trades[0].fee).toBe(7);
+    expect(trades[0].feeCalculation).toEqual(feeCalculation);
+    expect(trades[0].feeCalculation?.policyAccountId).toBe("a");
   });
   it("blocks archive while positions or cash remain and allows a zero-balance account", () => {
     const entities = [account("a", "A", true), account("b", "B")];

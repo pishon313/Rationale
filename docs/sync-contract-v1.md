@@ -19,7 +19,7 @@ Account syncs user-owned metadata, including the optional `feePolicy` v1 value, 
 
 Stock syncs identity, classification, thesis, review dates, ledger initialization, tags, and lifecycle timestamps. The optional `marketSector` stable ID is additive; legacy Sync V1 payloads may omit it, while the user-authored My category continues through the existing `sector` field. It excludes authoritative `quantity` and `averagePrice`, all quote-cache fields, and the legacy device-local opening account label. Holdings are projected from merged Trades by the production ledger.
 
-Trade syncs the complete normalized economic record without rounding, including fractional quantities, transfers, opening positions, `journalStatus`, `origin` provenance, rule snapshots, and `deletedAt`. Trade is the economic source of truth. Import source keys and provider/external execution metadata therefore survive multi-device whole-record LWW merges.
+Trade syncs the complete normalized economic record without rounding, including fractional quantities, transfers, opening positions, `journalStatus`, `origin` provenance, rule snapshots, optional `feeMode`/`feeCalculation`, and `deletedAt`. Trade is the economic source of truth. Import source keys, provider/external execution metadata, and fee provenance therefore survive multi-device whole-record LWW merges. Older Sync V1 Trades may omit fee metadata; all four current modes and valid Account-policy snapshots are additive without a schema bump. Snapshot `policyAccountId` is historical provenance and need not equal the Trade's current Account after merge.
 
 IDs beginning with `sample:v1:` are never synchronized. Sample Dataset remains device-local onboarding data.
 

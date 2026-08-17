@@ -60,6 +60,7 @@ export type CanonicalExecution = {
     grossAmount?: number;
   };
   fee: number;
+  feeProvided: boolean;
   tax: number;
   currency: Currency | null;
   exchangeRate: number | null;

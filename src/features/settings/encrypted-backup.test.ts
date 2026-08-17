@@ -6,11 +6,18 @@ import { migrateLegacyAccounts } from "@/features/accounts/migrate-accounts";
 import { decryptBackupPayload, encryptedBackupFormat, encryptBackupPayload, parseSelectedBackup, validateNewBackupPassword } from "./encrypted-backup";
 import type { BackupV5 } from "./backup-service";
 import type { AccountFeePolicyV1 } from "@/features/accounts/account-fee-policy";
+import Decimal from "decimal.js";
+import type { AccountFeeCalculationSnapshotV1, Trade } from "@/features/trades/types";
 
 const invokeMock = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 
 const legacy = { version: 1, exportedAt: "2026-08-05T00:00:00.000Z", stocks: sampleStocks, plans: samplePlans, trades: sampleTrades };
+
+function feeSnapshotFor(trade: Trade): AccountFeeCalculationSnapshotV1 {
+  const fee = new Decimal(trade.fee).toFixed();
+  return { version: 1, policyAccountId: "retired-account", ruleId: "r1", ruleName: "Imported rule", market: "all", currency: trade.currency, side: trade.tradeType === "매도" ? "sell" : "buy", ratePercent: "0", fixedFee: fee, minimumFee: null, maximumFee: null, grossAmountFrom: null, grossAmountTo: null, effectiveFrom: "2020-01-01", effectiveTo: null, roundingMode: trade.currency === "KRW" ? "floor" : "round", roundingUnit: trade.currency === "KRW" ? "1" : "0.01", tradedAtDate: trade.tradedAt.slice(0, 10), quantity: new Decimal(trade.quantity).toFixed(), price: new Decimal(trade.price).toFixed(), grossAmount: new Decimal(trade.quantity).mul(trade.price).toFixed(), calculatedFee: fee, calculatedAt: legacy.exportedAt };
+}
 
 beforeEach(() => invokeMock.mockReset());
 
@@ -67,6 +74,17 @@ describe("encrypted backup routing", () => {
     const restored = await decryptBackupPayload("encrypted", "password123");
     expect(restored.version).toBe(5);
     if (restored.version === 5) expect(restored.accounts[0].feePolicy).toEqual(feePolicy);
+  });
+
+  it("preserves Trade fee provenance and calculation evidence through encrypted Backup V5", async () => {
+    const migrated = migrateLegacyAccounts([], sampleTrades, legacy.exportedAt);
+    const first = migrated.trades[0];
+    const trades = [{ ...first, feeMode: "accountPolicy" as const, feeCalculation: feeSnapshotFor(first) }, ...migrated.trades.slice(1)];
+    const backup: BackupV5 = { version: 5, exportedAt: legacy.exportedAt, accounts: migrated.accounts, stocks: sampleStocks, plans: samplePlans, trades, observations: [], reviews: [], rules: [], notes: [], language: "ko", dashboardNotes: [], earningsEvents: [], displayCurrency: "KRW" };
+    invokeMock.mockImplementation((command: string) => Promise.resolve(command === "encrypt_backup" ? "encrypted" : JSON.stringify(backup)));
+    await expect(encryptBackupPayload(backup, "password123")).resolves.toBe("encrypted");
+    const restored = await decryptBackupPayload("encrypted", "password123");
+    expect(restored.trades[0]).toMatchObject({ feeMode: "accountPolicy", feeCalculation: trades[0].feeCalculation });
   });
 
   it("validates password length and exact confirmation without trimming", () => {

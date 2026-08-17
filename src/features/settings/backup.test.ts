@@ -15,6 +15,8 @@ import { buildAccountTransfer } from "@/features/accounts/account-transfer";
 import { backupCounts, backupWrites, restoreBackup, snapshotWrite, type BackupV5 } from "./backup-service";
 import { marketSectors } from "@/features/stocks/market-sectors";
 import type { AccountFeePolicyV1 } from "@/features/accounts/account-fee-policy";
+import Decimal from "decimal.js";
+import type { AccountFeeCalculationSnapshotV1, Trade } from "@/features/trades/types";
 
 const repositoryMocks = vi.hoisted(() => ({ saveCollectionsAtomically: vi.fn() }));
 vi.mock("@/lib/local-repository", () => ({ loadCollection: vi.fn(), saveCollectionsAtomically: repositoryMocks.saveCollectionsAtomically }));
@@ -39,6 +41,16 @@ function version4(overrides: Record<string, unknown> = {}) {
 function version5(overrides: Record<string, unknown> = {}) {
   const migrated = migrateLegacyAccounts([], sampleTrades, valid.exportedAt);
   return { ...version4(), version: 5, accounts: migrated.accounts, trades: migrated.trades, ...overrides };
+}
+
+function feeSnapshotFor(trade: Trade): AccountFeeCalculationSnapshotV1 {
+  const fixedFee = new Decimal(trade.fee).toFixed();
+  return { version: 1, policyAccountId: "historical-policy-account", ruleId: "historical-rule", ruleName: "Historical rule", market: "all", currency: trade.currency, side: trade.tradeType === "매도" ? "sell" : "buy", ratePercent: "0", fixedFee, minimumFee: null, maximumFee: null, grossAmountFrom: null, grossAmountTo: null, effectiveFrom: "2020-01-01", effectiveTo: null, roundingMode: trade.currency === "KRW" || trade.currency === "JPY" ? "floor" : "round", roundingUnit: trade.currency === "KRW" || trade.currency === "JPY" ? "1" : "0.01", tradedAtDate: trade.tradedAt.slice(0, 10), quantity: new Decimal(trade.quantity).toFixed(), price: new Decimal(trade.price).toFixed(), grossAmount: new Decimal(trade.quantity).mul(trade.price).toFixed(), calculatedFee: fixedFee, calculatedAt: valid.exportedAt };
+}
+
+function withAccountPolicyFee<T extends { trades: Trade[] }>(backup: T): T {
+  const first = backup.trades[0];
+  return { ...backup, trades: [{ ...first, feeMode: "accountPolicy", feeCalculation: feeSnapshotFor(first) }, ...backup.trades.slice(1)] };
 }
 
 function writesByCollection(backup: ReturnType<typeof validateBackupPayload>) {
@@ -98,6 +110,30 @@ describe("validateBackupPayload", () => {
       expect(parsed.accounts[0].feePolicy).toEqual(account.feePolicy);
       expect(backupWrites(parsed).find((write) => write.collection === "accounts")?.values).toEqual([account]);
     }
+  });
+
+  it.each([1, 2, 3, 4, 5] as const)("keeps Backup V%s compatible while preserving additive Trade fee provenance", (version) => {
+    const base = version === 1 ? valid : version === 2 || version === 3 ? { ...valid, version, observations: sampleObservations, reviews: sampleReviews, rules: sampleRules } : version === 4 ? version4() : version5();
+    const parsed = validateBackupPayload(withAccountPolicyFee(base));
+    expect(parsed.version).toBe(version);
+    expect(parsed.trades[0]).toMatchObject({ feeMode: "accountPolicy", feeCalculation: expect.objectContaining({ version: 1, policyAccountId: "historical-policy-account", calculatedFee: String(parsed.trades[0].fee) }) });
+  });
+
+  it("round-trips every Trade fee mode and rejects incompatible or invalid snapshots", () => {
+    const backup = version5();
+    const [first, second] = backup.trades;
+    const trades: Trade[] = [
+      { ...first, id: "fee-manual", feeMode: "manual", feeCalculation: null },
+      { ...first, id: "fee-source", feeMode: "sourceProvided", feeCalculation: null },
+      { ...first, id: "fee-unknown", feeMode: "unknown", feeCalculation: null },
+      { ...second, id: "fee-policy", feeMode: "accountPolicy", feeCalculation: feeSnapshotFor(second) },
+    ];
+    const parsed = validateBackupPayload({ ...backup, trades });
+    expect(parsed.trades.map((trade) => trade.feeMode)).toEqual(["manual", "sourceProvided", "unknown", "accountPolicy"]);
+    expect(backupWrites(parsed).find((write) => write.collection === "trades")?.values).toEqual(parsed.trades.map((trade) => expect.objectContaining({ id: trade.id, feeMode: trade.feeMode, feeCalculation: trade.feeCalculation })));
+    expect(() => validateBackupPayload({ ...backup, trades: [{ ...first, feeMode: "accountPolicy", feeCalculation: null }] })).toThrow("계좌 수수료 계산 기록");
+    expect(() => validateBackupPayload({ ...backup, trades: [{ ...first, feeMode: "manual", feeCalculation: feeSnapshotFor(first) }] })).toThrow("계좌 정책이 아닌 수수료");
+    expect(() => validateBackupPayload({ ...backup, trades: [{ ...first, feeMode: "accountPolicy", feeCalculation: { ...feeSnapshotFor(first), calculatedFee: "999" } }] })).toThrow("재현");
   });
 
   it("normalizes valid fee decimal strings before Backup V5 restore writes", () => {

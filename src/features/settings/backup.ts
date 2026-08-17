@@ -7,6 +7,7 @@ import { ruleTypes, severities, type InvestmentRule } from "@/features/rules/typ
 import { currencies, investmentTypes, marketDataProviders, markets, priceStatuses, quoteFreshnessValues, quotePreferences, remoteMarketDataProviders, stockStatuses, stockViews, type Stock } from "@/features/stocks/types";
 import { marketSectors } from "@/features/stocks/market-sectors";
 import { tradeJournalStatuses, tradeOriginKinds, tradeTypes, type Trade } from "@/features/trades/types";
+import { validateTradeFeeMetadata } from "@/features/trades/trade-fee";
 import { accountKinds } from "@/features/accounts/types";
 import type { InvestmentAccount } from "@/features/accounts/types";
 import { validateAccountFeePolicy } from "@/features/accounts/account-fee-policy";
@@ -339,6 +340,8 @@ function validateTradeRecord(trade: Record<string, unknown>, index: number) {
   const tax = requiredNumber(trade.tax, label, "세금");
   if (exchangeRate <= 0 || (trade.currency === "KRW" && exchangeRate !== 1)) throw new Error(`${label}의 환율이 올바르지 않습니다.`);
   if (fee < 0 || tax < 0) throw new Error(`${label}의 수수료 또는 세금이 올바르지 않습니다.`);
+  const feeMetadata = validateTradeFeeMetadata(trade as unknown as Trade);
+  if (!feeMetadata.valid) throw new Error(`${label}의 ${feeMetadata.message}`);
   if (trade.ruleViolations !== undefined) {
     if (!Array.isArray(trade.ruleViolations) || trade.ruleViolations.some((item) => !isRecord(item) || typeof item.ruleId !== "string" || typeof item.title !== "string" || typeof item.message !== "string" || !["안내", "주의", "경고"].includes(String(item.severity)))) throw new Error(`${label}의 원칙 위반 기록이 올바르지 않습니다.`);
   }

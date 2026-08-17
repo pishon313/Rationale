@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { InvestmentAccount } from "@/features/accounts/types";
 import { buildTradingLedger } from "@/domain/trading-ledger";
 import type { Stock } from "@/features/stocks/types";
-import type { Trade } from "@/features/trades/types";
+import type { AccountFeeCalculationSnapshotV1, Trade } from "@/features/trades/types";
 import { MockSyncTransport } from "./mock-sync-transport";
 import { mergeSyncCollections } from "./sync-merge";
 import { fromStockSyncPayload, isSyncableRecord, recordNameFor, toAccountSyncPayload, toStockSyncPayload, toSyncEnvelope, toTradeSyncPayload } from "./sync-projection";
@@ -17,6 +17,7 @@ const feePolicy: AccountFeePolicyV1 = { version: 1, enabled: true, rules: [{ id:
 const stock: Stock = { id: "nvda", ticker: "NVDA", name: "NVIDIA", market: "미국", currency: "USD", assetType: "주식", sector: "", status: "보유", investmentType: "장기 코어", currentPrice: 140, priceUpdatedAt: at, priceQuotedAt: at, priceSource: "manual", priceStatus: "manual", targetPrice: 160, averagePrice: 100, quantity: 9, thesisSummary: "AI", currentView: "강세", currentViewMemo: "", nextReviewDate: null, nextEarningsDate: null, ledgerInitializedAt: at, tags: [], createdAt: at, updatedAt: at, deletedAt: null };
 const trade = (id: string, quantity: number, updatedAt = at): Trade => ({ id, stockId: stock.id, stockName: stock.name, planId: null, tradeType: "매수", tradedAt: updatedAt, quantity, price: 100, currency: "USD", exchangeRate: 1380, fee: 0, tax: 0, accountId: account.id, accountName: account.name, memo: "", emotion: "평온", emotionIntensity: 1, confidenceScore: 3, ruleComplianceScore: 3, ruleViolations: [], createdAt: updatedAt, updatedAt, deletedAt: null });
 const collections = (trades: Trade[] = [trade("t1", 0.35)]): SyncCollections => ({ accounts: [account], stocks: [stock], trades });
+const feeSnapshot = (value: Trade): AccountFeeCalculationSnapshotV1 => ({ version: 1, policyAccountId: "retired-policy-account", ruleId: "historical-rule", ruleName: "Historical", market: "all", currency: value.currency, side: value.tradeType === "매도" ? "sell" : "buy", ratePercent: "0", fixedFee: String(value.fee), minimumFee: null, maximumFee: null, grossAmountFrom: null, grossAmountTo: null, effectiveFrom: "2020-01-01", effectiveTo: null, roundingMode: "round", roundingUnit: "0.01", tradedAtDate: value.tradedAt.slice(0, 10), quantity: String(value.quantity), price: String(value.price), grossAmount: String(value.quantity * value.price), calculatedFee: String(value.fee), calculatedAt: at });
 
 describe("Sync Contract v1", () => {
   it("projects only contract fields and preserves economic values", () => {
@@ -52,6 +53,30 @@ describe("Sync Contract v1", () => {
     expect(() => validateSyncCandidate(collections([{ ...trade("bad-origin", 0.35), origin: { kind: "fileImport", sourceKey: "file:v1:x" } as Trade["origin"] }]))).toThrow("가져오기 출처");
   });
 
+  it("keeps optional Trade fee provenance additive in Sync V1 and preserves historical Account provenance", () => {
+    const legacy = trade("legacy-fee", 0.35);
+    expect(toTradeSyncPayload(legacy)).not.toHaveProperty("feeMode");
+    const values: Trade[] = [
+      { ...trade("manual-fee", 0.35), feeMode: "manual", feeCalculation: null },
+      { ...trade("source-fee", 0.35), feeMode: "sourceProvided", feeCalculation: null },
+      { ...trade("unknown-fee", 0.35), feeMode: "unknown", feeCalculation: null },
+    ];
+    const policyTrade = trade("policy-fee", 0.35);
+    values.push({ ...policyTrade, feeMode: "accountPolicy", feeCalculation: feeSnapshot(policyTrade) });
+    for (const value of values) {
+      expect(toSyncEnvelope("trades", value)).toMatchObject({ schemaVersion: 1, payload: expect.objectContaining({ feeMode: value.feeMode, feeCalculation: value.feeCalculation }) });
+      expect(() => validateSyncCandidate(collections([value]))).not.toThrow();
+    }
+    expect(values[3].feeCalculation?.policyAccountId).not.toBe(values[3].accountId);
+  });
+
+  it("rejects unknown or incompatible Trade fee provenance in Sync V1", () => {
+    const base = trade("bad-fee", 0.35);
+    expect(() => validateSyncCandidate(collections([{ ...base, feeMode: "future" as Trade["feeMode"] }]))).toThrow("수수료 출처");
+    expect(() => validateSyncCandidate(collections([{ ...base, feeMode: "accountPolicy", feeCalculation: null }]))).toThrow("계좌 수수료 계산 기록");
+    expect(() => validateSyncCandidate(collections([{ ...base, feeMode: "manual", feeCalculation: feeSnapshot(base) }]))).toThrow("계좌 정책이 아닌 수수료");
+  });
+
   it("preserves local quote and derived stock fields on remote materialization", () => {
     const remote = { ...toStockSyncPayload(stock), thesisSummary: "Remote", updatedAt: "2026-08-11T00:00:00Z" };
     expect(fromStockSyncPayload(remote, stock)).toMatchObject({ thesisSummary: "Remote", currentPrice: 140, quantity: 9, averagePrice: 100 });
@@ -79,6 +104,10 @@ describe("Sync Contract v1", () => {
     expect(result.collections.trades).toHaveLength(2); expect(result.collections.trades[0].quantity).toBe(0.17); expect(result.conflicts[0]).toMatchObject({ chosenSide: "remote", reason: "newer-remote" });
     const localWins = mergeSyncCollections(collections([trade("t1", 0.35, "2026-08-12T00:00:00Z")]), [newerRemote], at); expect(localWins.localWinners).toHaveLength(1);
     const equal = mergeSyncCollections(collections(), [toSyncEnvelope("trades", trade("t1", 0.2))], at); expect(equal.conflicts[0].reason).toBe("equal-timestamp-server-wins");
+    const localManual = { ...trade("fee-lww", 0.35, "2026-08-11T00:00:00Z"), feeMode: "manual" as const, feeCalculation: null };
+    const remoteSource = { ...trade("fee-lww", 0.35, "2026-08-12T00:00:00Z"), feeMode: "sourceProvided" as const, feeCalculation: null };
+    const feeMerge = mergeSyncCollections(collections([localManual]), [toSyncEnvelope("trades", remoteSource)], at);
+    expect(feeMerge.collections.trades[0]).toMatchObject({ feeMode: "sourceProvided", feeCalculation: null });
   });
 
   it("validates remote ledger and references without weakening production rules", () => {

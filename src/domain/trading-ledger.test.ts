@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildTradingLedger, cashBalanceKrw, normalizeTrade } from "./trading-ledger";
 import type { Trade } from "@/features/trades/types";
 import type { InvestmentAccount } from "@/features/accounts/types";
+import type { AccountFeeCalculationSnapshotV1 } from "@/features/trades/types";
 
 const trade = (value: Partial<Trade> & Pick<Trade, "id" | "tradeType" | "tradedAt">): Trade => ({ stockId: "s1", stockName: "테스트", planId: null, quantity: 0, price: 0, currency: "KRW", exchangeRate: 1, fee: 0, tax: 0, accountName: "계좌 A", memo: "", emotion: "평온", emotionIntensity: 1, confidenceScore: 3, ruleComplianceScore: 3, createdAt: value.tradedAt, ...value });
 const account = (id: string, name: string): InvestmentAccount => ({ id, name, institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault: false, archivedAt: null, memo: "", createdAt: "2026-01-01", updatedAt: "2026-01-01" });
@@ -15,6 +16,13 @@ describe("trading ledger", () => {
     const base = [trade({ id: "buy", tradeType: "매수", tradedAt: "2026-01-01", quantity: 1, price: 100 })];
     const imported = base.map((item) => ({ ...item, journalStatus: "unreviewed" as const, origin: { kind: "fileImport" as const, sourceKey: "file:v1:abc", importBatchId: "batch", importedAt: "2026-01-01", sourceRow: 2, timePrecision: "date" as const } }));
     expect(buildTradingLedger(imported).positions).toEqual(buildTradingLedger(base).positions);
+  });
+  it("수수료 출처와 계산 스냅샷은 동일한 경제 거래의 원장 결과를 바꾸지 않는다", () => {
+    const base = trade({ id: "metadata", tradeType: "매수", tradedAt: "2026-08-17", quantity: 1, price: 1000, fee: 1 });
+    const snapshot: AccountFeeCalculationSnapshotV1 = { version: 1, policyAccountId: "historical-account", ruleId: "rule", ruleName: "Historical", market: "all", currency: "KRW", side: "buy", ratePercent: "0", fixedFee: "1", minimumFee: null, maximumFee: null, grossAmountFrom: null, grossAmountTo: null, effectiveFrom: "2026-01-01", effectiveTo: null, roundingMode: "floor", roundingUnit: "1", tradedAtDate: "2026-08-17", quantity: "1", price: "1000", grossAmount: "1000", calculatedFee: "1", calculatedAt: "2026-08-17T00:00:00Z" };
+    const withMetadata = { ...base, feeMode: "accountPolicy" as const, feeCalculation: snapshot };
+    expect(buildTradingLedger([withMetadata]).positions).toEqual(buildTradingLedger([base]).positions);
+    expect(buildTradingLedger([withMetadata]).cashBalances).toEqual(buildTradingLedger([base]).cashBalances);
   });
   it("accountId가 같으면 legacy 이름이 달라도 같은 계좌로 계산한다", () => {
     const ledger = buildTradingLedger([

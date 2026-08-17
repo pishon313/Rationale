@@ -51,6 +51,14 @@ describe("trade mutations", () => {
     expect(replaceTrades).not.toHaveBeenCalled();
   });
 
+  it("does not persist invalid fee provenance metadata", async () => {
+    const replaceTrades = vi.fn().mockResolvedValue(undefined);
+    const invalid = { ...trade("invalid-fee", "매수", 1), feeMode: "accountPolicy" as const, feeCalculation: null };
+    const result = await commitTradeMutation({ currentTrades: [], nextTrades: [invalid], accounts: [account], changedId: invalid.id, replaceTrades });
+    expect(result.ok).toBe(false);
+    expect(replaceTrades).not.toHaveBeenCalled();
+  });
+
   it("rejects duplicate IDs across active and deleted records before persistence", async () => {
     const active = trade("duplicate", "매수", 1);
     const deleted = { ...active, deletedAt: "2026-01-02T00:00:00.000Z" };

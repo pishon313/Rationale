@@ -84,6 +84,8 @@ Rows without an external execution ID do not enter trusted grouping. They retain
 
 Imported Trades are stored with `journalStatus: "unreviewed"` and `origin.kind: "fileImport"`, plus source key, optional provider/external execution ID, and import timestamp. Manual records are `recorded/manual`; system migrations are `unreviewed/system`. Legacy Trades normalize conservatively to `recorded/legacy`.
 
+Fee presence is recorded separately from fee value at the canonical boundary. If a fee column is mapped, a zero or nonzero value is saved with `feeMode: "sourceProvided"`; if the source has no fee field, the Trade uses `feeMode: "unknown"`. Both cases carry no Account-policy snapshot. Account fee policies are never consulted during import and cannot override source-provided fees. Fee provenance does not change source identity or duplicate matching.
+
 All economic ledger and performance calculations include imported Trades. Behavioral analytics—plan compliance, emotions, and rule snapshots—include only `recorded` Trades. Editing an imported Trade through the ordinary journal form marks it recorded while preserving its source provenance.
 
 ## Mapping profiles

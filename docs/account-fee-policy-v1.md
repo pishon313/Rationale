@@ -1,6 +1,6 @@
 # Account Fee Policy v1
 
-Account Fee Policy v1 is an optional Account-owned configuration for calculating a suggested brokerage fee from a future trade's gross amount. Phase 1 provides the domain calculator, validation, Account management UI, preview, local persistence, Backup V5, and Sync V1 compatibility. It does not write fees into the Trade form and never recalculates historical Trades.
+Account Fee Policy v1 is an optional Account-owned configuration for calculating a brokerage fee from a future trade's gross amount. The foundation provides the Decimal calculator, validation, Account management UI, preview, local persistence, Backup V5, and Sync V1 compatibility. Trade Fee Automation v1 now applies matching rules to new buy/sell entries without recalculating historical Trades.
 
 ## Stored contract
 
@@ -57,13 +57,13 @@ Account cards and detail pages show whether automatic fee calculation is off or 
 
 - Editing, choosing a default, and archiving preserve the Account policy.
 - Merge leaves the target Account's policy unchanged and archives the source Account with its original policy.
-- Future entries associated with the merged identity are expected to use the target policy when Phase 2 is implemented.
+- Future entries associated with the merged identity use the target policy when eligible.
 - Historical Trade `fee` values are never rewritten by policy changes or Account merge.
 
 ## Backup and Sync compatibility
 
 Backup remains version 5 and Sync remains version 1. Older payloads that omit `feePolicy` remain valid. `null` and valid v1 policies round-trip through plaintext/encrypted Backup V5 and Sync V1. Invalid rules and future versions reject the complete candidate before persistence. Backup collection counts and Sync's device-local `isDefault` behavior are unchanged.
 
-## Explicit Phase 1 boundary
+## Integration boundary
 
-Phase 1 does not integrate with Trade creation/editing, taxes, broker presets, provider APIs, network access, import fallback rules, fee provenance, fee-currency conversion, or historical fee recalculation. Those require a separate Phase 2 specification and review.
+The Trade form integration and saved fee provenance are documented in [`trade-fee-automation-v1.md`](trade-fee-automation-v1.md). Tax, broker presets, provider network APIs, fee-currency conversion, and historical bulk recalculation remain out of scope.

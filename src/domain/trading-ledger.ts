@@ -2,6 +2,7 @@ import Decimal from "decimal.js";
 import { currencies, fallbackRatesToKrw, type RatesToKrw } from "./currency";
 import { applyBuy, applySell, emptyPosition, type Position } from "./portfolio";
 import { journalStatusOf, tradeOriginOf, tradeTypes, type Trade } from "@/features/trades/types";
+import { assertValidTradeFeeMetadata } from "@/features/trades/trade-fee";
 import { accountIdentity, normalizeLegacyAccountName, type InvestmentAccount } from "@/features/accounts/types";
 
 export type LedgerPosition = {
@@ -158,6 +159,7 @@ function validateTrade(trade: Trade) {
   if (trade.exchangeRate <= 0) throw new Error("환율은 0보다 커야 합니다.");
   if (trade.currency === "KRW" && trade.exchangeRate !== 1) throw new Error("KRW 거래의 환율은 1이어야 합니다.");
   if (trade.fee < 0 || trade.tax < 0) throw new Error("수수료와 세금은 0 이상이어야 합니다.");
+  assertValidTradeFeeMetadata(trade);
   if (trade.tradeType === "매수" || trade.tradeType === "매도") {
     if (!trade.stockId) throw new Error("종목을 선택해 주세요.");
     if (trade.quantity <= 0 || trade.price < 0 || (!trade.isOpeningPosition && trade.price === 0)) throw new Error("수량과 체결가는 0보다 커야 합니다.");

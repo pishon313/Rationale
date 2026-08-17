@@ -282,7 +282,7 @@ describe("Import Pipeline v1", () => {
     expect(preflight.plan.insertedTrades).toHaveLength(0);
     expect(preflight.plan.restoredTradeIds).toEqual([original.id]);
     expect(preflight.plan.nextTrades).toHaveLength(1);
-    expect(preflight.plan.nextTrades[0]).toMatchObject({ id: original.id, createdAt: original.createdAt, origin: original.origin, journalStatus: "recorded", planId: "plan-1", memo: "사용자 메모", emotion: "확신", deletedAt: null });
+    expect(preflight.plan.nextTrades[0]).toMatchObject({ id: original.id, createdAt: original.createdAt, origin: original.origin, journalStatus: "recorded", feeMode: "sourceProvided", feeCalculation: null, planId: "plan-1", memo: "사용자 메모", emotion: "확신", deletedAt: null });
   });
 
   it("blocks a deleted source conflict and stale preview changes", async () => {
@@ -413,6 +413,33 @@ describe("Import Pipeline v1", () => {
     expect(changedFee.candidates[0].status).toBe("source_conflict");
   });
 
+  it("records mapped source fees including zero and marks an absent fee field unknown", async () => {
+    const nonzero = await preview(["2026-08-12T10:00:01,005930,매수,1,70000,12,0,,"]);
+    const zero = await preview(["2026-08-12T10:00:02,005930,매수,1,70000,0,0,,"]);
+    const absent = await previewCsv("거래일시,종목코드,구분,수량,가격\n2026-08-12T10:00:03,005930,매수,1,70000");
+    expect(nonzero.candidates[0].execution).toMatchObject({ fee: 12, feeProvided: true });
+    expect(nonzero.candidates[0].trade).toMatchObject({ fee: 12, feeMode: "sourceProvided", feeCalculation: null });
+    expect(zero.candidates[0].trade).toMatchObject({ fee: 0, feeMode: "sourceProvided", feeCalculation: null });
+    expect(absent.candidates[0].execution).toMatchObject({ fee: 0, feeProvided: false });
+    expect(absent.candidates[0].trade).toMatchObject({ fee: 0, feeMode: "unknown", feeCalculation: null });
+  });
+
+  it("never invokes an Account policy for an imported fee or an imported missing fee", async () => {
+    const feePolicy = { version: 1 as const, enabled: true, rules: [{ id: "rule", name: "Import must ignore", market: "한국" as const, currency: "KRW" as const, side: "buy" as const, ratePercent: "99", fixedFee: "999", minimumFee: null, maximumFee: null, grossAmountFrom: null, grossAmountTo: null, effectiveFrom: "2026-01-01", effectiveTo: null, roundingMode: "floor" as const, roundingUnit: "1" }] };
+    const accountWithPolicy = { ...accounts[0], feePolicy };
+    const provided = await previewCsv("거래일시,종목코드,구분,수량,가격,수수료\n2026-08-12T10:00:01,005930,매수,1,70000,7", { accounts: [accountWithPolicy] });
+    const missing = await previewCsv("거래일시,종목코드,구분,수량,가격\n2026-08-12T10:00:02,005930,매수,1,70000", { accounts: [accountWithPolicy] });
+    expect(provided.candidates[0].trade).toMatchObject({ fee: 7, feeMode: "sourceProvided" });
+    expect(missing.candidates[0].trade).toMatchObject({ fee: 0, feeMode: "unknown" });
+  });
+
+  it("keeps duplicate identity independent of fee provenance metadata", async () => {
+    const first = await preview(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,,"]);
+    const imported = { ...(first.candidates[0].trade as Trade), feeMode: "unknown" as const, feeCalculation: null };
+    const reimport = await preview(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,,"], [imported]);
+    expect(reimport.candidates[0].status).toBe("exact_duplicate");
+  });
+
   it("reuses deterministic occurrence identities when identical rows are reimported", async () => {
     const rows = ["2026-08-12T10:00:01,005930,매수,1,70000,0,0,,", "2026-08-12T10:00:01,005930,매수,1,70000,0,0,,"];
     const first = await preview(rows);
@@ -433,7 +460,7 @@ describe("Import Pipeline v1", () => {
   it("produces a provider-neutral CanonicalExecution without Rationale IDs or journal fields", () => {
     const parsed = table(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,exec-1,order-1"]);
     const canonical = adaptTabularRow(parsed, parsed.rows[0], 2, 0, detectImportMapping(parsed.columns).mapping, "batch", "broker");
-    expect(canonical).toMatchObject({ importBatchId: "batch", sourceRow: 2, sourceSequence: 0, externalExecutionId: "exec-1", externalOrderId: "order-1", ticker: "005930", side: "buy", timePrecision: "second" });
+    expect(canonical).toMatchObject({ importBatchId: "batch", sourceRow: 2, sourceSequence: 0, externalExecutionId: "exec-1", externalOrderId: "order-1", ticker: "005930", side: "buy", timePrecision: "second", feeProvided: true });
     expect(canonical).not.toHaveProperty("stockId"); expect(canonical).not.toHaveProperty("accountId"); expect(canonical).not.toHaveProperty("journalStatus");
   });
 

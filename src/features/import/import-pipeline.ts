@@ -246,6 +246,7 @@ export function adaptTabularRow(parsed: ParsedTabularFile, row: string[], rowNum
       ? { kind: "direct", ...(grossAmount ? { grossAmount: grossAmount.toNumber() } : {}) }
       : { kind: "gross_amount_divided_by_quantity", grossAmount: grossAmount!.toNumber() },
     fee: parseNonNegativeNumber(cell(parsed, row, mapping.fee), "fee"),
+    feeProvided: resolveColumnIndex(parsed.columns, mapping.fee) !== undefined,
     tax: parseNonNegativeNumber(cell(parsed, row, mapping.tax), "tax"),
     currency: currencyValue ? parseCurrency(currencyValue) : null,
     exchangeRate: rateValue ? parsePositiveNumber(rateValue, "exchangeRate") : null,
@@ -415,7 +416,8 @@ function resolvedExecutionToTrade(resolved: ResolvedExecution, sourceKey: string
   return {
     id, stockId: stock.id, stockName: stock.name, planId: null, tradeType: canonical.side === "buy" ? "매수" : "매도",
     tradedAt: canonical.executedAt, quantity: canonical.quantity, price: canonical.price, currency, exchangeRate,
-    fee: canonical.fee, tax: canonical.tax, accountId: account.id, accountName: account.name,
+    fee: canonical.fee, feeMode: canonical.feeProvided ? "sourceProvided" : "unknown", feeCalculation: null,
+    tax: canonical.tax, accountId: account.id, accountName: account.name,
     memo: "", emotion: "평온", emotionIntensity: 1, confidenceScore: 3, ruleComplianceScore: 3,
     ruleViolations: [], journalStatus: "unreviewed",
     origin: {
