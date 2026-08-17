@@ -2,7 +2,9 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "TradeJournal 로컬 앱 권한",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "sql:allow-load",
@@ -10,6 +12,13 @@
     "dialog:allow-open",
     "dialog:allow-save",
     "fs:allow-write-text-file",
-    "fs:allow-read-text-file"
+    "fs:allow-read-text-file",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "https://twelvedata.com/" },
+        { "url": "https://eodhd.com/" }
+      ]
+    }
   ]
 }

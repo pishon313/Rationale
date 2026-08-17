@@ -37,6 +37,23 @@ test("지원하지 않는 Mac 언어는 English로 표시한다", async ({ page 
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
 });
 
+test("설정의 API 키 발급 사이트를 외부 창으로 연다", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.open = ((url: string | URL | undefined, target?: string, features?: string) => {
+      window.sessionStorage.setItem("e2e:last-external-open", JSON.stringify([String(url), target, features]));
+      return null;
+    }) as typeof window.open;
+  });
+  await page.goto("/settings");
+
+  const links = page.getByRole("button", { name: "키 발급 사이트" });
+  await expect(links).toHaveCount(2);
+  await links.nth(0).click();
+  await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem("e2e:last-external-open"))).toBe('["https://twelvedata.com/","_blank","noopener,noreferrer"]');
+  await links.nth(1).click();
+  await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem("e2e:last-external-open"))).toBe('["https://eodhd.com/","_blank","noopener,noreferrer"]');
+});
+
 test("시장 관찰을 작성하고 종목 관찰과 같은 타임라인에서 필터링한다", async ({ page }) => {
   await page.goto("/observations");
   await page.getByRole("button", { name: "새 기록" }).click();
