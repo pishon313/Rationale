@@ -2,6 +2,7 @@
 import { X } from "lucide-react";
 import { useState } from "react";
 import { calculatePlanRisk } from "@/domain/plan-performance";
+import { RegisteredStockPicker } from "@/features/stocks/registered-stock-picker";
 import type { Stock } from "@/features/stocks/types";
 import { useI18n } from "@/i18n/i18n-provider";
 import { useLocalCollection } from "@/lib/use-local-collection";
@@ -17,7 +18,7 @@ export function PlanForm(props: { plan?: BuyPlan; onCancel: () => void; onSave: 
 
 function LoadedPlanForm({ plan, stocks, onCancel, onSave }: { plan?: BuyPlan; stocks: Stock[]; onCancel: () => void; onSave: (plan: BuyPlan) => void }) {
   const { t, formatNumber } = useI18n();
-  const [value, setValue] = useState<BuyPlan>(() => plan ?? ({ stockId: stocks[0]?.id ?? "", title: "", scenarioType: "눌림목", conditionType: "특정 가격 도달", conditionDescription: "", targetPrice: null, stopLossPrice: null, takeProfitPrice: null, priceRangeMin: null, priceRangeMax: null, plannedAmount: 0, plannedQuantity: 0, plannedPortfolioPercent: 30, priority: 3, status: "아이디어", invalidationCondition: "", expectedHoldingPeriod: "", memo: "", conditions: [] } as unknown as BuyPlan));
+  const [value, setValue] = useState<BuyPlan>(() => plan ?? ({ stockId: stocks.find((stock) => !stock.deletedAt)?.id ?? "", title: "", scenarioType: "눌림목", conditionType: "특정 가격 도달", conditionDescription: "", targetPrice: null, stopLossPrice: null, takeProfitPrice: null, priceRangeMin: null, priceRangeMax: null, plannedAmount: 0, plannedQuantity: 0, plannedPortfolioPercent: 30, priority: 3, status: "아이디어", invalidationCondition: "", expectedHoldingPeriod: "", memo: "", conditions: [] } as unknown as BuyPlan));
   const [condition, setCondition] = useState("");
   const set = (name: keyof BuyPlan, next: unknown) => setValue((current) => ({ ...current, [name]: next }));
   const field = "mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3 text-sm";
@@ -36,7 +37,15 @@ function LoadedPlanForm({ plan, stocks, onCancel, onSave }: { plan?: BuyPlan; st
   return <div className="fixed inset-0 z-50 flex justify-end bg-black/35" role="dialog" aria-modal="true"><form className="h-full w-full max-w-2xl overflow-y-auto bg-[var(--surface)]" onSubmit={submit}>
     <div className="sticky top-0 flex items-center justify-between border-b bg-[var(--surface)] p-5"><div><h2 className="text-lg font-semibold">{t(plan ? "매수 계획 수정" : "새 매수 계획")}</h2><p className="mt-1 text-xs text-[var(--muted)]">{t("진입 전에 조건과 무효화 기준을 작성하세요.")}</p></div><button type="button" onClick={onCancel} aria-label={t("닫기")}><X /></button></div>
     <div className="grid gap-5 p-5 sm:grid-cols-2">
-      <Label text={t("종목")}><select className={field} value={value.stockId} onChange={(e) => set("stockId", e.target.value)}>{stocks.map((stock) => <option key={stock.id} value={stock.id}>{stock.name} ({stock.ticker}){stock.deletedAt ? ` · ${t("삭제됨")}` : ""}</option>)}</select></Label>
+      <RegisteredStockPicker
+        stocks={stocks}
+        value={value.stockId || null}
+        onChange={(stockId) => set("stockId", stockId ?? "")}
+        label={t("종목")}
+        required
+        includeDeletedSelected={Boolean(plan?.stockId)}
+        noResultsAction={<span>{t("온라인 종목 검색은 다음 단계에서 지원합니다.")}</span>}
+      />
       <Label text={t("계획 제목")}><input required className={field} value={value.title} onChange={(e) => set("title", e.target.value)} /></Label>
       <Label text={t("시나리오")}><select className={field} value={value.scenarioType} onChange={(e) => set("scenarioType", e.target.value)}>{scenarioTypes.map((item) => <option key={item} value={item}>{t(item)}</option>)}</select></Label>
       <Label text={t("조건 유형")}><select className={field} value={value.conditionType} onChange={(e) => set("conditionType", e.target.value)}>{conditionTypes.map((item) => <option key={item} value={item}>{t(item)}</option>)}</select></Label>
