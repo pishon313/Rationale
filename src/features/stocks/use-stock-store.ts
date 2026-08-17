@@ -25,6 +25,7 @@ export function useStockStore() {
 
   return {
     stocks: visibleStocks,
+    allStocks: stocks,
     trades: migratedTrades,
     storedTrades: trades,
     accounts: accountStore.allItems,

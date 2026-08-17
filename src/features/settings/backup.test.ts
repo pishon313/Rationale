@@ -13,6 +13,7 @@ import { validateBackupPayload } from "./backup";
 import { migrateLegacyAccounts } from "@/features/accounts/migrate-accounts";
 import { buildAccountTransfer } from "@/features/accounts/account-transfer";
 import { backupCounts, backupWrites, restoreBackup, snapshotWrite, type BackupV5 } from "./backup-service";
+import { marketSectors } from "@/features/stocks/market-sectors";
 
 const repositoryMocks = vi.hoisted(() => ({ saveCollectionsAtomically: vi.fn() }));
 vi.mock("@/lib/local-repository", () => ({ loadCollection: vi.fn(), saveCollectionsAtomically: repositoryMocks.saveCollectionsAtomically }));
@@ -91,6 +92,25 @@ describe("validateBackupPayload", () => {
     const parsed = validateBackupPayload(version5({ stocks: [eodhdStock] }));
     expect(parsed.stocks[0]).toEqual(eodhdStock);
     expect(backupWrites(parsed).find((write) => write.collection === "stocks")?.values).toEqual([eodhdStock]);
+  });
+
+  it("accepts legacy Stocks without Market sector and accepts null", () => {
+    const legacy = { ...sampleStocks[0] } as Record<string, unknown>;
+    delete legacy.marketSector;
+    expect(validateBackupPayload(version5({ stocks: [legacy] })).stocks[0]).not.toHaveProperty("marketSector");
+    expect(validateBackupPayload(version5({ stocks: [{ ...sampleStocks[0], marketSector: null }] })).stocks[0]).toHaveProperty("marketSector", null);
+  });
+
+  it.each(marketSectors)("accepts and preserves Market sector %s in Backup V5", (marketSector) => {
+    const classified = { ...sampleStocks[0], marketSector, sector: "  My Category  ", tags: ["theme", "overlap"] };
+    const parsed = validateBackupPayload(version5({ stocks: [classified] }));
+    expect(parsed.stocks[0]).toEqual(classified);
+    expect(backupWrites(parsed).find((write) => write.collection === "stocks")?.values).toEqual([classified]);
+  });
+
+  it("rejects an unknown Market sector without interpreting My category or tags", () => {
+    const invalid = { ...sampleStocks[0], marketSector: "technology", sector: "사용자, 분류", tags: ["태그"] };
+    expect(() => validateBackupPayload(version5({ stocks: [invalid] }))).toThrow("시장 섹터");
   });
 
   it("preserves imported Trade provenance and journal status in Backup V5", () => {

@@ -17,7 +17,7 @@ Every record represents `SyncEnvelopeV1 { recordName, entityType, logicalId, sch
 
 Account syncs user-owned metadata but excludes `isDefault`, which is a device preference. A newly imported Account defaults it to false; device normalization may choose a default when none exists.
 
-Stock syncs identity, classification, thesis, review dates, ledger initialization, tags, and lifecycle timestamps. It excludes authoritative `quantity` and `averagePrice`, all quote-cache fields, and the legacy device-local opening account label. Holdings are projected from merged Trades by the production ledger.
+Stock syncs identity, classification, thesis, review dates, ledger initialization, tags, and lifecycle timestamps. The optional `marketSector` stable ID is additive; legacy Sync V1 payloads may omit it, while the user-authored My category continues through the existing `sector` field. It excludes authoritative `quantity` and `averagePrice`, all quote-cache fields, and the legacy device-local opening account label. Holdings are projected from merged Trades by the production ledger.
 
 Trade syncs the complete normalized economic record without rounding, including fractional quantities, transfers, opening positions, `journalStatus`, `origin` provenance, rule snapshots, and `deletedAt`. Trade is the economic source of truth. Import source keys and provider/external execution metadata therefore survive multi-device whole-record LWW merges.
 

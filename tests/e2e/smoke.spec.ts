@@ -2,6 +2,33 @@ import { expect, test } from "@playwright/test";
 import * as XLSX from "@e965/xlsx";
 
 const e2eAccount = (id: string, name: string, isDefault = true) => ({ id, name, institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault, archivedAt: null, memo: "", createdAt: "2026-08-08T00:00:00.000Z", updatedAt: "2026-08-08T00:00:00.000Z" });
+const e2eStock = (id: string, name: string, sector = "", overrides: Record<string, unknown> = {}) => ({
+  id,
+  ticker: id.toUpperCase(),
+  name,
+  market: "미국",
+  currency: "USD",
+  assetType: "주식",
+  sector,
+  status: "관찰",
+  investmentType: "관찰 전용",
+  currentPrice: 100,
+  targetPrice: null,
+  averagePrice: 0,
+  quantity: 0,
+  thesisSummary: "",
+  currentView: "판단 보류",
+  currentViewMemo: "",
+  nextReviewDate: null,
+  reviewNote: "",
+  nextEarningsDate: null,
+  ledgerInitializedAt: "2026-08-01T00:00:00.000Z",
+  tags: [],
+  createdAt: "2026-08-01T00:00:00.000Z",
+  updatedAt: "2026-08-01T00:00:00.000Z",
+  deletedAt: null,
+  ...overrides,
+});
 
 test("대시보드 앱 셸을 표시한다", async ({ page }) => {
   await page.goto("/dashboard");
@@ -135,6 +162,100 @@ test("빈 종목 목록에서 새 종목을 등록하고 상세로 이동한다"
   await expect(page.getByRole("heading", { name: "테스트 종목", exact: true })).toBeVisible();
 });
 
+test("시장 섹터, 내 분류, 태그를 독립적으로 저장하고 다시 연다", async ({ page }) => {
+  const stocks = [
+    e2eStock("classification", "분류 대상"),
+    e2eStock("category-source", "기존 분류 종목", "Long-term Core"),
+  ];
+  await page.addInitScript((values) => localStorage.setItem("tradejournal.stocks.v1", JSON.stringify(values)), stocks);
+  await page.goto("/stocks");
+
+  await page.getByRole("button", { name: "분류 대상 수정" }).click();
+  let dialog = page.getByRole("dialog", { name: "종목 수정" });
+  await dialog.getByLabel("시장 섹터").selectOption("information-technology");
+  await dialog.getByLabel("내 분류").fill(" long-term core ");
+  await dialog.getByLabel("태그").fill("AI, 성장, 클라우드");
+  await dialog.getByRole("button", { name: "변경 저장" }).click();
+
+  await page.getByRole("button", { name: "분류 대상 수정" }).click();
+  dialog = page.getByRole("dialog", { name: "종목 수정" });
+  await expect(dialog.getByLabel("시장 섹터")).toHaveValue("information-technology");
+  await expect(dialog.getByLabel("내 분류")).toHaveValue("Long-term Core");
+  await expect(dialog.getByLabel("태그")).toHaveValue("AI, 성장, 클라우드");
+  const persisted = await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.stocks.v1") ?? "[]").find((stock: { id: string }) => stock.id === "classification"));
+  expect(persisted).toMatchObject({ marketSector: "information-technology", sector: "Long-term Core", tags: ["AI", "성장", "클라우드"] });
+});
+
+test("새 내 분류를 다른 종목에서 재사용한다", async ({ page }) => {
+  const stocks = [e2eStock("custom-a", "사용자 분류 A"), e2eStock("custom-b", "사용자 분류 B")];
+  await page.addInitScript((values) => localStorage.setItem("tradejournal.stocks.v1", JSON.stringify(values)), stocks);
+  await page.goto("/stocks");
+
+  await page.getByRole("button", { name: "사용자 분류 A 수정" }).click();
+  await page.getByRole("dialog", { name: "종목 수정" }).getByLabel("내 분류").fill("  신규   분류  ");
+  await page.getByRole("dialog", { name: "종목 수정" }).getByRole("button", { name: "변경 저장" }).click();
+
+  await page.getByRole("button", { name: "사용자 분류 B 수정" }).click();
+  const dialog = page.getByRole("dialog", { name: "종목 수정" });
+  await expect(dialog.locator('#portfolio-category-options option[value="신규 분류"]')).toHaveCount(1);
+  await dialog.getByLabel("내 분류").fill("신규 분류");
+  await dialog.getByRole("button", { name: "변경 저장" }).click();
+
+  const categories = await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.stocks.v1") ?? "[]").map((stock: { sector: string }) => stock.sector));
+  expect(categories).toEqual(["신규 분류", "신규 분류"]);
+});
+
+test("내 분류를 정규화해 이름 변경, 병합, 해제하고 재실행 후 유지한다", async ({ page }) => {
+  const stocks = [
+    e2eStock("energy-a", "에너지 A", "Energy"),
+    e2eStock("energy-b", "에너지 B", " energy "),
+    e2eStock("semi", "반도체", "반도체"),
+    e2eStock("semi-it", "반도체 IT", "반도체, IT"),
+  ];
+  await page.addInitScript((values) => {
+    if (sessionStorage.getItem("e2e:portfolio-categories-seeded")) return;
+    localStorage.setItem("tradejournal.stocks.v1", JSON.stringify(values));
+    sessionStorage.setItem("e2e:portfolio-categories-seeded", "yes");
+  }, stocks);
+  await page.goto("/stocks");
+
+  const trigger = page.getByRole("button", { name: "내 분류 관리" });
+  await trigger.click();
+  const manager = page.getByRole("dialog", { name: "내 분류 관리" });
+  const energy = manager.getByRole("listitem").filter({ hasText: "Energy" });
+  await expect(energy).toContainText("2개 활성 종목 · 2개 전체 종목");
+  await expect(manager.getByRole("listitem")).toHaveCount(3);
+
+  await energy.getByRole("button", { name: "이름 변경" }).click();
+  await energy.getByLabel("새 분류 이름").fill("Energy Theme");
+  await energy.getByRole("button", { name: "이름 저장" }).click();
+  await expect(manager.getByText("Energy Theme", { exact: true })).toBeVisible();
+
+  const source = manager.getByRole("listitem").filter({ hasText: "반도체, IT" });
+  await source.getByRole("button", { name: "병합" }).click();
+  await source.getByLabel("합칠 대상").selectOption({ label: "반도체" });
+  await source.getByRole("button", { name: "병합 계속" }).click();
+  let confirmation = page.getByRole("alertdialog", { name: "분류를 병합할까요?" });
+  await expect(confirmation).toContainText("반도체, IT 분류의 종목 1개를 반도체(으)로 변경합니다.");
+  await confirmation.getByRole("button", { name: "분류 병합" }).click();
+  await expect(manager.getByText("반도체, IT", { exact: true })).toHaveCount(0);
+
+  const renamed = manager.getByRole("listitem").filter({ hasText: "Energy Theme" });
+  await renamed.getByRole("button", { name: "분류 해제" }).click();
+  confirmation = page.getByRole("alertdialog", { name: "분류를 해제할까요?" });
+  await expect(confirmation).toContainText("종목 2개에서 내 분류를 비웁니다. 종목은 삭제되지 않습니다.");
+  await confirmation.getByRole("button", { name: "분류 해제" }).click();
+  await expect(manager.getByText("Energy Theme", { exact: true })).toHaveCount(0);
+
+  await manager.getByRole("button", { name: "닫기" }).click();
+  await expect(trigger).toBeFocused();
+  await page.reload();
+  const persisted = await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.stocks.v1") ?? "[]"));
+  expect(persisted).toHaveLength(4);
+  expect(persisted.filter((stock: { id: string }) => stock.id.startsWith("energy")).map((stock: { sector: string }) => stock.sector)).toEqual(["", ""]);
+  expect(persisted.filter((stock: { id: string }) => stock.id.startsWith("semi")).map((stock: { sector: string }) => stock.sector)).toEqual(["반도체", "반도체"]);
+});
+
 test("매수 계획의 테이블과 칸반 보기를 전환한다", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([{
     id: "e2e-stock", ticker: "E2E", name: "E2E 종목", market: "한국", currency: "KRW", assetType: "주식", sector: "테스트",
@@ -165,6 +286,40 @@ test("백업 복원 전에 기록 수와 덮어쓰기 안내를 보여준다", a
   await expect(page.getByRole("heading", { name: "복원할 백업 확인" })).toBeVisible();
   await expect(page.getByText("기존 기록은 안전 사본으로 보관한 뒤 이 백업으로 교체됩니다.")).toBeVisible();
   await page.getByRole("button", { name: "취소" }).click();
+});
+
+test("Backup V5 복원 후 포트폴리오 분류를 그대로 유지한다", async ({ page }) => {
+  const classified = e2eStock("backup-classified", "백업 분류 종목", "장기 핵심", {
+    marketSector: "information-technology",
+    tags: ["AI", "클라우드"],
+  });
+  const backup = {
+    version: 5,
+    exportedAt: "2026-08-17T00:00:00.000Z",
+    accounts: [],
+    stocks: [classified],
+    plans: [],
+    trades: [],
+    observations: [],
+    reviews: [],
+    rules: [],
+    notes: [],
+    language: "ko",
+    dashboardNotes: [{ id: "dashboard-note", content: "", updatedAt: "2026-08-17T00:00:00.000Z" }],
+    earningsEvents: [],
+    displayCurrency: "KRW",
+  };
+  await page.goto("/settings");
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "백업 복원" }).click();
+  await (await chooser).setFiles({ name: "classification-v5.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(backup)) });
+  const confirmation = page.getByRole("alertdialog", { name: "복원할 백업 확인" });
+  await expect(confirmation).toContainText("종목");
+  await confirmation.getByRole("button", { name: "확인 후 복원" }).click();
+  await expect(page.getByText("복원했습니다. 화면을 새로고침해 주세요.")).toBeVisible();
+
+  const restored = await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.stocks.v1") ?? "[]")[0]);
+  expect(restored).toMatchObject({ id: "backup-classified", marketSector: "information-technology", sector: "장기 핵심", tags: ["AI", "클라우드"] });
 });
 
 test("매매 원장에서 현금 입금 기록 화면을 연다", async ({ page }) => {
@@ -694,10 +849,10 @@ test("종목 상세에서 매매를 추가하고 수정한 뒤 삭제한다", as
 
 test("종목 통화를 정정하면 매수 기록과 거래일 환율을 원자적으로 갱신한다", async ({ page }) => {
   const stock = {
-    id: "currency-stock", ticker: "NVDA", name: "엔비디아", market: "미국", currency: "KRW", assetType: "주식", sector: "반도체",
+    id: "currency-stock", ticker: "NVDA", name: "엔비디아", market: "미국", currency: "KRW", assetType: "주식", marketSector: "information-technology", sector: "반도체",
     status: "보유", investmentType: "장기 코어", currentPrice: 223.96, targetPrice: 300, averagePrice: 188, quantity: 2,
     thesisSummary: "", currentView: "중립", currentViewMemo: "", nextReviewDate: null, reviewNote: "", nextEarningsDate: null,
-    ledgerInitializedAt: "2026-08-09T00:00:00.000Z", tags: [], createdAt: "2026-08-09T00:00:00.000Z", updatedAt: "2026-08-09T00:00:00.000Z", deletedAt: null,
+    ledgerInitializedAt: "2026-08-09T00:00:00.000Z", tags: ["AI", "GPU"], createdAt: "2026-08-09T00:00:00.000Z", updatedAt: "2026-08-09T00:00:00.000Z", deletedAt: null,
   };
   const trade = {
     id: "currency-buy", stockId: stock.id, stockName: stock.name, planId: null, tradeType: "매수", tradedAt: "2026-08-01T10:00:00.000Z",
@@ -728,7 +883,7 @@ test("종목 통화를 정정하면 매수 기록과 거래일 환율을 원자�
     stock: JSON.parse(localStorage.getItem("tradejournal.stocks.v1") ?? "[]")[0],
     trade: JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]")[0],
   }));
-  expect(persisted.stock).toMatchObject({ currency: "USD", currentPrice: 223.96, averagePrice: 188, quantity: 2 });
+  expect(persisted.stock).toMatchObject({ currency: "USD", currentPrice: 223.96, averagePrice: 188, quantity: 2, marketSector: "information-technology", sector: "반도체", tags: ["AI", "GPU"] });
   expect(persisted.trade).toMatchObject({ id: "currency-buy", currency: "USD", exchangeRate: 1400, price: 188, quantity: 2, accountId: "currency-account" });
 });
 

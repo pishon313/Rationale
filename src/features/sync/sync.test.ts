@@ -41,6 +41,21 @@ describe("Sync Contract v1", () => {
     expect(fromStockSyncPayload(remote, stock)).toMatchObject({ thesisSummary: "Remote", currentPrice: 140, quantity: 9, averagePrice: 100 });
   });
 
+  it("round-trips additive Market sector values while accepting old and null Sync V1 payloads", () => {
+    const legacy = toStockSyncPayload(stock);
+    expect(legacy).not.toHaveProperty("marketSector");
+    expect(fromStockSyncPayload(legacy)).not.toHaveProperty("marketSector");
+    for (const marketSector of ["information-technology" as const, null]) {
+      const projected = toStockSyncPayload({ ...stock, marketSector, sector: "Custom Category", tags: ["AI"] });
+      expect(fromStockSyncPayload(projected)).toMatchObject({ marketSector, sector: "Custom Category", tags: ["AI"] });
+    }
+  });
+
+  it("rejects an unknown Market sector in Sync V1 without changing the schema version", () => {
+    expect(toSyncEnvelope("stocks", { ...stock, marketSector: "energy" }).schemaVersion).toBe(1);
+    expect(() => validateSyncCandidate({ ...collections(), stocks: [{ ...stock, marketSector: "technology" }] as unknown as Stock[] })).toThrow("시장 섹터");
+  });
+
   it("merges independently and records deterministic whole-record conflicts", () => {
     const newerRemote = toSyncEnvelope("trades", trade("t1", 0.17, "2026-08-11T00:00:00Z"));
     const added = toSyncEnvelope("trades", trade("t2", 0.17, "2026-08-11T00:00:00Z"));

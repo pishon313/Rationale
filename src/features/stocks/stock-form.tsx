@@ -13,12 +13,15 @@ import { marketFromCountry, type InstrumentSearchResult } from "./market-data";
 import { stockFormSchema, type StockFormValues } from "./schema";
 import type { StockAccountHolding } from "./stock-account-holdings";
 import { analyzeStockCurrencyCorrection, StockCurrencyCorrectionError } from "./stock-currency-correction";
+import { marketSectorLabel, marketSectors } from "./market-sectors";
+import { canonicalPortfolioCategoryName, collectPortfolioCategories } from "./portfolio-categories";
 import { currencies, investmentTypes, markets, stockStatuses, stockViews, type MarketDataProvider, type Stock } from "./types";
 
 type Props = {
   stock?: Stock;
   holdings?: StockAccountHolding[];
   trades?: Trade[];
+  categoryStocks?: readonly Stock[];
   onCancel: () => void;
   onSave: (stock: Stock) => void | boolean | Promise<void | boolean>;
 };
@@ -26,8 +29,8 @@ type Props = {
 const fieldClass = "mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3 text-sm";
 const openPositionTolerance = 1e-8;
 
-export function StockForm({ stock, holdings = [], trades = [], onCancel, onSave }: Props) {
-  const { t, formatNumber } = useI18n();
+export function StockForm({ stock, holdings = [], trades = [], categoryStocks = [], onCancel, onSave }: Props) {
+  const { t, localeTag, formatNumber } = useI18n();
   const ledgerManaged = Boolean(stock?.ledgerInitializedAt);
   const legacyPosition = Boolean(stock && !stock.ledgerInitializedAt);
   const storedListingLocked = Boolean(stock?.providerRefs?.length && stock.quotePreference !== "manual");
@@ -54,7 +57,7 @@ export function StockForm({ stock, holdings = [], trades = [], onCancel, onSave 
   const {
     register,
     handleSubmit,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, dirtyFields },
     watch,
     setValue,
   } = useForm<StockFormValues>({
@@ -69,6 +72,7 @@ export function StockForm({ stock, holdings = [], trades = [], onCancel, onSave 
       providerSymbol: stock.providerRefs?.[0]?.symbol ?? "",
       provider: stock.providerRefs?.[0]?.provider ?? "manual",
       assetType: stock.assetType,
+      marketSector: stock.marketSector ?? "",
       sector: stock.sector,
       status: stock.status,
       investmentType: stock.investmentType,
@@ -93,6 +97,7 @@ export function StockForm({ stock, holdings = [], trades = [], onCancel, onSave 
       providerSymbol: "",
       provider: "manual",
       assetType: "주식",
+      marketSector: "",
       sector: "",
       status: "관찰",
       investmentType: "관찰 전용",
@@ -118,6 +123,8 @@ export function StockForm({ stock, holdings = [], trades = [], onCancel, onSave 
   const listedExchange = watch("exchangeCode");
   const listedProvider = watch("provider");
   const listedProviderSymbol = watch("providerSymbol");
+  const selectedCategory = watch("sector");
+  const categoryOptions = collectPortfolioCategories(categoryStocks, selectedCategory, localeTag);
   const listingReadOnly = storedListingLocked || selectedSearchResult !== null;
   const displayedProviderRefs = selectedSearchResult
     ? [{ provider: selectedSearchResult.provider, symbol: selectedSearchResult.providerSymbol }]
@@ -239,6 +246,10 @@ export function StockForm({ stock, holdings = [], trades = [], onCancel, onSave 
             : "auto";
       const priceChanged = !stock || stock.currentPrice !== parsed.currentPrice;
       const searchedPrice = selectedSearchResult?.previousClose ?? null;
+      const marketSector = stock && !dirtyFields.marketSector ? stock.marketSector : parsed.marketSector;
+      const portfolioCategory = stock && !dirtyFields.sector
+        ? stock.sector
+        : canonicalPortfolioCategoryName(categoryStocks, parsed.sector);
       const next: Stock = {
         id: stock?.id ?? crypto.randomUUID(),
         ticker: keepStoredIdentity ? stock.ticker : parsed.ticker,
@@ -246,7 +257,8 @@ export function StockForm({ stock, holdings = [], trades = [], onCancel, onSave 
         market: keepStoredIdentity ? stock.market : parsed.market,
         currency: keepStoredIdentity ? stock.currency : parsed.currency,
         assetType: parsed.assetType,
-        sector: parsed.sector,
+        ...(marketSector === undefined ? {} : { marketSector }),
+        sector: portfolioCategory,
         status: parsed.status,
         countryCode: keepStoredIdentity ? stock.countryCode ?? null : parsed.countryCode || null,
         exchangeCode: keepStoredIdentity ? stock.exchangeCode ?? null : parsed.exchangeCode || null,
@@ -385,7 +397,23 @@ export function StockForm({ stock, holdings = [], trades = [], onCancel, onSave 
         </>}
 
         <Field label={t("자산 유형")} error={errorText(errors.assetType?.message, "자산 유형을 입력해 주세요.")}><input className={fieldClass} {...register("assetType")} /></Field>
-        <Field label={t("섹터")} error={errorText(errors.sector?.message, "섹터는 60자 이내로 입력해 주세요.")}><input className={fieldClass} placeholder={t("예: 반도체")} {...register("sector")} /></Field>
+        <section className="rounded-xl border bg-[var(--surface-muted)] p-4 sm:col-span-2" aria-labelledby="stock-classification-title">
+          <h3 id="stock-classification-title" className="font-semibold">{t("분류")}</h3>
+          <div className="mt-4 grid gap-5 sm:grid-cols-2">
+            <Field label={t("시장 섹터")} error={errors.marketSector?.message}>
+              <select aria-label={t("시장 섹터")} aria-describedby="market-sector-help" className={fieldClass} {...register("marketSector")}>
+                <option value="">{t("미지정")}</option>
+                {marketSectors.map((id) => <option key={id} value={id}>{marketSectorLabel(id, t)}</option>)}
+              </select>
+              <span id="market-sector-help" className="mt-1.5 block text-xs font-normal leading-5 text-[var(--muted)]">{t("객관적인 산업 노출을 비교하기 위한 선택 항목입니다.")} {t("여러 섹터에 걸친 ETF는 비워둘 수 있습니다.")}</span>
+            </Field>
+            <Field label={t("내 분류")} error={errorText(errors.sector?.message, "내 분류는 60자 이내로 입력해 주세요.")}>
+              <input aria-label={t("내 분류")} aria-describedby="portfolio-category-help" className={fieldClass} list="portfolio-category-options" placeholder={t("기존 분류를 선택하거나 새 분류 입력")} {...register("sector")} />
+              <datalist id="portfolio-category-options">{categoryOptions.map((category) => <option key={category.key} value={category.name} />)}</datalist>
+              <span id="portfolio-category-help" className="mt-1.5 block text-xs font-normal leading-5 text-[var(--muted)]">{t("대시보드에서 포트폴리오를 묶는 한 가지 대표 분류입니다.")} {t("시장 기준과 다르게 자유롭게 정할 수 있습니다.")}</span>
+            </Field>
+          </div>
+        </section>
         <Field label={t("상태")}><select className={fieldClass} {...register("status")}>{stockStatuses.map((value) => <option key={value} value={value}>{t(value)}</option>)}</select></Field>
         <Field label={t("투자 유형")}><select className={fieldClass} {...register("investmentType")}>{investmentTypes.map((value) => <option key={value} value={value}>{t(value)}</option>)}</select></Field>
         <Field label={t("현재 가격")} error={errorText(errors.currentPrice?.message, "0 이상의 값을 입력해 주세요.")}><input type="number" step="any" className={fieldClass} {...register("currentPrice")} /></Field>
@@ -409,7 +437,7 @@ export function StockForm({ stock, holdings = [], trades = [], onCancel, onSave 
         <Field label={t("다음 실적 발표일")}><input type="date" className={fieldClass} {...register("nextEarningsDate")} /></Field>
         <div className="sm:col-span-2"><Field label={t("투자 아이디어 요약")} error={errorText(errors.thesisSummary?.message, "투자 아이디어 요약은 500자 이내로 입력해 주세요.")}><textarea className="mt-1 min-h-24 w-full rounded-lg border bg-[var(--surface)] p-3 text-sm" placeholder={t("왜 이 종목을 보고 있는지 짧게 기록하세요.")} {...register("thesisSummary")} /></Field></div>
         <div className="sm:col-span-2"><Field label={t("현재 판단 메모")} error={errorText(errors.currentViewMemo?.message, "현재 판단 메모는 1000자 이내로 입력해 주세요.")}><textarea className="mt-1 min-h-20 w-full rounded-lg border bg-[var(--surface)] p-3 text-sm" {...register("currentViewMemo")} /></Field></div>
-        <div className="sm:col-span-2"><Field label={t("태그")}><input className={fieldClass} placeholder={t("쉼표로 구분: 반도체, 코어")} {...register("tagsText")} /></Field></div>
+        <div className="sm:col-span-2"><Field label={t("태그")}><input aria-label={t("태그")} className={fieldClass} placeholder={t("쉼표로 구분: 반도체, 코어")} {...register("tagsText")} /><span className="mt-1.5 block text-xs font-normal leading-5 text-[var(--muted)]">{t("여러 테마나 특징이 겹칠 때 사용합니다.")} {t("태그는 자산배분 합계를 만들지 않습니다.")}</span></Field></div>
       </div>
 
       {saveError && <p role="alert" className="mx-5 mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-200">{saveError}</p>}

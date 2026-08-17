@@ -119,6 +119,70 @@ describe("StockForm", () => {
     await waitFor(() => expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ openingAccountName: "예전 계좌", quantity: 7, averagePrice: 123, ledgerInitializedAt: null })));
   });
 
+  it("기존 종목의 내 분류 원문과 누락된 Market sector를 관련 없는 수정에서 보존한다", async () => {
+    const onSave = vi.fn();
+    const stock = { ...sampleStocks[0], sector: "  U.S.  Infrastructure ", status: "관찰" as const };
+    render(<StockForm stock={stock} categoryStocks={[stock]} onCancel={vi.fn()} onSave={onSave} />);
+
+    expect(screen.getByLabelText("내 분류")).toHaveValue("  U.S.  Infrastructure ");
+    expect(screen.getByLabelText("시장 섹터")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("상태"), { target: { value: "매수 대기" } });
+    fireEvent.click(screen.getByRole("button", { name: "변경 저장" }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    const saved = onSave.mock.calls[0][0] as Stock;
+    expect(saved.sector).toBe("  U.S.  Infrastructure ");
+    expect(saved).not.toHaveProperty("marketSector");
+  });
+
+  it("시장 섹터, 기존 내 분류, 태그를 독립적으로 저장하고 다시 표시한다", async () => {
+    const onSave = vi.fn();
+    const stock = { ...sampleStocks[0], marketSector: null, sector: "" };
+    const categoryStock = { ...sampleStocks[1], id: "core", sector: "Long-term Core" };
+    const view = render(<StockForm stock={stock} categoryStocks={[categoryStock, stock]} onCancel={vi.fn()} onSave={onSave} />);
+
+    expect(screen.getByLabelText("내 분류")).toHaveAttribute("list", "portfolio-category-options");
+    expect(document.querySelector('option[value="Long-term Core"]')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("시장 섹터"), { target: { value: "information-technology" } });
+    fireEvent.change(screen.getByLabelText("내 분류"), { target: { value: " long-term core " } });
+    fireEvent.change(screen.getByLabelText("태그"), { target: { value: "AI, 성장" } });
+    fireEvent.click(screen.getByRole("button", { name: "변경 저장" }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    const saved = onSave.mock.calls[0][0] as Stock;
+    expect(saved).toMatchObject({ marketSector: "information-technology", sector: "Long-term Core", tags: ["AI", "성장"] });
+
+    view.unmount();
+    render(<StockForm stock={saved} categoryStocks={[categoryStock, saved]} onCancel={vi.fn()} onSave={vi.fn()} />);
+    expect(screen.getByLabelText("시장 섹터")).toHaveValue("information-technology");
+    expect(screen.getByLabelText("내 분류")).toHaveValue("Long-term Core");
+    expect(screen.getByLabelText("태그")).toHaveValue("AI, 성장");
+  });
+
+  it("새 종목에 자유로운 내 분류를 입력하면 표시 정규화 후 저장한다", async () => {
+    const onSave = vi.fn();
+    render(<StockForm categoryStocks={sampleStocks} onCancel={vi.fn()} onSave={onSave} />);
+    fireEvent.click(screen.getByRole("button", { name: "직접 입력" }));
+    fireEvent.change(screen.getByLabelText("티커"), { target: { value: "NEW" } });
+    fireEvent.change(screen.getByLabelText("종목명"), { target: { value: "새 종목" } });
+    fireEvent.change(screen.getByLabelText("내 분류"), { target: { value: "  신규\t 분류  " } });
+    fireEvent.click(screen.getByRole("button", { name: "종목 추가" }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave.mock.calls[0][0]).toMatchObject({ marketSector: null, sector: "신규 분류" });
+  });
+
+  it("시장 섹터와 내 분류를 명시적으로 비울 수 있다", async () => {
+    const onSave = vi.fn();
+    const stock = { ...sampleStocks[0], marketSector: "energy" as const, sector: "Energy" };
+    render(<StockForm stock={stock} categoryStocks={[stock]} onCancel={vi.fn()} onSave={onSave} />);
+    fireEvent.change(screen.getByLabelText("시장 섹터"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("내 분류"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "변경 저장" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave.mock.calls[0][0]).toMatchObject({ marketSector: null, sector: "" });
+  });
+
   it("검색으로 연결된 종목의 8개 identity 필드를 읽기 전용 정보로 표시한다", () => {
     render(<StockForm stock={linkedStock({ priceStatus: "error" })} onCancel={vi.fn()} onSave={vi.fn()} />);
 
@@ -158,7 +222,7 @@ describe("StockForm", () => {
 
   it("수동 관리 전환 승인 시 연결만 제거하고 마지막 가격과 metadata를 보존한다", async () => {
     const onSave = vi.fn();
-    const stock = linkedStock();
+    const stock = linkedStock({ marketSector: "information-technology", sector: "장기 핵심", tags: ["반도체"] });
     render(<StockForm stock={stock} onCancel={vi.fn()} onSave={onSave} />);
 
     fireEvent.click(screen.getByRole("button", { name: "수동 관리로 전환" }));
@@ -176,6 +240,9 @@ describe("StockForm", () => {
       priceFreshness: stock.priceFreshness,
       priceDelayMinutes: stock.priceDelayMinutes,
       priceStatus: stock.priceStatus,
+      marketSector: "information-technology",
+      sector: "장기 핵심",
+      tags: ["반도체"],
     });
   });
 
@@ -224,7 +291,7 @@ describe("StockForm", () => {
   it("거래와 보유가 없는 종목은 검색 결과의 identity 전체를 원자적으로 교체한다", async () => {
     const onSave = vi.fn();
     enableTauriSearch([canadianListing]);
-    render(<StockForm stock={linkedStock()} onCancel={vi.fn()} onSave={onSave} />);
+    render(<StockForm stock={linkedStock({ marketSector: "information-technology", sector: "성장", tags: ["SaaS"] })} onCancel={vi.fn()} onSave={onSave} />);
 
     fireEvent.click(screen.getByRole("button", { name: "다른 종목으로 다시 연결" }));
     fireEvent.change(screen.getByRole("textbox", { name: "종목 검색어" }), { target: { value: "Shopify" } });
@@ -254,6 +321,9 @@ describe("StockForm", () => {
       isin: "CA82509L1076",
       providerRefs: [{ provider: "eodhd", symbol: "SHOP.TO", exchangeCode: "TO" }],
       quotePreference: "auto",
+      marketSector: "information-technology",
+      sector: "성장",
+      tags: ["SaaS"],
     });
   });
 

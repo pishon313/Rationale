@@ -5,6 +5,7 @@ import { conditionTypes, planStatuses, scenarioTypes, type BuyPlan } from "@/fea
 import { reviewEvaluations, type Review } from "@/features/reviews/types";
 import { ruleTypes, severities, type InvestmentRule } from "@/features/rules/types";
 import { currencies, investmentTypes, marketDataProviders, markets, priceStatuses, quoteFreshnessValues, quotePreferences, remoteMarketDataProviders, stockStatuses, stockViews, type Stock } from "@/features/stocks/types";
+import { marketSectors } from "@/features/stocks/market-sectors";
 import { tradeJournalStatuses, tradeOriginKinds, tradeTypes, type Trade } from "@/features/trades/types";
 import { accountKinds } from "@/features/accounts/types";
 import type { InvestmentAccount } from "@/features/accounts/types";
@@ -175,6 +176,7 @@ function validateStockRecord(stock: Record<string, unknown>, index: number) {
   requireEnum(stock.status, stockStatuses, label, "상태");
   requireEnum(stock.investmentType, investmentTypes, label, "투자 유형");
   requireEnum(stock.currentView, stockViews, label, "현재 판단");
+  if (stock.marketSector !== undefined && stock.marketSector !== null) requireEnum(stock.marketSector, marketSectors, label, "시장 섹터");
   if (stock.countryCode !== undefined && stock.countryCode !== null && (typeof stock.countryCode !== "string" || !/^[A-Z]{2}$/.test(stock.countryCode))) throw new Error(`${label}의 국가 코드가 올바르지 않습니다.`);
   if (stock.providerRefs !== undefined) { if (!Array.isArray(stock.providerRefs)) throw new Error(`${label}의 provider 연결이 올바르지 않습니다.`); for (const ref of stock.providerRefs) { if (!isRecord(ref) || !remoteMarketDataProviders.includes(ref.provider as typeof remoteMarketDataProviders[number]) || typeof ref.symbol !== "string" || !ref.symbol.trim()) throw new Error(`${label}의 provider 연결이 올바르지 않습니다.`); } }
   if (stock.quotePreference !== undefined) requireEnum(stock.quotePreference, quotePreferences, label, "가격 제공자 설정");

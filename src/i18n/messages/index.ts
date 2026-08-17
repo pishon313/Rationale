@@ -13,8 +13,9 @@ import { sampleDataMessages, sampleEscapedMessages } from "./sample-data";
 import { systemLanguageMessages } from "./system-language";
 import { marketObservationMessages } from "./market-observations";
 import { importMessages } from "./import";
+import { portfolioClassificationMessages } from "./portfolio-classification";
 
-const catalogs: MessageCatalog[] = [importMessages, marketObservationMessages, systemLanguageMessages, sampleEscapedMessages, sampleDataMessages, commonMessages, appMessages, stockMessages, stockAccountMessages, tradeMessages, journalMessages, securityMessages, redesignMessages, dashboardMessages, accountMessages];
+const catalogs: MessageCatalog[] = [portfolioClassificationMessages, importMessages, marketObservationMessages, systemLanguageMessages, sampleEscapedMessages, sampleDataMessages, commonMessages, appMessages, stockMessages, stockAccountMessages, tradeMessages, journalMessages, securityMessages, redesignMessages, dashboardMessages, accountMessages];
 
 export function translate(locale: Locale, key: string) {
   if (locale === "ko") return key;
