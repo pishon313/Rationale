@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { validateStoredCollection } from "./collection-validation";
 import { sampleStocks } from "@/features/stocks/sample-data";
+import type { InvestmentAccount } from "@/features/accounts/types";
 
 describe("import mapping profile storage validation", () => {
   const profile = { id: "p1", name: "Broker", version: 1, bindings: { tradedAt: { normalizedHeader: "date", occurrence: 0 } }, headerSignature: "date#0", createdAt: "2026-08-12T00:00:00Z", updatedAt: "2026-08-12T00:00:00Z" };
@@ -47,5 +48,21 @@ describe("stock storage validation", () => {
 
   it("rejects invalid provider metadata", () => {
     expect(validateStoredCollection("stocks", [{ ...eodhdStock, providerRefs: [{ provider: "manual", symbol: "SHOP.US" }] }])).toMatchObject({ valid: false, index: 0 });
+  });
+});
+
+describe("account fee policy storage validation", () => {
+  const account: InvestmentAccount = { id: "a", name: "A", institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault: true, archivedAt: null, memo: "", createdAt: "2026-08-17T00:00:00Z", updatedAt: "2026-08-17T00:00:00Z" };
+  const feePolicy = { version: 1 as const, enabled: true, rules: [{ id: "r1", name: "Fee", market: "all" as const, currency: "KRW" as const, side: "both" as const, ratePercent: "0.1", fixedFee: "0", minimumFee: null, maximumFee: null, grossAmountFrom: null, grossAmountTo: null, effectiveFrom: "2026-01-01", effectiveTo: null, roundingMode: "floor" as const, roundingUnit: "1" }] };
+
+  it("accepts absent, null, and valid policies", () => {
+    expect(validateStoredCollection("accounts", [account])).toEqual({ valid: true });
+    expect(validateStoredCollection("accounts", [{ ...account, feePolicy: null }])).toEqual({ valid: true });
+    expect(validateStoredCollection("accounts", [{ ...account, feePolicy }])).toEqual({ valid: true });
+  });
+
+  it("quarantines invalid and future policy records", () => {
+    expect(validateStoredCollection("accounts", [{ ...account, feePolicy: { ...feePolicy, version: 2 } }])).toEqual({ valid: false, errorType: "INVALID_RECORD", index: 0 });
+    expect(validateStoredCollection("accounts", [{ ...account, feePolicy: { ...feePolicy, rules: [{ ...feePolicy.rules[0], fixedFee: "-1" }] } }])).toEqual({ valid: false, errorType: "INVALID_RECORD", index: 0 });
   });
 });

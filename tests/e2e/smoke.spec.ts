@@ -828,6 +828,85 @@ test("새 계좌를 등록하면서 실제 현금 잔액으로 조정한다", as
   await expect(page.getByRole("row").filter({ hasText: "장기 계좌" })).toContainText("250,000");
 });
 
+test("계좌 수수료 규칙을 생성·미리보기·복제·삭제하고 기존 거래 수수료를 보존한다", async ({ page }) => {
+  const account = e2eAccount("fee-account", "수수료 계좌");
+  const historicalTrade = {
+    id: "historical-fee", stockId: null, stockName: "", planId: null, tradeType: "입금", tradedAt: "2026-01-01T09:00:00+09:00",
+    quantity: 0, price: 0, amount: 1000, currency: "KRW", exchangeRate: 1, fee: 7, tax: 0, accountId: account.id, accountName: account.name,
+    memo: "", emotion: "평온", emotionIntensity: 1, confidenceScore: 3, ruleComplianceScore: 3, ruleViolations: [], createdAt: "2026-01-01T09:00:00+09:00", updatedAt: "2026-01-01T09:00:00+09:00", deletedAt: null,
+  };
+  await page.addInitScript(({ account, trade }) => { localStorage.setItem("tradejournal.accounts.v1", JSON.stringify([account])); localStorage.setItem("tradejournal.trades.v1", JSON.stringify([trade])); localStorage.setItem("tradejournal.stocks.v1", "[]"); }, { account, trade: historicalTrade });
+  await page.goto("/accounts");
+  await page.locator("article").filter({ hasText: "수수료 계좌" }).getByRole("button", { name: "수정" }).click();
+  await page.getByRole("checkbox", { name: "수수료 정책 사용" }).check();
+  await page.getByRole("button", { name: "수수료 규칙 추가" }).click();
+  let ruleDialog = page.getByRole("dialog", { name: "수수료 규칙 추가" });
+  await ruleDialog.getByLabel("규칙 이름").fill("KRW 기본");
+  await ruleDialog.getByLabel("수수료율 (%)").fill("+00.1500");
+  await ruleDialog.getByLabel("예상 거래금액").fill("10000");
+  await expect(ruleDialog).toContainText("15 KRW");
+  await ruleDialog.getByRole("button", { name: "규칙 저장" }).click();
+
+  await page.getByRole("button", { name: "수수료 규칙 추가" }).click();
+  ruleDialog = page.getByRole("dialog", { name: "수수료 규칙 추가" });
+  await ruleDialog.getByLabel("규칙 이름").fill("미국 기본");
+  await ruleDialog.getByLabel("시장").selectOption("미국");
+  await ruleDialog.getByLabel("통화").selectOption("USD");
+  await ruleDialog.getByLabel("수수료율 (%)").fill("0.2");
+  await ruleDialog.getByLabel("반올림 방식").selectOption("round");
+  await ruleDialog.getByLabel("반올림 단위").fill("0.01");
+  await ruleDialog.getByRole("button", { name: "규칙 저장" }).click();
+
+  await page.getByRole("button", { name: "KRW 기본 복제" }).click();
+  ruleDialog = page.getByRole("dialog", { name: "수수료 규칙 복제" });
+  await ruleDialog.getByRole("button", { name: "규칙 저장" }).click();
+  await expect(ruleDialog.getByRole("alert")).toContainText("적용 범위가 겹칩니다");
+  await ruleDialog.getByLabel("시장").selectOption("한국");
+  await ruleDialog.getByRole("button", { name: "규칙 저장" }).click();
+
+  const copiedDelete = page.getByRole("button", { name: "KRW 기본 복사본 삭제" });
+  await copiedDelete.click();
+  let confirmation = page.getByRole("alertdialog", { name: "수수료 규칙을 삭제할까요?" });
+  await confirmation.getByRole("button", { name: "취소" }).click();
+  await expect(page.getByText("KRW 기본 복사본", { exact: true })).toBeVisible();
+  await copiedDelete.click();
+  confirmation = page.getByRole("alertdialog", { name: "수수료 규칙을 삭제할까요?" });
+  await confirmation.getByRole("button", { name: "삭제" }).click();
+  await expect(page.getByText("KRW 기본 복사본", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "저장", exact: true }).click();
+  const accountCard = page.locator("article").filter({ hasText: "수수료 계좌" });
+  await expect(accountCard).toContainText("수수료 자동 계산 · 2개 규칙");
+
+  await accountCard.getByRole("button", { name: "수정" }).click();
+  await expect(page.getByText("미국 기본", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "미국 기본 수정" }).click();
+  ruleDialog = page.getByRole("dialog", { name: "수수료 규칙 수정" });
+  await expect(ruleDialog.getByLabel("시장")).toHaveValue("미국");
+  await expect(ruleDialog.getByLabel("통화")).toHaveValue("USD");
+  await expect(ruleDialog.getByLabel("수수료율 (%)")).toHaveValue("0.2");
+  await ruleDialog.getByRole("button", { name: "취소" }).click();
+  await page.getByRole("dialog", { name: "계좌 수정" }).getByRole("button", { name: "취소" }).click();
+
+  const persisted = await page.evaluate(() => ({ account: JSON.parse(localStorage.getItem("tradejournal.accounts.v1") ?? "[]")[0], trade: JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]")[0] }));
+  expect(persisted.account.feePolicy).toMatchObject({ version: 1, enabled: true, rules: [{ name: "KRW 기본", ratePercent: "0.15", fixedFee: "0", currency: "KRW" }, { name: "미국 기본", ratePercent: "0.2", currency: "USD", market: "미국", roundingUnit: "0.01" }] });
+  expect(persisted.trade.fee).toBe(7);
+});
+
+test("계좌 병합은 대상 정책을 유지하고 원본 정책과 기존 거래 수수료를 보존한다", async ({ page }) => {
+  const rule = (id: string, ratePercent: string) => ({ version: 1, enabled: true, rules: [{ id, name: id, market: "all", currency: "KRW", side: "both", ratePercent, fixedFee: "0", minimumFee: null, maximumFee: null, grossAmountFrom: null, grossAmountTo: null, effectiveFrom: "2026-01-01", effectiveTo: null, roundingMode: "floor", roundingUnit: "1" }] });
+  const source = { ...e2eAccount("merge-source", "병합 원본"), feePolicy: rule("source-rule", "0.1") };
+  const target = { ...e2eAccount("merge-target", "병합 대상", false), feePolicy: rule("target-rule", "0.2") };
+  await page.addInitScript((accounts) => { if (localStorage.getItem("tradejournal.accounts.v1") === null) localStorage.setItem("tradejournal.accounts.v1", JSON.stringify(accounts)); if (localStorage.getItem("tradejournal.trades.v1") === null) localStorage.setItem("tradejournal.trades.v1", "[]"); if (localStorage.getItem("tradejournal.stocks.v1") === null) localStorage.setItem("tradejournal.stocks.v1", "[]"); }, [source, target]);
+  await page.goto("/accounts");
+  const sourceCard = page.locator("article").filter({ hasText: "병합 원본" });
+  await sourceCard.getByRole("button", { name: "다른 계좌로 병합" }).click();
+  page.once("dialog", (dialog) => dialog.accept());
+  await Promise.all([page.waitForNavigation({ waitUntil: "domcontentloaded" }), sourceCard.getByLabel("병합 대상 계좌").selectOption("merge-target")]);
+  const accounts = await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.accounts.v1") ?? "[]"));
+  expect(accounts.find((item: { id: string }) => item.id === "merge-source")).toMatchObject({ feePolicy: source.feePolicy, archivedAt: expect.any(String) });
+  expect(accounts.find((item: { id: string }) => item.id === "merge-target")).toMatchObject({ feePolicy: target.feePolicy });
+});
+
 test("분석에서 장기 계좌 성과와 계좌별 결과를 표시한다", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("tradejournal.trades.v1", JSON.stringify([{
     id: "long-term-deposit", stockId: null, stockName: "", planId: null, tradeType: "입금", tradedAt: "2025-01-01T09:00:00+09:00",

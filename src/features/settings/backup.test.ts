@@ -14,6 +14,7 @@ import { migrateLegacyAccounts } from "@/features/accounts/migrate-accounts";
 import { buildAccountTransfer } from "@/features/accounts/account-transfer";
 import { backupCounts, backupWrites, restoreBackup, snapshotWrite, type BackupV5 } from "./backup-service";
 import { marketSectors } from "@/features/stocks/market-sectors";
+import type { AccountFeePolicyV1 } from "@/features/accounts/account-fee-policy";
 
 const repositoryMocks = vi.hoisted(() => ({ saveCollectionsAtomically: vi.fn() }));
 vi.mock("@/lib/local-repository", () => ({ loadCollection: vi.fn(), saveCollectionsAtomically: repositoryMocks.saveCollectionsAtomically }));
@@ -29,6 +30,7 @@ const valid = {
 const note = { id: "n1", title: "Memo", content: "Text", createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", deletedAt: null };
 const dashboardNote = { id: "dashboard-note", content: "Next week", updatedAt: "2026-08-01T00:00:00.000Z" };
 const earningsEvent = { id: "e1", name: "NVIDIA", ticker: "NVDA", date: "2026-08-20", updatedAt: "2026-08-01T00:00:00.000Z", deletedAt: null };
+const feePolicy: AccountFeePolicyV1 = { version: 1, enabled: true, rules: [{ id: "usd-buy", name: "USD buy", market: "미국", currency: "USD", side: "buy", ratePercent: "0.1", fixedFee: "0", minimumFee: null, maximumFee: null, grossAmountFrom: null, grossAmountTo: null, effectiveFrom: "2026-01-01", effectiveTo: null, roundingMode: "round", roundingUnit: "0.01" }] };
 
 function version4(overrides: Record<string, unknown> = {}) {
   return { ...valid, version: 4, observations: sampleObservations, reviews: sampleReviews, rules: sampleRules, notes: [note], language: "en", dashboardNotes: [dashboardNote], earningsEvents: [earningsEvent], displayCurrency: "USD", ...overrides };
@@ -85,6 +87,32 @@ describe("validateBackupPayload", () => {
     if (parsed.version !== 5) throw new Error("expected version 5");
     expect(parsed.accounts.length).toBeGreaterThan(0);
     expect(parsed.trades.every((trade) => parsed.accounts.some((account) => account.id === trade.accountId))).toBe(true);
+  });
+
+  it("keeps Backup V5 compatible with missing, null, and valid fee policies", () => {
+    const backup = version5();
+    const base = backup.accounts[0];
+    for (const account of [base, { ...base, feePolicy: null }, { ...base, feePolicy }]) {
+      const parsed = validateBackupPayload({ ...backup, accounts: [account] });
+      if (parsed.version !== 5) throw new Error("expected version 5");
+      expect(parsed.accounts[0].feePolicy).toEqual(account.feePolicy);
+      expect(backupWrites(parsed).find((write) => write.collection === "accounts")?.values).toEqual([account]);
+    }
+  });
+
+  it("normalizes valid fee decimal strings before Backup V5 restore writes", () => {
+    const backup = version5(); const account = { ...backup.accounts[0], feePolicy: { ...feePolicy, rules: [{ ...feePolicy.rules[0], ratePercent: "+00.1000", fixedFee: "000" }] } };
+    const parsed = validateBackupPayload({ ...backup, accounts: [account] });
+    if (parsed.version !== 5) throw new Error("expected version 5");
+    expect(parsed.accounts[0].feePolicy?.rules[0]).toMatchObject({ ratePercent: "0.1", fixedFee: "0" });
+    expect(backupWrites(parsed).find((write) => write.collection === "accounts")?.values).toEqual(parsed.accounts);
+  });
+
+  it("fails closed for malformed and future fee policies without changing Backup V5", () => {
+    const backup = version5(); const base = backup.accounts[0];
+    expect(() => validateBackupPayload({ ...backup, accounts: [{ ...base, feePolicy: { ...feePolicy, version: 2 } }] })).toThrow("수수료 정책 버전");
+    expect(() => validateBackupPayload({ ...backup, accounts: [{ ...base, feePolicy: { ...feePolicy, rules: [{ ...feePolicy.rules[0], roundingUnit: "0" }] } }] })).toThrow("반올림 단위");
+    expect(backup.version).toBe(5);
   });
 
   it("preserves EODHD metadata through Backup V5 validation and restore writes", () => {

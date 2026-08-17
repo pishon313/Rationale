@@ -9,6 +9,7 @@ import { marketSectors } from "@/features/stocks/market-sectors";
 import { tradeJournalStatuses, tradeOriginKinds, tradeTypes, type Trade } from "@/features/trades/types";
 import { accountKinds } from "@/features/accounts/types";
 import type { InvestmentAccount } from "@/features/accounts/types";
+import { validateAccountFeePolicy } from "@/features/accounts/account-fee-policy";
 import { validateTransferPairs } from "@/features/accounts/account-transfer";
 import { isLocale, type Locale } from "@/i18n/types";
 
@@ -429,4 +430,9 @@ function validateAccountRecord(account: Record<string, unknown>, index: number) 
   requireNullableTimestamp(account.archivedAt, label, "보관 일시");
   requireTimestamp(account.createdAt, label, "생성 일시");
   requireTimestamp(account.updatedAt, label, "수정 일시");
+  if (account.feePolicy !== undefined && account.feePolicy !== null) {
+    const result = validateAccountFeePolicy(account.feePolicy);
+    if (!result.valid) throw new Error(`${label}의 ${result.issues[0]?.message ?? "수수료 정책이 올바르지 않습니다."}`);
+    account.feePolicy = result.policy;
+  }
 }

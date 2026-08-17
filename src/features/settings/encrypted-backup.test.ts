@@ -5,6 +5,7 @@ import { sampleTrades } from "@/features/trades/sample-data";
 import { migrateLegacyAccounts } from "@/features/accounts/migrate-accounts";
 import { decryptBackupPayload, encryptedBackupFormat, encryptBackupPayload, parseSelectedBackup, validateNewBackupPassword } from "./encrypted-backup";
 import type { BackupV5 } from "./backup-service";
+import type { AccountFeePolicyV1 } from "@/features/accounts/account-fee-policy";
 
 const invokeMock = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
@@ -54,6 +55,18 @@ describe("encrypted backup routing", () => {
     expect(invokeMock).toHaveBeenCalledWith("encrypt_backup", { content: JSON.stringify(backup), password: "password123" });
     const restored = await decryptBackupPayload("encrypted", "password123");
     expect(restored.stocks[0]).toEqual(eodhdStock);
+  });
+
+  it("round-trips a valid fee policy through encrypted Backup V5", async () => {
+    const migrated = migrateLegacyAccounts([], sampleTrades, legacy.exportedAt);
+    const feePolicy: AccountFeePolicyV1 = { version: 1, enabled: true, rules: [{ id: "r1", name: "Fee", market: "all", currency: migrated.accounts[0].baseCurrency, side: "both", ratePercent: "0.1", fixedFee: "0", minimumFee: null, maximumFee: null, grossAmountFrom: null, grossAmountTo: null, effectiveFrom: "2026-01-01", effectiveTo: null, roundingMode: "floor", roundingUnit: "1" }] };
+    const accounts = migrated.accounts.map((account, index) => index ? account : { ...account, feePolicy });
+    const backup: BackupV5 = { version: 5, exportedAt: legacy.exportedAt, accounts, stocks: sampleStocks, plans: samplePlans, trades: migrated.trades, observations: [], reviews: [], rules: [], notes: [], language: "ko", dashboardNotes: [], earningsEvents: [], displayCurrency: "KRW" };
+    invokeMock.mockImplementation((command: string) => Promise.resolve(command === "encrypt_backup" ? "encrypted" : JSON.stringify(backup)));
+    await expect(encryptBackupPayload(backup, "password123")).resolves.toBe("encrypted");
+    const restored = await decryptBackupPayload("encrypted", "password123");
+    expect(restored.version).toBe(5);
+    if (restored.version === 5) expect(restored.accounts[0].feePolicy).toEqual(feePolicy);
   });
 
   it("validates password length and exact confirmation without trimming", () => {

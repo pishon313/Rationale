@@ -1,5 +1,6 @@
 import { currencies, type Currency } from "@/domain/currency";
 import type { Trade } from "@/features/trades/types";
+import type { AccountFeePolicyV1 } from "./account-fee-policy";
 
 export const accountKinds = ["brokerage", "taxAdvantaged", "retirement", "cash", "other"] as const;
 export type AccountKind = (typeof accountKinds)[number];
@@ -14,6 +15,7 @@ export type InvestmentAccount = {
   isDefault: boolean;
   archivedAt: string | null;
   memo: string;
+  feePolicy?: AccountFeePolicyV1 | null;
   createdAt: string;
   updatedAt: string;
 };

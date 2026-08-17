@@ -8,7 +8,7 @@ export function recordNameFor(entityType: SyncEntityType, logicalId: string) { r
 export function isSyncableRecord(record: { id: string }) { return !record.id.startsWith("sample:v1:"); }
 
 export function toAccountSyncPayload(account: InvestmentAccount): AccountSyncPayloadV1 {
-  return { id: account.id, name: account.name, institution: account.institution, kind: account.kind, subtype: account.subtype, baseCurrency: account.baseCurrency, archivedAt: account.archivedAt, memo: account.memo, createdAt: account.createdAt, updatedAt: account.updatedAt };
+  return { id: account.id, name: account.name, institution: account.institution, kind: account.kind, subtype: account.subtype, baseCurrency: account.baseCurrency, archivedAt: account.archivedAt, memo: account.memo, ...(account.feePolicy === undefined ? {} : { feePolicy: account.feePolicy }), createdAt: account.createdAt, updatedAt: account.updatedAt };
 }
 export function fromAccountSyncPayload(payload: AccountSyncPayloadV1, local?: InvestmentAccount): InvestmentAccount {
   return { ...payload, isDefault: local?.isDefault ?? false };

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sampleStocks } from "@/features/stocks/sample-data";
 import type { Stock } from "@/features/stocks/types";
 import type { ImportMappingProfile } from "@/features/import/import-types";
+import type { InvestmentAccount } from "@/features/accounts/types";
 import { clearPersistenceError, getCorruptionSnapshot, getPersistenceSnapshot, loadCollection, resetCorruptedCollection, resolveCorruption, retryLastSave, saveCollection, saveCollectionsAtomically } from "./local-repository";
 
 const sqlMocks = vi.hoisted(() => ({ load: vi.fn(), invoke: vi.fn() }));
@@ -76,6 +77,17 @@ describe("browser local repository", () => {
     localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([invalid]));
     await expect(loadCollection<Stock>("stocks", [])).resolves.toEqual([]);
     expect(getCorruptionSnapshot().collections[0]).toMatchObject({ collection: "stocks", errorType: "INVALID_RECORD" });
+  });
+
+  it("routes an invalid Account fee policy through the existing quarantine path", async () => {
+    const account: InvestmentAccount = { id: "account-1", name: "A", institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault: true, archivedAt: null, memo: "", createdAt: "2026-08-17T00:00:00Z", updatedAt: "2026-08-17T00:00:00Z" };
+    const invalid = { ...account, feePolicy: { version: 2, enabled: true, rules: [] } };
+    const raw = JSON.stringify([invalid]); localStorage.setItem("tradejournal.accounts.v1", raw);
+    await expect(loadCollection<InvestmentAccount>("accounts", [])).resolves.toEqual([]);
+    expect(getCorruptionSnapshot().collections[0]).toMatchObject({ collection: "accounts", source: "localStorage", errorType: "INVALID_RECORD", invalidIndexes: [0] });
+    const quarantineKey = Object.keys(localStorage).find((key) => key.startsWith("tradejournal.corrupt.accounts."));
+    expect(JSON.parse(localStorage.getItem(quarantineKey!) ?? "null")).toMatchObject({ rawData: raw, collection: "accounts" });
+    expect(localStorage.getItem("tradejournal.accounts.v1")).toBe(raw);
   });
 
   it("persists valid mapping profiles and quarantines invalid browser profiles", async () => {

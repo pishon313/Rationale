@@ -15,7 +15,7 @@ Every record represents `SyncEnvelopeV1 { recordName, entityType, logicalId, sch
 
 ## Projections
 
-Account syncs user-owned metadata but excludes `isDefault`, which is a device preference. A newly imported Account defaults it to false; device normalization may choose a default when none exists.
+Account syncs user-owned metadata, including the optional `feePolicy` v1 value, but excludes `isDefault`, which is a device preference. Missing `feePolicy` remains valid for older Sync V1 records, `null` means no configured policy, and a valid value round-trips without changing the Sync schema version. Unknown future versions and malformed rules fail closed through the same Account validator used by local storage and Backup V5. A newly imported Account defaults `isDefault` to false; device normalization may choose a default when none exists.
 
 Stock syncs identity, classification, thesis, review dates, ledger initialization, tags, and lifecycle timestamps. The optional `marketSector` stable ID is additive; legacy Sync V1 payloads may omit it, while the user-authored My category continues through the existing `sector` field. It excludes authoritative `quantity` and `averagePrice`, all quote-cache fields, and the legacy device-local opening account label. Holdings are projected from merged Trades by the production ledger.
 

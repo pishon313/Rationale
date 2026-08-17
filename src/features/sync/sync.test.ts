@@ -9,9 +9,11 @@ import { fromStockSyncPayload, isSyncableRecord, recordNameFor, toAccountSyncPay
 import { runForegroundSync } from "./sync-service";
 import type { SyncCollections } from "./sync-types";
 import { validateSyncCandidate } from "./sync-validation";
+import type { AccountFeePolicyV1 } from "@/features/accounts/account-fee-policy";
 
 const at = "2026-08-10T00:00:00.000Z";
 const account: InvestmentAccount = { id: "a", name: "A", institution: "Demo", kind: "brokerage", subtype: "", baseCurrency: "USD", isDefault: true, archivedAt: null, memo: "", createdAt: at, updatedAt: at };
+const feePolicy: AccountFeePolicyV1 = { version: 1, enabled: true, rules: [{ id: "r1", name: "Fee", market: "all", currency: "USD", side: "both", ratePercent: "0.1", fixedFee: "0", minimumFee: null, maximumFee: null, grossAmountFrom: null, grossAmountTo: null, effectiveFrom: "2026-01-01", effectiveTo: null, roundingMode: "round", roundingUnit: "0.01" }] };
 const stock: Stock = { id: "nvda", ticker: "NVDA", name: "NVIDIA", market: "미국", currency: "USD", assetType: "주식", sector: "", status: "보유", investmentType: "장기 코어", currentPrice: 140, priceUpdatedAt: at, priceQuotedAt: at, priceSource: "manual", priceStatus: "manual", targetPrice: 160, averagePrice: 100, quantity: 9, thesisSummary: "AI", currentView: "강세", currentViewMemo: "", nextReviewDate: null, nextEarningsDate: null, ledgerInitializedAt: at, tags: [], createdAt: at, updatedAt: at, deletedAt: null };
 const trade = (id: string, quantity: number, updatedAt = at): Trade => ({ id, stockId: stock.id, stockName: stock.name, planId: null, tradeType: "매수", tradedAt: updatedAt, quantity, price: 100, currency: "USD", exchangeRate: 1380, fee: 0, tax: 0, accountId: account.id, accountName: account.name, memo: "", emotion: "평온", emotionIntensity: 1, confidenceScore: 3, ruleComplianceScore: 3, ruleViolations: [], createdAt: updatedAt, updatedAt, deletedAt: null });
 const collections = (trades: Trade[] = [trade("t1", 0.35)]): SyncCollections => ({ accounts: [account], stocks: [stock], trades });
@@ -22,6 +24,20 @@ describe("Sync Contract v1", () => {
     const projected = toStockSyncPayload({ ...stock, countryCode: "US", providerRefs: [{ provider: "eodhd", symbol: "NVDA.US", exchangeCode: "US" }], priceFreshness: "eod", priceDelayMinutes: null }); for (const key of ["quantity", "averagePrice", "currentPrice", "priceUpdatedAt", "priceQuotedAt", "priceSource", "priceFreshness", "priceDelayMinutes", "priceStatus"]) expect(projected).not.toHaveProperty(key); expect(projected).toMatchObject({ countryCode: "US", providerRefs: [{ provider: "eodhd", symbol: "NVDA.US" }] });
     expect(toTradeSyncPayload({ ...trade("fractional", 0.35), transferId: "pair", isOpeningPosition: true, deletedAt: at })).toMatchObject({ quantity: 0.35, transferId: "pair", isOpeningPosition: true, deletedAt: at });
     expect(isSyncableRecord({ id: "sample:v1:stock:nvda" })).toBe(false); expect(recordNameFor("trades", "t1")).toBe("v1|trades|t1");
+  });
+
+  it("keeps Sync V1 compatible with missing and null fee policy and round-trips a valid policy", () => {
+    expect(toAccountSyncPayload(account)).not.toHaveProperty("feePolicy");
+    expect(toAccountSyncPayload({ ...account, feePolicy: null })).toHaveProperty("feePolicy", null);
+    const projected = toAccountSyncPayload({ ...account, feePolicy });
+    expect(projected.feePolicy).toEqual(feePolicy);
+    expect(toSyncEnvelope("accounts", { ...account, feePolicy }).schemaVersion).toBe(1);
+    expect(() => validateSyncCandidate({ ...collections(), accounts: [{ ...account, feePolicy }] })).not.toThrow();
+  });
+
+  it("fails closed for malformed and future fee policies in Sync V1", () => {
+    expect(() => validateSyncCandidate({ ...collections(), accounts: [{ ...account, feePolicy: { ...feePolicy, version: 2 } }] as unknown as InvestmentAccount[] })).toThrow("수수료 정책 버전");
+    expect(() => validateSyncCandidate({ ...collections(), accounts: [{ ...account, feePolicy: { ...feePolicy, rules: [{ ...feePolicy.rules[0], ratePercent: "1e2" }] } }] as unknown as InvestmentAccount[] })).toThrow("수수료율");
   });
 
   it("preserves journal status and import provenance in the whole Trade payload", () => {

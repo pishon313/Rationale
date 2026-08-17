@@ -3,12 +3,14 @@ import { sampleTrades } from "@/features/trades/sample-data";
 import { buildTradingLedger } from "@/domain/trading-ledger";
 import type { InvestmentAccount } from "./types";
 import { archiveAccount, buildAccountMerge, ledgerEconomicSnapshot, mergeAccounts, withSingleDefault } from "./account-operations";
+import type { AccountFeePolicyV1 } from "./account-fee-policy";
 
 const repository = vi.hoisted(() => ({ save: vi.fn() }));
 vi.mock("@/lib/local-repository", () => ({ saveCollectionsAtomically: repository.save }));
 
 const now = "2026-08-08T00:00:00.000Z";
 const account = (id: string, name: string, isDefault = false): InvestmentAccount => ({ id, name, institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault, archivedAt: null, memo: "", createdAt: now, updatedAt: now });
+const feePolicy: AccountFeePolicyV1 = { version: 1, enabled: true, rules: [{ id: "r1", name: "기본", market: "all", currency: "KRW", side: "both", ratePercent: "0.1", fixedFee: "0", minimumFee: null, maximumFee: null, grossAmountFrom: null, grossAmountTo: null, effectiveFrom: "2026-01-01", effectiveTo: null, roundingMode: "floor", roundingUnit: "1" }] };
 
 describe("account operations", () => {
   beforeEach(() => repository.save.mockReset());
@@ -20,6 +22,20 @@ describe("account operations", () => {
   it("archives instead of deleting and promotes another active default", () => {
     const result = archiveAccount([account("a", "A", true), account("b", "B")], "a", buildTradingLedger([], [account("a", "A", true), account("b", "B")]), now);
     expect(result).toHaveLength(2); expect(result.find((item) => item.id === "a")?.archivedAt).toBe(now); expect(result.find((item) => item.id === "b")?.isDefault).toBe(true);
+  });
+  it("preserves fee policies through edit/default, archive, and merge while leaving historical fees unchanged", () => {
+    const source = { ...account("a", "A", true), feePolicy };
+    const targetPolicy = { ...feePolicy, rules: [{ ...feePolicy.rules[0], id: "target-rule", ratePercent: "0.2" }] };
+    const target = { ...account("b", "B"), feePolicy: targetPolicy };
+    expect(withSingleDefault([source, target], { ...source, name: "Renamed" }).find((item) => item.id === "a")?.feePolicy).toEqual(feePolicy);
+    expect(archiveAccount([source, target], "a", buildTradingLedger([], [source, target]), now).find((item) => item.id === "a")?.feePolicy).toEqual(feePolicy);
+    const historical = { ...security("history", "a", "AAPL", "매수", 1, 100, "2026-01-01"), fee: 7 };
+    const writes = buildAccountMerge([source, target], [historical], "a", "b", now);
+    const accounts = writes.find((write) => write.collection === "accounts")!.values as InvestmentAccount[];
+    const trades = writes.find((write) => write.collection === "trades")!.values as typeof historical[];
+    expect(accounts.find((item) => item.id === "a")?.feePolicy).toEqual(feePolicy);
+    expect(accounts.find((item) => item.id === "b")?.feePolicy).toEqual(targetPolicy);
+    expect(trades[0].fee).toBe(7);
   });
   it("blocks archive while positions or cash remain and allows a zero-balance account", () => {
     const entities = [account("a", "A", true), account("b", "B")];
