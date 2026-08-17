@@ -9,12 +9,13 @@ import { CsvImportDialog } from "./csv-import-dialog";
 const mocks = vi.hoisted(() => ({
   parseImportFile: vi.fn(),
   buildImportPreview: vi.fn(),
+  buildPreparedImportPreview: vi.fn(),
   preflightImport: vi.fn(() => ({ ok: true, plan: { insertedTrades: [], restoredTrades: [], restoredTradeIds: [], allTrades: [] }, issues: [] })),
   useLocalCollection: vi.fn(),
 }));
 
 vi.mock("@/features/import/tabular-parser", () => ({ parseImportFile: mocks.parseImportFile }));
-vi.mock("@/features/import/import-pipeline", () => ({ buildImportPreview: mocks.buildImportPreview, preflightImport: mocks.preflightImport }));
+vi.mock("@/features/import/import-pipeline", () => ({ buildImportPreview: mocks.buildImportPreview, buildPreparedImportPreview: mocks.buildPreparedImportPreview, preflightImport: mocks.preflightImport }));
 vi.mock("@/lib/use-local-collection", () => ({ useLocalCollection: mocks.useLocalCollection }));
 vi.mock("@/i18n/i18n-provider", () => ({
   useI18n: () => ({
@@ -30,6 +31,11 @@ const parsed: ParsedTabularFile = {
 const bindings = Object.fromEntries([
   ["tradedAt", 0], ["tradeType", 1], ["quantity", 2], ["price", 3], ["ticker", 4],
 ].map(([field, index]) => [field, parsed.columns[index as number].reference]));
+const miraeParsed: ParsedTabularFile = {
+  columns: buildTabularColumns(["거래일자", "거래종류", "종목명", "거래수량", "거래금액", "외화거래금액", "수수료", "예수금잔고"]),
+  rows: [["2026-08-16", "이체송금", "", "", "", "", "", "0"]],
+  sheetName: "거래내역",
+};
 const account: InvestmentAccount = { id: "account", name: "Account", institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault: true, archivedAt: null, memo: "", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
 const profile: ImportMappingProfile = { id: "profile", name: "Broker", version: 1, bindings, headerSignature: parsed.columns.map((column) => `${column.reference.normalizedHeader}#${column.reference.occurrence}`).sort().join("|"), createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
 
@@ -41,7 +47,7 @@ function deferred<T>() {
 }
 
 function preview(): ImportPreview {
-  return { candidates: [], issues: [], requiresTimezoneConfirmation: false, summary: { ready: 0, exact_duplicate: 0, possible_duplicate: 0, previously_deleted: 0, source_conflict: 0, rejected: 0 } };
+  return { candidates: [], issues: [], requiresTimezoneConfirmation: false, summary: { ready: 0, exact_duplicate: 0, possible_duplicate: 0, previously_deleted: 0, source_conflict: 0, rejected: 0, excluded_settlement: 0, excluded_non_trade: 0, unsupported_activity: 0 } };
 }
 
 function mockProfileStore(initial: ImportMappingProfile[], persist: (next: ImportMappingProfile[]) => Promise<void> = async () => undefined) {
@@ -65,11 +71,25 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.parseImportFile.mockResolvedValue(parsed);
   mocks.buildImportPreview.mockResolvedValue(preview());
+  mocks.buildPreparedImportPreview.mockResolvedValue(preview());
   window.confirm = vi.fn(() => true);
   mockProfileStore([]);
 });
 
 describe("CsvImportDialog state hardening", () => {
+  it("suggests but never auto-activates a matching account-ledger adapter", async () => {
+    mocks.parseImportFile.mockResolvedValue(miraeParsed);
+    renderDialog();
+    expect(await screen.findByText("미래에셋 계좌 활동 원장 형식으로 보입니다.")).toBeVisible();
+    expect(screen.getByLabelText("거래금액 열 매핑")).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "미래에셋 규칙 적용" }));
+    expect(screen.getByText("미래에셋 규칙이 적용되었습니다. 어댑터가 소유한 열 연결은 읽기 전용이며, 정산·비매매 행은 원장에 저장되지 않습니다.")).toBeVisible();
+    expect(screen.getByLabelText("거래금액 열 매핑")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "범용 가져오기로 전환" }));
+    expect(screen.getByLabelText("거래금액 열 매핑")).toBeEnabled();
+    expect(screen.getByText("미래에셋 계좌 활동 원장 형식으로 보입니다.")).toBeVisible();
+  });
+
   it("cancels a stale preview immediately and lets a newer generation win", async () => {
     const requestA = deferred<ImportPreview>();
     const requestB = deferred<ImportPreview>();

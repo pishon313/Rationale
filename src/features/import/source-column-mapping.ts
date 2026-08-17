@@ -14,6 +14,7 @@ export const importFieldDefinitions: ImportFieldDefinition[] = [
   { field: "tradeType", label: importFieldLabels.tradeType, group: "required", helpText: "매수와 매도를 구분" },
   { field: "quantity", label: importFieldLabels.quantity, group: "required", helpText: "체결 수량" },
   { field: "price", label: importFieldLabels.price, group: "required", helpText: "체결 단가" },
+  { field: "grossAmount", label: importFieldLabels.grossAmount, group: "required", helpText: "수량 × 단가에 해당하는 총 거래대금입니다. 수수료·세금·정산금액을 포함한 순현금액을 연결하지 마세요." },
   { field: "ticker", label: importFieldLabels.ticker, group: "instrument", helpText: "종목 식별에 사용" },
   { field: "stockName", label: importFieldLabels.stockName, group: "instrument", helpText: "종목 식별 및 충돌 확인" },
   { field: "fee", label: importFieldLabels.fee, group: "financial_accuracy", helpText: "없으면 0으로 계산" },
@@ -76,7 +77,7 @@ export function requiredMappingCoverage(mapping: ImportMapping): RequiredMapping
     { id: "tradedAt", label: importFieldLabels.tradedAt, complete: Boolean(mapping.tradedAt) },
     { id: "tradeType", label: importFieldLabels.tradeType, complete: Boolean(mapping.tradeType) },
     { id: "quantity", label: importFieldLabels.quantity, complete: Boolean(mapping.quantity) },
-    { id: "price", label: importFieldLabels.price, complete: Boolean(mapping.price) },
+    { id: "price", label: "체결 단가 또는 총 거래금액", complete: Boolean(mapping.price || mapping.grossAmount) },
     { id: "instrument", label: "종목코드 또는 종목명", complete: Boolean(mapping.ticker || mapping.stockName) },
   ];
 }

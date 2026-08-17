@@ -1,10 +1,11 @@
 import { fallbackRatesToKrw, type Currency } from "@/domain/currency";
+import Decimal from "decimal.js";
 import type { InvestmentAccount } from "@/features/accounts/types";
 import type { Stock } from "@/features/stocks/types";
 import { validateTradeMutation } from "@/features/trades/trade-mutations";
 import { tradeOriginOf, type Trade } from "@/features/trades/types";
 import { resolveColumnIndex, validateImportMapping } from "./column-mapping";
-import type { CanonicalExecution, ImportCandidate, ImportCandidateAction, ImportCandidateStatus, ImportContext, ImportField, ImportIssue, ImportIssueCode, ImportMapping, ImportMutationPlan, ImportPreview, ParsedTabularFile } from "./import-types";
+import type { CanonicalExecution, ImportCandidate, ImportCandidateAction, ImportCandidateStatus, ImportContext, ImportField, ImportIssue, ImportIssueCode, ImportMapping, ImportMutationPlan, ImportPreview, ParsedTabularFile, PreparedBrokerLedgerRow } from "./import-types";
 
 type ResolutionIndexes = {
   stocksByTicker: Map<string, Stock[]>;
@@ -30,6 +31,7 @@ type ExistingTradeIndexes = {
 
 type TrustedBatchIdentity = { key: string; accountId: string; externalExecutionId: string };
 type ProvisionalCandidate = { candidate: ImportCandidate; sourceSequence: number; trustedIdentity: TrustedBatchIdentity | null; economicKey: string | null };
+type PreviewBuildState = { occurrences: Map<string, number>; existing: ExistingTradeIndexes; indexes: ResolutionIndexes; importedAt: string };
 
 export async function buildImportPreview(parsed: ParsedTabularFile, mapping: ImportMapping, context: ImportContext): Promise<ImportPreview> {
   const mappingIssues = validateImportMapping(mapping, parsed.columns);
@@ -38,8 +40,7 @@ export async function buildImportPreview(parsed: ParsedTabularFile, mapping: Imp
   const importBatchId = context.importBatchId ?? `file:v1:batch:${crypto.randomUUID()}`;
   const provider = context.provider?.trim() || null;
   const indexes = buildResolutionIndexes(context.stocks, context.accounts);
-  const occurrences = new Map<string, number>();
-  const existing = buildExistingTradeIndexes(context.existingTrades);
+  const state: PreviewBuildState = { occurrences: new Map(), existing: buildExistingTradeIndexes(context.existingTrades), indexes, importedAt };
   const provisional: ProvisionalCandidate[] = [];
 
   for (const [index, row] of parsed.rows.entries()) {
@@ -48,53 +49,7 @@ export async function buildImportPreview(parsed: ParsedTabularFile, mapping: Imp
     const trustedIdentity = probeTrustedIdentity(parsed, row, mapping, context.targetAccountId, indexes);
     try {
       const canonical = adaptTabularRow(parsed, row, rowNumber, index, mapping, importBatchId, provider);
-      const resolved = resolveExecution(canonical, context.targetAccountId, indexes);
-      const identity = sourceIdentityWithoutOccurrence(resolved);
-      const occurrence = occurrences.get(identity) ?? 0;
-      occurrences.set(identity, occurrence + 1);
-      const sourceKey = canonical.externalExecutionId
-        ? `file:v2:${await sha256(canonicalSerialize([canonical.adapter, resolved.account.id, canonical.externalExecutionId]))}`
-        : `file:v2:${await sha256(canonicalSerialize([identity, occurrence]))}`;
-      const tradeId = `import:${await sha256(sourceKey)}`;
-      const trade = resolvedExecutionToTrade(resolved, sourceKey, tradeId, importedAt);
-      const legacySourceKey = canonical.externalExecutionId
-        ? `file:v1:${await sha256(`${canonical.provider ?? "generic-file"}|${resolved.account.id}|${canonical.externalExecutionId}`)}`
-        : `file:v1:${await sha256(`${identity}|${occurrence}`)}`;
-      const sourceMatches = uniqueTrades([
-        ...(existing.bySourceKey.get(sourceKey) ?? []),
-        ...(existing.bySourceKey.get(legacySourceKey) ?? []),
-        ...(canonical.externalExecutionId ? existing.byExternalExecution.get(externalExecutionKey(resolved.account.id, canonical.externalExecutionId)) ?? [] : []),
-      ]);
-      const matchedTradeIds: string[] = [];
-      let status: ImportCandidateStatus = "ready";
-      let action: ImportCandidateAction = "insert";
-      const issues: ImportIssue[] = [];
-
-      if (sourceMatches.length > 1) {
-        status = "source_conflict"; action = "none";
-        matchedTradeIds.push(...sourceMatches.map((item) => item.id));
-        issues.push(candidateIssue("IMPORT_SOURCE_IDENTITY_AMBIGUOUS", "error", rowNumber, candidateId));
-      } else if (sourceMatches.length === 1) {
-        const sameSource = sourceMatches[0];
-        const sameEconomics = economicTradeKey(sameSource) === economicResolvedKey(resolved);
-        if (!sameEconomics) { status = "source_conflict"; action = "none"; }
-        else if (sameSource?.deletedAt) { status = "previously_deleted"; action = "restore"; }
-        else { status = "exact_duplicate"; action = "none"; }
-        matchedTradeIds.push(sameSource.id);
-        const code = status === "previously_deleted" ? "IMPORT_PREVIOUSLY_DELETED" : status === "exact_duplicate" ? "IMPORT_EXACT_DUPLICATE" : "IMPORT_SOURCE_CONFLICT";
-        issues.push(candidateIssue(code, status === "source_conflict" ? "error" : status === "previously_deleted" ? "warning" : "info", rowNumber, candidateId));
-      } else {
-        const possibleMatches = existing.possibleActive.get(possibleResolvedKey(resolved)) ?? [];
-        if (possibleMatches.length || (!canonical.externalExecutionId && occurrence > 0)) {
-          status = "possible_duplicate"; action = "insert";
-          matchedTradeIds.push(...possibleMatches.map((trade) => trade.id));
-          issues.push(candidateIssue(occurrence > 0 ? "IMPORT_AMBIGUOUS_IDENTICAL_ROW" : "IMPORT_POSSIBLE_DUPLICATE", "warning", rowNumber, candidateId));
-        }
-      }
-      if (canonical.timePrecision === "date") issues.push(candidateIssue("IMPORT_TIME_MISSING", "warning", rowNumber, candidateId));
-      if (canonical.currency === null) issues.push(candidateIssue("IMPORT_CURRENCY_FALLBACK", "info", rowNumber, candidateId));
-      if (canonical.exchangeRate === null && resolved.currency !== "KRW") issues.push(candidateIssue("IMPORT_EXCHANGE_RATE_FALLBACK", "warning", rowNumber, candidateId));
-      provisional.push({ candidate: { id: candidateId, row: rowNumber, status, action, selectedByDefault: false, execution: canonical, trade, matchedTradeIds, issues }, sourceSequence: index, trustedIdentity, economicKey: economicResolvedKey(resolved) });
+      provisional.push(await buildCanonicalCandidate(canonical, candidateId, trustedIdentity, context.targetAccountId, state));
     } catch (error) {
       const importError = toImportError(error, rowNumber);
       importError.candidateId = candidateId;
@@ -102,11 +57,106 @@ export async function buildImportPreview(parsed: ParsedTabularFile, mapping: Imp
     }
   }
 
+  return finalizePreview(provisional, mappingIssues, state.existing.activeIntraday);
+}
+
+export async function buildPreparedImportPreview(preparedRows: PreparedBrokerLedgerRow[], context: ImportContext): Promise<ImportPreview> {
+  const importedAt = context.importedAt ?? new Date().toISOString();
+  const state: PreviewBuildState = {
+    occurrences: new Map(),
+    existing: buildExistingTradeIndexes(context.existingTrades),
+    indexes: buildResolutionIndexes(context.stocks, context.accounts),
+    importedAt,
+  };
+  const importBatchId = context.importBatchId ?? `file:v1:batch:${crypto.randomUUID()}`;
+  const provisional: ProvisionalCandidate[] = [];
+  for (const prepared of preparedRows) {
+    const candidateId = await buildCandidateId(importBatchId, prepared.sourceSequence, prepared.sourceRow);
+    if (prepared.disposition !== "execution" || !prepared.execution) {
+      const status: ImportCandidateStatus = prepared.disposition === "settlement_mirror" ? "excluded_settlement"
+        : prepared.disposition === "non_trade_activity" ? "excluded_non_trade"
+          : prepared.disposition === "unsupported_activity" ? "unsupported_activity" : "rejected";
+      provisional.push({
+        candidate: { id: candidateId, row: prepared.sourceRow, status, action: "none", selectedByDefault: false, matchedTradeIds: [], issues: prepared.issues.map((issue) => ({ ...issue, candidateId })), sourceActivity: prepared.activityLabel },
+        sourceSequence: prepared.sourceSequence, trustedIdentity: null, economicKey: null,
+      });
+      continue;
+    }
+    try {
+      const item = await buildCanonicalCandidate(prepared.execution, candidateId, null, context.targetAccountId, state);
+      item.candidate.sourceActivity = prepared.activityLabel;
+      item.candidate.issues.push(...prepared.issues.map((issue) => ({ ...issue, candidateId })));
+      if (prepared.issues.some((issue) => issue.severity === "error")) {
+        item.candidate.status = "rejected";
+        item.candidate.action = "none";
+      }
+      provisional.push(item);
+    } catch (error) {
+      const importError = toImportError(error, prepared.sourceRow);
+      importError.candidateId = candidateId;
+      provisional.push({ candidate: { id: candidateId, row: prepared.sourceRow, status: "rejected", action: "none", selectedByDefault: false, matchedTradeIds: [], issues: [...prepared.issues.map((issue) => ({ ...issue, candidateId })), importError], sourceActivity: prepared.activityLabel }, sourceSequence: prepared.sourceSequence, trustedIdentity: null, economicKey: null });
+    }
+  }
+  return finalizePreview(provisional, [], state.existing.activeIntraday);
+}
+
+async function buildCanonicalCandidate(canonical: CanonicalExecution, candidateId: string, trustedIdentity: TrustedBatchIdentity | null, targetAccountId: string | undefined, state: PreviewBuildState): Promise<ProvisionalCandidate> {
+  const resolved = resolveExecution(canonical, targetAccountId, state.indexes);
+  validatePriceEvidence(canonical, resolved.currency);
+  const identity = sourceIdentityWithoutOccurrence(resolved);
+  const occurrence = state.occurrences.get(identity) ?? 0;
+  state.occurrences.set(identity, occurrence + 1);
+  const sourceKey = canonical.externalExecutionId
+    ? `file:v2:${await sha256(canonicalSerialize([canonical.adapter, resolved.account.id, canonical.externalExecutionId]))}`
+    : `file:v2:${await sha256(canonicalSerialize([identity, occurrence]))}`;
+  const tradeId = `import:${await sha256(sourceKey)}`;
+  const trade = resolvedExecutionToTrade(resolved, sourceKey, tradeId, state.importedAt);
+  const legacySourceKey = canonical.externalExecutionId
+    ? `file:v1:${await sha256(`${canonical.provider ?? "generic-file"}|${resolved.account.id}|${canonical.externalExecutionId}`)}`
+    : `file:v1:${await sha256(`${identity}|${occurrence}`)}`;
+  const sourceMatches = uniqueTrades([
+    ...(state.existing.bySourceKey.get(sourceKey) ?? []),
+    ...(state.existing.bySourceKey.get(legacySourceKey) ?? []),
+    ...(canonical.externalExecutionId ? state.existing.byExternalExecution.get(externalExecutionKey(resolved.account.id, canonical.externalExecutionId)) ?? [] : []),
+  ]);
+  const matchedTradeIds: string[] = [];
+  let status: ImportCandidateStatus = "ready";
+  let action: ImportCandidateAction = "insert";
+  const issues: ImportIssue[] = [];
+  if (sourceMatches.length > 1) {
+    status = "source_conflict"; action = "none";
+    matchedTradeIds.push(...sourceMatches.map((item) => item.id));
+    issues.push(candidateIssue("IMPORT_SOURCE_IDENTITY_AMBIGUOUS", "error", canonical.sourceRow, candidateId));
+  } else if (sourceMatches.length === 1) {
+    const sameSource = sourceMatches[0];
+    const sameEconomics = economicTradeKey(sameSource) === economicResolvedKey(resolved);
+    if (!sameEconomics) { status = "source_conflict"; action = "none"; }
+    else if (sameSource.deletedAt) { status = "previously_deleted"; action = "restore"; }
+    else { status = "exact_duplicate"; action = "none"; }
+    matchedTradeIds.push(sameSource.id);
+    const code = status === "previously_deleted" ? "IMPORT_PREVIOUSLY_DELETED" : status === "exact_duplicate" ? "IMPORT_EXACT_DUPLICATE" : "IMPORT_SOURCE_CONFLICT";
+    issues.push(candidateIssue(code, status === "source_conflict" ? "error" : status === "previously_deleted" ? "warning" : "info", canonical.sourceRow, candidateId));
+  } else {
+    const possibleMatches = state.existing.possibleActive.get(possibleResolvedKey(resolved)) ?? [];
+    if (possibleMatches.length || (!canonical.externalExecutionId && occurrence > 0)) {
+      status = "possible_duplicate"; action = "insert";
+      matchedTradeIds.push(...possibleMatches.map((item) => item.id));
+      issues.push(candidateIssue(occurrence > 0 ? "IMPORT_AMBIGUOUS_IDENTICAL_ROW" : "IMPORT_POSSIBLE_DUPLICATE", "warning", canonical.sourceRow, candidateId));
+    }
+  }
+  if (canonical.timePrecision === "date") issues.push(candidateIssue("IMPORT_TIME_MISSING", "warning", canonical.sourceRow, candidateId));
+  if (canonical.currency === null) issues.push(candidateIssue("IMPORT_CURRENCY_FALLBACK", "info", canonical.sourceRow, candidateId));
+  if (canonical.exchangeRate === null && resolved.currency !== "KRW") issues.push(candidateIssue("IMPORT_EXCHANGE_RATE_FALLBACK", "warning", canonical.sourceRow, candidateId));
+  if (canonical.priceEvidence?.kind === "gross_amount_divided_by_quantity") issues.push({ ...candidateIssue("IMPORT_PRICE_DERIVED_FROM_GROSS_AMOUNT", "warning", canonical.sourceRow, candidateId), details: { grossAmount: canonical.priceEvidence.grossAmount ?? 0, quantity: canonical.quantity, derivedPrice: canonical.price } });
+  return { candidate: { id: candidateId, row: canonical.sourceRow, status, action, selectedByDefault: false, execution: canonical, trade, matchedTradeIds, issues }, sourceSequence: canonical.sourceSequence, trustedIdentity, economicKey: economicResolvedKey(resolved) };
+}
+
+function finalizePreview(provisional: ProvisionalCandidate[], leadingIssues: ImportIssue[], existingIntraday: ReadonlySet<string>): ImportPreview {
   reconcileTrustedGroups(provisional);
   const candidates = provisional.map((item) => item.candidate);
-  blockAmbiguousDateOnlyOrdering(candidates, existing.activeIntraday);
+  blockAmbiguousDateOnlyOrdering(candidates, existingIntraday);
   for (const candidate of candidates) candidate.selectedByDefault = candidate.status === "ready" && candidate.action === "insert";
-  const issues = [...mappingIssues, ...candidates.flatMap((candidate) => candidate.issues)];
+  const issues = [...leadingIssues, ...candidates.flatMap((candidate) => candidate.issues)];
   return { candidates, issues, requiresTimezoneConfirmation: false, summary: summarize(candidates) };
 }
 
@@ -173,6 +223,14 @@ export function adaptTabularRow(parsed: ParsedTabularFile, row: string[], rowNum
   const dateTime = parseExecutionDateTime(cell(parsed, row, mapping.tradedAt), cell(parsed, row, mapping.time));
   const currencyValue = cell(parsed, row, mapping.currency);
   const rateValue = cell(parsed, row, mapping.exchangeRate);
+  const quantityDecimal = parsePositiveDecimal(cell(parsed, row, mapping.quantity), "quantity");
+  const directPriceValue = cell(parsed, row, mapping.price);
+  const grossAmountValue = cell(parsed, row, mapping.grossAmount);
+  const directPrice = directPriceValue ? parsePositiveDecimal(directPriceValue, "price") : null;
+  const grossAmount = grossAmountValue ? parsePositiveDecimal(grossAmountValue, "grossAmount") : null;
+  if (!directPrice && !grossAmount) throw importFailure("IMPORT_NON_POSITIVE_NUMBER", "price");
+  const price = directPrice ?? grossAmount!.div(quantityDecimal);
+  if (!price.isFinite() || !price.greaterThan(0)) throw importFailure("IMPORT_NON_POSITIVE_NUMBER", "price");
   return {
     importBatchId, adapter: "generic-tabular-v1", sourceRow: rowNumber, sourceSequence, provider,
     externalAccountReference: cell(parsed, row, mapping.accountName) || null,
@@ -182,8 +240,11 @@ export function adaptTabularRow(parsed: ParsedTabularFile, row: string[], rowNum
     stockName: cell(parsed, row, mapping.stockName) || null,
     market: null,
     side: parseSide(cell(parsed, row, mapping.tradeType)), executedAt: dateTime.value, timePrecision: dateTime.timePrecision,
-    quantity: parsePositiveNumber(cell(parsed, row, mapping.quantity), "quantity"),
-    price: parsePositiveNumber(cell(parsed, row, mapping.price), "price"),
+    quantity: quantityDecimal.toNumber(),
+    price: price.toNumber(),
+    priceEvidence: directPrice
+      ? { kind: "direct", ...(grossAmount ? { grossAmount: grossAmount.toNumber() } : {}) }
+      : { kind: "gross_amount_divided_by_quantity", grossAmount: grossAmount!.toNumber() },
     fee: parseNonNegativeNumber(cell(parsed, row, mapping.fee), "fee"),
     tax: parseNonNegativeNumber(cell(parsed, row, mapping.tax), "tax"),
     currency: currencyValue ? parseCurrency(currencyValue) : null,
@@ -327,6 +388,15 @@ function resolveExecution(canonical: CanonicalExecution, targetAccountId: string
   return { canonical, stock, account, currency, exchangeRate };
 }
 
+function validatePriceEvidence(canonical: CanonicalExecution, currency: Currency) {
+  if (canonical.priceEvidence?.kind !== "direct" || canonical.priceEvidence.grossAmount === undefined) return;
+  const expected = new Decimal(canonical.price).times(canonical.quantity);
+  const actual = new Decimal(canonical.priceEvidence.grossAmount);
+  const absoluteTolerance = new Decimal(currency === "KRW" || currency === "JPY" ? 1 : 0.01);
+  const relativeTolerance = Decimal.max(expected.abs(), actual.abs()).times("0.000000001");
+  if (expected.minus(actual).abs().greaterThan(Decimal.max(absoluteTolerance, relativeTolerance))) throw importFailure("IMPORT_PRICE_AMOUNT_CONFLICT", "grossAmount");
+}
+
 function resolveAccount(externalAccountReference: string | null, targetAccountId: string | undefined, indexes: ResolutionIndexes) {
   let account: InvestmentAccount | undefined;
   if (externalAccountReference) {
@@ -428,16 +498,26 @@ function parseCurrency(value: string): Currency {
   throw importFailure("IMPORT_INVALID_CURRENCY", "currency");
 }
 
-function parsePositiveNumber(value: string, field: ImportField) { const number = parseOptionalNumber(value); if (!(number > 0)) throw importFailure("IMPORT_NON_POSITIVE_NUMBER", field); return number; }
+function parsePositiveDecimal(value: string, field: ImportField) { const number = parseOptionalDecimal(value); if (!number.greaterThan(0)) throw importFailure("IMPORT_NON_POSITIVE_NUMBER", field); return number; }
+function parsePositiveNumber(value: string, field: ImportField) { return parsePositiveDecimal(value, field).toNumber(); }
 function parseNonNegativeNumber(value: string, field: ImportField) { const number = parseOptionalNumber(value); if (number < 0) throw importFailure("IMPORT_NEGATIVE_NUMBER", field); return number; }
 
 export function parseOptionalNumber(value: string) {
-  if (!value.trim()) return 0;
+  return parseOptionalDecimal(value).toNumber();
+}
+
+export function parseOptionalDecimal(value: string) {
+  if (!value.trim()) return new Decimal(0);
   const trimmed = value.trim(); const negative = /^\(.*\)$/.test(trimmed);
   const unsigned = trimmed.replace(/[()$₩€¥￥원]/g, "").replace(/[\s\u00A0\u202F]/g, "");
-  const parsed = Number(normalizeLocaleNumber(unsigned));
-  if (!Number.isFinite(parsed)) throw importFailure("IMPORT_INVALID_NUMBER");
-  return negative ? -parsed : parsed;
+  const normalized = normalizeLocaleNumber(unsigned);
+  try {
+    const parsed = new Decimal(normalized);
+    if (!parsed.isFinite()) throw new Error("not finite");
+    return negative ? parsed.negated() : parsed;
+  } catch {
+    throw importFailure("IMPORT_INVALID_NUMBER");
+  }
 }
 
 function normalizeLocaleNumber(value: string) {
@@ -465,6 +545,6 @@ function candidateIssue(code: ImportIssueCode, severity: ImportIssue["severity"]
 function importFailure(code: ImportIssueCode, field?: ImportField) { return Object.assign(new Error(code), { code, field }); }
 function toImportError(error: unknown, row: number): ImportIssue { const value = error as Error & { code?: ImportIssueCode; field?: ImportField }; return { code: value.code ?? "IMPORT_ROW_REJECTED", severity: "error", row, field: value.field }; }
 function emptyPreview(issues: ImportIssue[]): ImportPreview { return { candidates: [], issues, requiresTimezoneConfirmation: false, summary: emptySummary() }; }
-function emptySummary(): Record<ImportCandidateStatus, number> { return { ready: 0, exact_duplicate: 0, possible_duplicate: 0, previously_deleted: 0, source_conflict: 0, rejected: 0 }; }
+function emptySummary(): Record<ImportCandidateStatus, number> { return { ready: 0, exact_duplicate: 0, possible_duplicate: 0, previously_deleted: 0, source_conflict: 0, rejected: 0, excluded_settlement: 0, excluded_non_trade: 0, unsupported_activity: 0 }; }
 function summarize(candidates: ImportCandidate[]) { return candidates.reduce((result, candidate) => ({ ...result, [candidate.status]: result[candidate.status] + 1 }), emptySummary()); }
 async function sha256(value: string) { const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)); return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join(""); }

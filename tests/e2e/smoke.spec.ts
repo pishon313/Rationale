@@ -239,6 +239,82 @@ test("Excel의 typed date serial을 표시 문자열과 무관하게 거래일�
   await expect(dialog.getByText("거래일 형식을 확인해 주세요.")).toHaveCount(0);
 });
 
+test("미래에셋 계좌 활동 원장을 명시적으로 적용해 체결 행만 가져온다", async ({ page }) => {
+  const account = e2eAccount("mirae-ledger-account", "합성 원장 계좌");
+  const baseStock = { market: "한국", currency: "KRW", assetType: "주식", sector: "테스트", status: "보유", investmentType: "장기 코어", currentPrice: 50000, targetPrice: null, averagePrice: 0, quantity: 0, thesisSummary: "", currentView: "중립", currentViewMemo: "", nextReviewDate: null, reviewNote: "", nextEarningsDate: null, ledgerInitializedAt: "2026-08-01T00:00:00.000Z", tags: [], createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", deletedAt: null };
+  const stocks = [{ ...baseStock, id: "synthetic-alpha", ticker: "SALP", name: "합성 알파" }, { ...baseStock, id: "synthetic-beta", ticker: "SBET", name: "합성 베타" }];
+  await page.addInitScript(({ account, stocks }) => { localStorage.setItem("tradejournal.accounts.v1", JSON.stringify([account])); localStorage.setItem("tradejournal.stocks.v1", JSON.stringify(stocks)); localStorage.setItem("tradejournal.trades.v1", "[]"); }, { account, stocks });
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet([
+    ["거래일자", "거래종류", "종목명", "거래수량", "거래금액", "외화거래금액", "수수료", "예수금잔고"],
+    ["2026-08-16", "주식매수입고", "합성 알파", 2, 100000, 0, 10, 0],
+    ["2026-08-16", "주식매수입고", "합성 베타", 1, 50000, 0, 20, 0],
+    ["2026-08-16", "주식매수출금", "", 0, 150000, 0, 30, 0],
+    ["2026-08-16", "이체송금", "", "", "", "", "", 0],
+    ["2026-08-16", "배당세출금", "", "", "", "", "", 0],
+    ["2026-08-16", "펀드정기자동매수", "합성 펀드", 1, 1000, 0, 0, 0],
+  ]);
+  XLSX.utils.book_append_sheet(workbook, sheet, "거래내역");
+  const buffer = Buffer.from(XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }));
+
+  await page.goto("/trades");
+  await page.getByRole("button", { name: "파일 가져오기" }).click();
+  const dialog = page.getByRole("dialog", { name: "증권사 거래 내역 가져오기" });
+  await dialog.locator('input[type="file"]').setInputFiles({ name: "synthetic-account-ledger.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer });
+  await expect(dialog.getByText("미래에셋 계좌 활동 원장 형식으로 보입니다.")).toBeVisible();
+  await expect(dialog.getByLabel("거래금액 열 매핑", { exact: true })).toHaveValue("grossAmount");
+  await expect(dialog.getByLabel("거래금액 열 매핑", { exact: true })).toBeEnabled();
+  await dialog.getByRole("button", { name: "미래에셋 규칙 적용" }).click();
+  await expect(dialog.getByText("미래에셋 규칙이 적용되었습니다. 어댑터가 소유한 열 연결은 읽기 전용이며, 정산·비매매 행은 원장에 저장되지 않습니다.")).toBeVisible();
+  await expect(dialog.getByLabel("거래금액 열 매핑", { exact: true })).toBeDisabled();
+  await dialog.getByRole("button", { name: "거래 후보 검토" }).click();
+  await expect(dialog.getByText("추가 가능 2")).toBeVisible();
+  await expect(dialog.getByText("정산 대응 행 1")).toBeVisible();
+  await expect(dialog.getByText("비매매 계좌 활동 2")).toBeVisible();
+  await expect(dialog.getByText("지원하지 않는 거래 1")).toBeVisible();
+  await expect(dialog.getByText("총액 100,000 ÷ 수량 2 = 단가 50,000")).toBeVisible();
+  await expect(dialog.getByText("매수/매도 구분을 확인해 주세요.")).toHaveCount(0);
+  await expect(dialog.getByText("연결할 종목을 찾을 수 없습니다.")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "2건 추가 · 0건 복원" }).click();
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]").length)).toBe(2);
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]"));
+  expect(stored.map((trade: { price: number }) => trade.price)).toEqual([50000, 50000]);
+  expect(stored.every((trade: Record<string, unknown>) => !("grossAmount" in trade) && !("priceEvidence" in trade))).toBe(true);
+});
+
+test("미래에셋 정산 불일치 그룹은 저장하지 않는다", async ({ page }) => {
+  const account = e2eAccount("mirae-mismatch-account", "합성 불일치 계좌");
+  const stock = { id: "mismatch-stock", ticker: "MSYN", name: "합성 불일치", market: "한국", currency: "KRW", assetType: "주식", sector: "테스트", status: "보유", investmentType: "장기 코어", currentPrice: 50000, targetPrice: null, averagePrice: 0, quantity: 0, thesisSummary: "", currentView: "중립", currentViewMemo: "", nextReviewDate: null, reviewNote: "", nextEarningsDate: null, ledgerInitializedAt: "2026-08-01T00:00:00.000Z", tags: [], createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", deletedAt: null };
+  await page.addInitScript(({ account, stock }) => { localStorage.setItem("tradejournal.accounts.v1", JSON.stringify([account])); localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([stock])); localStorage.setItem("tradejournal.trades.v1", "[]"); }, { account, stock });
+  const source = [
+    "거래일자,거래종류,종목명,거래수량,거래금액,외화거래금액,수수료,예수금잔고",
+    "2026-08-16,주식매수입고,합성 불일치,2,100000,0,10,0",
+    "2026-08-16,주식매수출금,,0,99999,0,10,0",
+  ].join("\n");
+  await page.goto("/trades"); await page.getByRole("button", { name: "파일 가져오기" }).click();
+  const dialog = page.getByRole("dialog", { name: "증권사 거래 내역 가져오기" });
+  await dialog.locator('input[type="file"]').setInputFiles({ name: "synthetic-mismatch.csv", mimeType: "text/csv", buffer: Buffer.from(source) });
+  await dialog.getByRole("button", { name: "미래에셋 규칙 적용" }).click();
+  await dialog.getByRole("button", { name: "거래 후보 검토" }).click();
+  await expect(dialog.getByText("제외됨 1")).toBeVisible();
+  await expect(dialog.getByText("정산 대응 행 1")).toBeVisible();
+  await expect(dialog.getByText("주식 체결 금액과 대응 정산 행이 일치하지 않아 관련 매매를 가져올 수 없습니다.").first()).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "0건 추가 · 0건 복원" })).toBeDisabled();
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]"))).toHaveLength(0);
+});
+
+test("범용 총 거래금액을 단가로 잘못 연결하면 검토를 차단한다", async ({ page }) => {
+  const account = e2eAccount("gross-guard-account", "합성 총액 계좌");
+  await page.addInitScript((account) => { localStorage.setItem("tradejournal.accounts.v1", JSON.stringify([account])); localStorage.setItem("tradejournal.stocks.v1", "[]"); localStorage.setItem("tradejournal.trades.v1", "[]"); }, account);
+  await page.goto("/trades"); await page.getByRole("button", { name: "파일 가져오기" }).click();
+  const dialog = page.getByRole("dialog", { name: "증권사 거래 내역 가져오기" });
+  await dialog.locator('input[type="file"]').setInputFiles({ name: "synthetic-gross.csv", mimeType: "text/csv", buffer: Buffer.from("거래일,구분,수량,거래금액,종목명\n2026-08-16,매수,2,100000,합성 종목") });
+  await expect(dialog.getByLabel("거래금액 열 매핑")).toHaveValue("grossAmount");
+  await dialog.getByLabel("거래금액 열 매핑").selectOption("price");
+  await expect(dialog.getByText("총 거래금액 열을 체결 단가로 연결할 수 없습니다. 총 거래금액으로 연결해 주세요.")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "거래 후보 검토" })).toBeDisabled();
+});
+
 test("원본 열 중심으로 수동 연결하고 예시 값을 유지해 가져온다", async ({ page }) => {
   const account = e2eAccount("source-first-account", "원본 열 계좌");
   const stock = { id: "source-first-stock", ticker: "005930", name: "삼성전자", market: "한국", currency: "KRW", assetType: "주식", sector: "테스트", status: "보유", investmentType: "장기 코어", currentPrice: 70000, targetPrice: null, averagePrice: 0, quantity: 0, thesisSummary: "", currentView: "중립", currentViewMemo: "", nextReviewDate: null, reviewNote: "", nextEarningsDate: null, ledgerInitializedAt: "2026-08-01T00:00:00.000Z", tags: [], createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z", deletedAt: null };
