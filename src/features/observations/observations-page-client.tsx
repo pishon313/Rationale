@@ -2,8 +2,10 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { Calendar, Globe2, Pencil, Plus, Tag, Trash2, X } from "lucide-react";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { ImageAttachments } from "@/components/image-attachments";
+import { RegisteredStockPicker } from "@/features/stocks/registered-stock-picker";
 import type { Stock } from "@/features/stocks/types";
 import { useI18n } from "@/i18n/i18n-provider";
 import { localDateTimeValue } from "@/lib/local-date";
@@ -21,6 +23,7 @@ export function ObservationsPageClient() {
   const [stockFilter, setStockFilter] = useState("all");
   const [targetFilter, setTargetFilter] = useState("all");
   const items = useMemo(() => filterObservations(store.items, scopeFilter, targetFilter, stockFilter), [scopeFilter, stockFilter, store.items, targetFilter]);
+  const referencedStockIds = useMemo(() => [...new Set(store.items.map(normalizeObservation).filter((item) => item.scope === "stock" && item.stockId).map((item) => item.stockId as string))], [store.items]);
   const formatObservedAt = (value: string) => {
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? value : formatDate(date, { dateStyle: "medium", timeStyle: "short" });
@@ -34,16 +37,17 @@ export function ObservationsPageClient() {
     />
     <div className="mt-5 flex flex-wrap items-center gap-3">
       <div className="flex rounded-lg bg-[var(--surface-muted)] p-1" aria-label={t("관찰 대상 필터")}>{(["all", "market", "stock"] as const).map((scope) => <button key={scope} type="button" aria-pressed={scopeFilter === scope} onClick={() => setScopeFilter(scope)} className={`rounded-md px-3 py-1.5 text-sm ${scopeFilter === scope ? "bg-[var(--surface)] font-medium text-[var(--accent)] shadow-sm" : "text-[var(--muted)]"}`}>{t(scope === "all" ? "전체" : scope === "market" ? "시장" : "종목")}</button>)}</div>
-      {scopeFilter === "stock" && <><label className="text-sm text-[var(--muted)]">{t("종목")}</label>
-      <select
-        aria-label={t("관찰 종목 필터")}
-        value={stockFilter}
-        onChange={(event) => setStockFilter(event.target.value)}
-        className="h-9 rounded-lg border bg-[var(--surface)] px-3 text-sm"
-      >
-        <option value="all">{t("전체 종목")}</option>
-        {stocks.items.map((stock) => <option key={stock.id} value={stock.id}>{stock.name}</option>)}
-      </select></>}
+      {scopeFilter === "stock" && <RegisteredStockPicker
+        stocks={stocks.allItems}
+        value={stockFilter === "all" ? null : stockFilter}
+        onChange={(stockId) => setStockFilter(stockId ?? "all")}
+        label={t("종목")}
+        ariaLabel={t("관찰 종목 필터")}
+        allowEmpty
+        emptyLabel={t("전체 종목")}
+        includeDeletedIds={referencedStockIds}
+        className="w-full min-w-64 sm:w-80"
+      />}
       {scopeFilter === "market" && <><label className="text-sm text-[var(--muted)]">{t("시장 / 지수")}</label><select aria-label={t("시장 대상 필터")} value={targetFilter} onChange={(event) => setTargetFilter(event.target.value)} className="h-9 rounded-lg border bg-[var(--surface)] px-3 text-sm"><option value="all">{t("전체 시장 대상")}</option>{marketTargetGroups.map((group) => <optgroup key={group.id} label={t(group.label)}>{group.targets.map((target) => <option key={target.id} value={target.id}>{t(target.label)}</option>)}</optgroup>)}</select></>}
     </div>
     <section className="relative mt-6 space-y-4 before:absolute before:bottom-4 before:left-[19px] before:top-4 before:w-px before:bg-[var(--border)]">
@@ -103,7 +107,7 @@ export function ObservationsPageClient() {
       {!items.length && <div className="rounded-xl border bg-[var(--surface)] p-12 text-center text-sm text-[var(--muted)]">{t(emptyMessage(scopeFilter, stockFilter, targetFilter))}</div>}
     </section>
     {editing && <ObservationForm
-      stocks={stocks.items}
+      stocks={stocks.allItems}
       value={editing === "new" ? undefined : editing}
       onCancel={() => setEditing(null)}
       onSave={(next) => {
@@ -117,7 +121,7 @@ export function ObservationsPageClient() {
 
 export function ObservationForm({ value, stocks, initialStockId, lockScope = false, onCancel, onSave }: { value?: Observation; stocks: Stock[]; initialStockId?: string; lockScope?: boolean; onCancel: () => void; onSave: (value: Observation) => void }) {
   const { t } = useI18n();
-  const initialStock = stocks.find((stock) => stock.id === initialStockId) ?? stocks[0];
+  const initialStock = stocks.find((stock) => stock.id === initialStockId);
   const [form, setForm] = useState(() => value ? normalizeObservation(value) : normalizeObservation({ id: "", scope: "stock", stockId: initialStock?.id ?? "", stockName: initialStock?.name ?? "", marketTargets: [], observedAt: localDateTimeValue(), title: "", content: "", marketCondition: "", stockView: "판단 보류", tags: [], attachmentUrls: [], createdAt: "", updatedAt: "", deletedAt: null }));
   const [tags, setTags] = useState(value?.tags.join(", ") ?? "");
   const set = (key: keyof Observation, next: unknown) => setForm((old) => ({ ...old, [key]: next }));
@@ -139,12 +143,18 @@ export function ObservationForm({ value, stocks, initialStockId, lockScope = fal
       <ModalHeader title={t(value ? "관찰 기록 수정" : "새 관찰 기록")} close={onCancel} />
       <div className="space-y-5 p-5">
         {!lockScope && <Field label={t("관찰 대상")}><div className="mt-2 grid grid-cols-2 rounded-lg bg-[var(--surface-muted)] p-1">{(["market", "stock"] as const).map((scope) => { const label = t(scope === "market" ? "시장" : "종목"); return <button key={scope} type="button" aria-label={label} aria-pressed={form.scope === scope} onClick={() => changeScope(scope)} className={`rounded-md px-3 py-2 text-sm ${form.scope === scope ? "bg-[var(--surface)] font-medium text-[var(--accent)] shadow-sm" : "text-[var(--muted)]"}`}>{label}</button>; })}</div></Field>}
-        {form.scope === "stock" ? <Field label={t("종목")}>
-          <select required className={input} value={form.stockId ?? ""} onChange={(event) => set("stockId", event.target.value)}>
-            <option value="">{t("종목 선택")}</option>
-            {stocks.map((stock) => <option key={stock.id} value={stock.id}>{stock.name}</option>)}
-          </select>
-        </Field> : <Field label={t("시장 / 지수")}><div className="mt-3 space-y-3">{marketTargetGroups.map((group) => <div key={group.id}><p className="mb-1.5 text-xs font-medium text-[var(--muted)]">{t(group.label)}</p><div className="flex flex-wrap gap-2">{group.targets.map((target) => { const label = t(target.label); return <button key={target.id} type="button" aria-label={label} aria-pressed={form.marketTargets.includes(target.id)} onClick={() => toggleTarget(target.id)} className={`min-h-9 max-w-full whitespace-normal rounded-full border px-3 py-1.5 text-sm leading-5 ${form.marketTargets.includes(target.id) ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]" : "text-[var(--muted)]"}`}>{form.marketTargets.includes(target.id) ? "✓ " : ""}{label}</button>; })}</div></div>)}</div>{form.marketTargets.length === 0 && <p className="mt-2 text-xs text-[var(--muted)]">{t("시장 또는 지수를 하나 이상 선택해 주세요.")}</p>}</Field>}
+        {form.scope === "stock" ? <RegisteredStockPicker
+          stocks={stocks}
+          value={form.stockId}
+          onChange={(stockId) => {
+            const stock = stocks.find((item) => item.id === stockId);
+            setForm((current) => ({ ...current, stockId, stockName: stock?.name ?? "" }));
+          }}
+          label={t("종목")}
+          required
+          includeDeletedSelected={Boolean(value?.stockId)}
+          noResultsAction={<Link href="/stocks" className="text-[var(--accent)] underline">{t("종목 메뉴에서 먼저 추가해 주세요.")}</Link>}
+        /> : <Field label={t("시장 / 지수")}><div className="mt-3 space-y-3">{marketTargetGroups.map((group) => <div key={group.id}><p className="mb-1.5 text-xs font-medium text-[var(--muted)]">{t(group.label)}</p><div className="flex flex-wrap gap-2">{group.targets.map((target) => { const label = t(target.label); return <button key={target.id} type="button" aria-label={label} aria-pressed={form.marketTargets.includes(target.id)} onClick={() => toggleTarget(target.id)} className={`min-h-9 max-w-full whitespace-normal rounded-full border px-3 py-1.5 text-sm leading-5 ${form.marketTargets.includes(target.id) ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]" : "text-[var(--muted)]"}`}>{form.marketTargets.includes(target.id) ? "✓ " : ""}{label}</button>; })}</div></div>)}</div>{form.marketTargets.length === 0 && <p className="mt-2 text-xs text-[var(--muted)]">{t("시장 또는 지수를 하나 이상 선택해 주세요.")}</p>}</Field>}
         <Field label={t("관찰 시각")}>
           <input required type="datetime-local" className={input} value={form.observedAt} onChange={(event) => set("observedAt", event.target.value)} />
         </Field>

@@ -5,6 +5,7 @@ import { CheckCircle2, Pencil, Plus, Tag, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { ImageAttachments } from "@/components/image-attachments";
 import { Field, ModalActions, ModalHeader } from "@/features/observations/observations-page-client";
+import { RegisteredStockPicker } from "@/features/stocks/registered-stock-picker";
 import type { Stock } from "@/features/stocks/types";
 import { emotions } from "@/features/trades/types";
 import { useI18n } from "@/i18n/i18n-provider";
@@ -74,7 +75,7 @@ export function ReviewsPageClient() {
       </article>)}
     </section>
     {editing && <ReviewForm
-      stocks={stocks.items}
+      stocks={stocks.allItems}
       value={editing === "new" ? undefined : editing}
       cancel={() => setEditing(null)}
       save={(next) => {
@@ -127,19 +128,18 @@ export function ReviewForm({ value, stocks, initialStockId, cancel, save }: { va
     <form className="h-full w-full max-w-2xl overflow-y-auto bg-[var(--surface)]" onSubmit={submit}>
       <ModalHeader title={t(value ? "회고 수정" : "새 회고")} close={cancel} />
       <div className="grid gap-5 p-5 sm:grid-cols-2">
-        <Field label={t("연결할 종목 (선택)")}>
-          <select
-            className={input}
-            value={form.stockId ?? ""}
-            onChange={(event) => {
-              const stock = stocks.find((item) => item.id === event.target.value);
-              setForm((old) => ({ ...old, stockId: stock?.id ?? null, stockName: stock?.name ?? "" }));
-            }}
-          >
-            <option value="">{t("종목에 연결하지 않고 직접 입력")}</option>
-            {stocks.map((stock) => <option value={stock.id} key={stock.id}>{stock.name} ({stock.ticker})</option>)}
-          </select>
-        </Field>
+        <RegisteredStockPicker
+          stocks={stocks}
+          value={form.stockId}
+          onChange={(stockId) => {
+            const stock = stocks.find((item) => item.id === stockId);
+            setForm((old) => ({ ...old, stockId: stock?.id ?? null, stockName: stock?.name ?? "" }));
+          }}
+          label={t("연결할 종목 (선택)")}
+          allowEmpty
+          emptyLabel={t("종목에 연결하지 않고 직접 입력")}
+          includeDeletedSelected={Boolean(value?.stockId)}
+        />
         <Field label={t("회고일")}>
           <input required type="date" className={input} value={form.reviewedAt.slice(0, 10)} onChange={(event) => set("reviewedAt", event.target.value)} />
         </Field>

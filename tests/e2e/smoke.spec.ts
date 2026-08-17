@@ -198,6 +198,114 @@ test("시장 관찰을 작성하고 종목 관찰과 같은 타임라인에서 �
   await expect(page.getByText("조건에 맞는 관찰 기록이 없습니다.")).toBeVisible();
 });
 
+test("많은 등록 종목에서 Trade·Observation·Review·Plan을 정확한 ID로 검색해 저장한다", async ({ page }) => {
+  test.setTimeout(90_000);
+  const target = e2eStock("picker-target", "검색 선택 종목", "테스트", { ticker: "PICKME" });
+  const stocks = [
+    ...Array.from({ length: 125 }, (_, index) => e2eStock(
+      `synthetic-${index}`,
+      `합성 종목 ${String(index).padStart(3, "0")}`,
+      "테스트",
+      { ticker: `SYN${String(index).padStart(3, "0")}` },
+    )),
+    target,
+  ];
+  const account = e2eAccount("picker-account", "검색 선택 계좌");
+  await page.addInitScript(({ account, stocks }) => {
+    if (localStorage.getItem("tradejournal.accounts.v1") === null) localStorage.setItem("tradejournal.accounts.v1", JSON.stringify([account]));
+    if (localStorage.getItem("tradejournal.stocks.v1") === null) localStorage.setItem("tradejournal.stocks.v1", JSON.stringify(stocks));
+    for (const collection of ["trades", "observations", "reviews", "plans"]) {
+      const key = `tradejournal.${collection}.v1`;
+      if (localStorage.getItem(key) === null) localStorage.setItem(key, "[]");
+    }
+  }, { account, stocks });
+
+  await page.goto("/trades");
+  await page.getByRole("button", { name: "원장 기록" }).click();
+  let form = page.getByRole("dialog", { name: "새 원장 기록" });
+  let picker = form.getByRole("combobox", { name: "종목" });
+  await picker.focus();
+  await picker.pressSequentially("pickme");
+  await picker.press("Enter");
+  await expect(picker).toHaveValue("PICKME · 검색 선택 종목");
+  await form.getByLabel("계좌").selectOption(account.id);
+  await form.getByLabel("수량").fill("2");
+  await form.getByLabel("체결 가격").fill("100");
+  await form.getByRole("button", { name: "기록 저장" }).click();
+  const tradeRow = page.getByRole("row").filter({ hasText: target.name });
+  await expect(tradeRow).toBeVisible();
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]")[0]?.stockId)).toBe(target.id);
+  await tradeRow.getByRole("button", { name: "기록 수정" }).click();
+  form = page.getByRole("dialog", { name: "기록 수정" });
+  await expect(form.getByRole("combobox", { name: "종목" })).toHaveValue("PICKME · 검색 선택 종목");
+  await form.getByRole("button", { name: "닫기" }).click();
+
+  await page.goto("/observations");
+  await page.getByRole("button", { name: "새 기록" }).click();
+  form = page.locator("form");
+  picker = form.getByRole("combobox", { name: "종목" });
+  await picker.fill("pickme");
+  await form.getByRole("option", { name: "PICKME · 검색 선택 종목" }).click();
+  await form.getByLabel("제목").fill("검색 선택 관찰");
+  await form.getByLabel("내용").fill("정확한 등록 종목 ID로 저장한다.");
+  await form.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "검색 선택 관찰" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.observations.v1") ?? "[]")[0]?.stockId)).toBe(target.id);
+  await page.getByLabel("검색 선택 관찰 수정").click();
+  form = page.locator("form");
+  await expect(form.getByRole("combobox", { name: "종목" })).toHaveValue("PICKME · 검색 선택 종목");
+  await form.getByRole("button", { name: "취소", exact: true }).click();
+  await page.getByLabel("관찰 대상 필터").getByRole("button", { name: "종목", exact: true }).click();
+  picker = page.getByRole("combobox", { name: "관찰 종목 필터" });
+  await picker.fill("pickme");
+  await picker.press("Enter");
+  await expect(page.getByRole("heading", { name: "검색 선택 관찰" })).toBeVisible();
+
+  await page.goto("/reviews");
+  await page.getByRole("button", { name: "회고 작성" }).click();
+  form = page.locator("form");
+  picker = form.getByRole("combobox", { name: "연결할 종목 (선택)" });
+  await picker.fill("pickme");
+  await form.getByRole("option", { name: "PICKME · 검색 선택 종목" }).click();
+  await form.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(page.getByText("검색 선택 종목", { exact: false }).first()).toBeVisible();
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.reviews.v1") ?? "[]")[0]?.stockId)).toBe(target.id);
+  await page.getByRole("button", { name: "회고 수정" }).first().click();
+  form = page.locator("form");
+  await expect(form.getByRole("combobox", { name: "연결할 종목 (선택)" })).toHaveValue("PICKME · 검색 선택 종목");
+  await form.getByRole("button", { name: "취소", exact: true }).click();
+  await page.getByRole("button", { name: "회고 작성" }).click();
+  form = page.locator("form");
+  await form.getByPlaceholder("예: NVIDIA · 매수하지 않은 결정").fill("등록하지 않은 회고 대상");
+  await form.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(page.getByText("등록하지 않은 회고 대상", { exact: false }).first()).toBeVisible();
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.reviews.v1") ?? "[]")[0]?.stockId)).toBeNull();
+
+  await page.goto("/plans");
+  await page.getByRole("button", { name: "계획 추가" }).click();
+  form = page.getByRole("dialog");
+  picker = form.getByRole("combobox", { name: "종목" });
+  await picker.fill("pickme");
+  await form.getByRole("option", { name: "PICKME · 검색 선택 종목" }).click();
+  await form.getByLabel("계획 제목").fill("검색 선택 계획");
+  await form.getByLabel("무효화 조건").fill("전제가 훼손되면 취소한다.");
+  await form.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(page.getByRole("row").filter({ hasText: "검색 선택 계획" })).toContainText("PICKME");
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.plans.v1") ?? "[]")[0]?.stockId)).toBe(target.id);
+  await page.getByRole("button", { name: "검색 선택 계획 수정" }).click();
+  form = page.getByRole("dialog");
+  await expect(form.getByRole("combobox", { name: "종목" })).toHaveValue("PICKME · 검색 선택 종목");
+  await form.getByRole("button", { name: "취소", exact: true }).click();
+
+  const identities = await page.evaluate(() => ({
+    trade: JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]")[0]?.stockId,
+    observation: JSON.parse(localStorage.getItem("tradejournal.observations.v1") ?? "[]")[0]?.stockId,
+    review: JSON.parse(localStorage.getItem("tradejournal.reviews.v1") ?? "[]").find((item: { stockId: string | null }) => item.stockId)?.stockId,
+    plan: JSON.parse(localStorage.getItem("tradejournal.plans.v1") ?? "[]")[0]?.stockId,
+  }));
+  expect(identities).toEqual({ trade: target.id, observation: target.id, review: target.id, plan: target.id });
+});
+
 test("일본과 유럽 시장 관찰을 지역별 선택하고 필터링한다", async ({ page }) => {
   await page.goto("/observations");
   await page.getByRole("button", { name: "새 기록" }).click();
@@ -914,7 +1022,8 @@ test("새 매매 수수료를 계좌 정책으로 계산하고 직접 입력 전
   await page.goto("/trades");
   await page.getByRole("button", { name: "원장 기록" }).click();
   let dialog = page.getByRole("dialog", { name: "새 원장 기록" });
-  await dialog.getByLabel("종목").selectOption(stock.id);
+  await dialog.getByRole("combobox", { name: "종목" }).fill(stock.ticker);
+  await dialog.getByRole("option", { name: `${stock.ticker} · ${stock.name}` }).click();
   await dialog.getByLabel("계좌").selectOption(account.id);
   await dialog.getByLabel("수량").fill("10");
   await dialog.getByLabel("체결 가격").fill("100");
@@ -999,7 +1108,7 @@ test("현금 흐름 없이 기존 보유 종목의 기초 포지션을 등록한
   }])));
   await page.goto("/trades?openingStockId=opening-stock");
   const dialog = page.getByRole("dialog", { name: "기초 포지션 등록" });
-  await expect(dialog.getByLabel("종목")).toHaveValue("opening-stock");
+  await expect(dialog.getByRole("combobox", { name: "종목" })).toHaveValue("OPEN · 기존 보유 종목");
   await dialog.getByLabel("수량").fill("12");
   await dialog.getByLabel("평균단가").fill("45000");
   await dialog.getByRole("button", { name: "기초 포지션 저장" }).click();
@@ -1026,8 +1135,8 @@ test("종목 상세에서 매매를 추가하고 수정한 뒤 삭제한다", as
   await page.goto("/stocks/detail?id=detail-stock");
   await page.getByRole("button", { name: "매매 추가" }).click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog.getByLabel("종목")).toBeDisabled();
-  await expect(dialog.getByLabel("종목")).toHaveValue("detail-stock");
+  await expect(dialog.getByRole("combobox", { name: "종목" })).toBeDisabled();
+  await expect(dialog.getByRole("combobox", { name: "종목" })).toHaveValue("DETAIL · 상세 종목");
   await dialog.getByLabel("수량").fill("2");
   await dialog.getByLabel("체결 가격").fill("100");
   await dialog.getByRole("button", { name: "기록 저장" }).click();

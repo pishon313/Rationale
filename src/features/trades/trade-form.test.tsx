@@ -25,7 +25,9 @@ describe("TradeForm", () => {
     const stock = { ...sampleStocks[0], id: "user-stock", name: "사용자 종목", ticker: "USER" };
     const plan = { ...samplePlans[0], id: "user-plan", stockId: stock.id, stockName: stock.name, ticker: stock.ticker, title: "사용자 계획" };
     render(<TradeForm stocks={[stock]} plans={[plan]} rules={sampleRules} ledger={buildTradingLedger([])} onCancel={vi.fn()} onSave={vi.fn()} />);
-    expect(screen.getByRole("option", { name: "사용자 종목 (USER)" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "종목" })).toHaveValue("USER · 사용자 종목");
+    fireEvent.focus(screen.getByRole("combobox", { name: "종목" }));
+    expect(screen.getByRole("option", { name: "USER · 사용자 종목" })).toBeInTheDocument();
     expect(screen.queryByLabelText("연결된 매매 계획")).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "사용자 계획" })).not.toBeInTheDocument();
   });
@@ -67,7 +69,7 @@ describe("TradeForm", () => {
 
   it("원화 종목에서 달러 종목으로 바꾸면 기본 환율을 적용한다", () => {
     render(<TradeForm stocks={sampleStocks} plans={samplePlans} rules={sampleRules} ledger={buildTradingLedger([])} onCancel={vi.fn()} onSave={vi.fn()} />);
-    fireEvent.change(screen.getByLabelText("종목"), { target: { value: "micron" } });
+    selectRegisteredStock("MU", "MU · Micron Technology");
     expect(screen.getByLabelText("적용 환율")).toHaveValue(1380);
   });
 
@@ -95,7 +97,7 @@ describe("TradeForm", () => {
     render(<TradeForm openingPosition initialStockId={stock.id} stocks={[...sampleStocks.filter((item) => item.id !== stock.id), stock]} plans={samplePlans} rules={sampleRules} ledger={buildTradingLedger([])} onCancel={vi.fn()} onSave={onSave} />);
 
     expect(screen.getByRole("heading", { name: "기초 포지션 등록" })).toBeInTheDocument();
-    expect(screen.getByLabelText("종목")).toHaveValue(stock.id);
+    expect(screen.getByLabelText("종목")).toHaveValue(`${stock.ticker} · ${stock.name}`);
     expect(screen.getByLabelText("계좌")).toHaveDisplayValue("ISA 계좌");
     expect(screen.getByLabelText("평균단가")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("수량"), { target: { value: "12" } });
@@ -148,7 +150,7 @@ describe("TradeForm", () => {
     const stock = sampleStocks[0];
     render(<TradeForm lockedStockId={stock.id} lockedAccountId="b" allowedTypes={["매수", "매도", "배당"]} stocks={sampleStocks} plans={samplePlans} rules={sampleRules} ledger={buildTradingLedger([])} accounts={accounts} onCancel={vi.fn()} onSave={onSave} />);
     expect(screen.getByLabelText("종목")).toBeDisabled();
-    expect(screen.getByLabelText("종목")).toHaveValue(stock.id);
+    expect(screen.getByLabelText("종목")).toHaveValue(`${stock.ticker} · ${stock.name}`);
     expect(screen.getByLabelText("계좌")).toBeDisabled();
     expect(screen.getByLabelText("계좌")).toHaveValue("b");
     expect(screen.queryByRole("button", { name: "입금" })).not.toBeInTheDocument();
@@ -173,6 +175,18 @@ describe("TradeForm", () => {
     expect(screen.getByLabelText("수수료")).toHaveValue(2);
     fireEvent.click(screen.getByRole("button", { name: "기록 저장" }));
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ fee: 2, feeMode: "accountPolicy", feeCalculation: expect.objectContaining({ policyAccountId: "fee-account", ruleId: "fee-rule", quantity: "2", price: "1000", grossAmount: "2000", calculatedFee: "2" }) }));
+  });
+
+  it("검색 선택은 정확한 Stock ID를 저장하고 통화 및 수수료 자동 계산을 동기화한다", () => {
+    const onSave = vi.fn();
+    const first = { ...feeStock, id: "first-fee-stock", ticker: "AAA", name: "첫 종목" };
+    render(<TradeForm stocks={[first, feeStock]} plans={[]} rules={[]} ledger={buildTradingLedger([])} accounts={[feeAccount()]} onCancel={vi.fn()} onSave={onSave} />);
+    selectRegisteredStock("FEE", "FEE · 수수료 종목");
+    fireEvent.change(screen.getByLabelText("수량"), { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText("체결 가격"), { target: { value: "1000" } });
+    expect(screen.getByLabelText("수수료")).toHaveValue(2);
+    fireEvent.click(screen.getByRole("button", { name: "기록 저장" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ stockId: feeStock.id, stockName: feeStock.name, currency: "KRW", feeMode: "accountPolicy" }));
   });
 
   it("자동 계산을 직접 입력으로 바꾸면 스냅샷 없이 manual로 저장하고 세금은 유지한다", () => {
@@ -257,4 +271,11 @@ function automaticTrade() {
   if (matched.status !== "matched") throw new Error("fixture did not match");
   const feeCalculation = createAccountFeeCalculationSnapshot({ policyAccountId: "fee-account", side: "buy", tradedAt: "2026-08-17T10:00:00", quantity: "1", price: "1000", currency: "KRW", result: matched, calculatedAt: "2026-08-17T01:00:00Z" });
   return { ...sampleTrades[0], id: "automatic", stockId: feeStock.id, stockName: feeStock.name, tradeType: "매수" as const, tradedAt: "2026-08-17T10:00:00", quantity: 1, price: 1000, currency: "KRW" as const, exchangeRate: 1, fee: 1, feeMode: "accountPolicy" as const, feeCalculation, tax: 0, accountId: "fee-account", accountName: "수수료 계좌", createdAt: "2026-08-17T01:00:00Z", updatedAt: "2026-08-17T01:00:00Z" };
+}
+
+function selectRegisteredStock(query: string, optionName: string) {
+  const picker = screen.getByRole("combobox", { name: "종목" });
+  fireEvent.focus(picker);
+  fireEvent.change(picker, { target: { value: query } });
+  fireEvent.click(screen.getByRole("option", { name: optionName }));
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { X } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { currencies, fallbackRatesToKrw, fetchHistoricalRateToKrw } from "@/domain/currency";
 import { planPriceDeviation } from "@/domain/portfolio";
@@ -8,6 +9,7 @@ import { evaluateTradeRules } from "@/domain/rules";
 import { tradeAmount, type TradingLedger } from "@/domain/trading-ledger";
 import type { BuyPlan } from "@/features/plans/types";
 import type { InvestmentRule } from "@/features/rules/types";
+import { RegisteredStockPicker } from "@/features/stocks/registered-stock-picker";
 import type { Stock } from "@/features/stocks/types";
 import { useI18n } from "@/i18n/i18n-provider";
 import { localDateTimeValue } from "@/lib/local-date";
@@ -58,7 +60,7 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, locke
   const openingPosition = trade?.isOpeningPosition === true || createOpeningPosition;
   const contextualStockId = lockedStockId ?? initialStockId;
   const openingStock = stocks.find((item) => item.id === contextualStockId);
-  const firstStock = openingStock ?? stocks[0];
+  const firstStock = openingStock ?? stocks.find((item) => !item.deletedAt);
   const [type, setType] = useState<Trade["tradeType"]>(openingPosition ? "매수" : trade?.tradeType ?? initialType);
   const [stockId, setStockId] = useState(lockedStockId ?? trade?.stockId ?? initialStockId ?? firstStock?.id ?? "");
   const [planId, setPlanId] = useState(trade?.planId ?? "");
@@ -324,7 +326,19 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, locke
             </Label>
           </div>
 
-          {(isSecurity || isDividend) && <Label text={t("종목")}><select required={isSecurity} disabled={Boolean(lockedStockId)} className={`${field} disabled:cursor-not-allowed disabled:opacity-70`} value={stockId} onChange={(event) => selectStock(event.target.value)}><option value="">{t("종목 선택")}</option>{!stock && trade?.stockId && <option value={trade.stockId}>{t("{stock} (현재 목록에 없음)", { stock: trade.stockName })}</option>}{stocks.map((item) => <option key={item.id} value={item.id}>{item.name} ({item.ticker}){item.deletedAt ? ` · ${t("삭제됨")}` : ""}</option>)}</select></Label>}
+          {(isSecurity || isDividend) && <RegisteredStockPicker
+            stocks={stocks}
+            value={stockId || null}
+            onChange={(nextStockId) => selectStock(nextStockId ?? "")}
+            label={t("종목")}
+            required={isSecurity}
+            disabled={Boolean(lockedStockId)}
+            allowEmpty={!isSecurity}
+            emptyLabel={t("종목 선택")}
+            includeDeletedSelected={Boolean(trade?.stockId)}
+            missingValueLabel={!stock && trade?.stockId ? t("{stock} (현재 목록에 없음)", { stock: trade.stockName }) : undefined}
+            noResultsAction={<Link href="/stocks" className="text-[var(--accent)] underline">{t("종목 메뉴에서 먼저 추가해 주세요.")}</Link>}
+          />}
           {isSecurity && <>
             <Label text={t("수량")}><input required type="number" min="0" step="any" className={field} value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} />{type === "매도" && <small className="mt-1 block text-[var(--muted)]">{t("현재 원장 보유: {quantity}주", { quantity: formatNumber(available) })}</small>}</Label>
             <Label text={t(openingPosition ? "평균단가" : "체결 가격")}><input required type="number" min="0" step="any" className={field} value={price} onChange={(event) => setPrice(Number(event.target.value))} /></Label>
