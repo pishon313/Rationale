@@ -9,6 +9,7 @@ import type { InvestmentRule } from "@/features/rules/types";
 import type { Stock } from "@/features/stocks/types";
 import type { Trade } from "@/features/trades/types";
 import type { InvestmentAccount } from "@/features/accounts/types";
+import type { PortfolioAllocationTarget, PortfolioPlanRevision, PortfolioPlanState } from "@/features/portfolio-plan/types";
 import { migrateLegacyAccounts } from "@/features/accounts/migrate-accounts";
 import { fallbackLanguagePreference, type LanguagePreference } from "@/i18n/i18n-provider";
 import type { Locale } from "@/i18n/types";
@@ -28,11 +29,14 @@ export const automaticBackupSourceCollections = [
   "dashboard-notes",
   "earnings-events",
   "preferences",
+  "portfolio-plan-state",
+  "portfolio-plan-revisions",
+  "portfolio-allocation-targets",
 ] as const;
 
 export type AutomaticBackupSourceCollection = (typeof automaticBackupSourceCollections)[number];
 export type AutomaticBackupSourceCount = { collection: AutomaticBackupSourceCollection; count: number };
-export type BackupCandidate = { backup: BackupV5; sourceCounts: AutomaticBackupSourceCount[] };
+export type BackupCandidate = { backup: BackupV6; sourceCounts: AutomaticBackupSourceCount[] };
 
 export type BackupV5 = {
   version: 5;
@@ -51,11 +55,18 @@ export type BackupV5 = {
   displayCurrency: CurrencyPreference["displayCurrency"];
 };
 
+export type BackupV6 = Omit<BackupV5, "version"> & {
+  version: 6;
+  portfolioPlanState: PortfolioPlanState[];
+  portfolioPlanRevisions: PortfolioPlanRevision[];
+  portfolioAllocationTargets: PortfolioAllocationTarget[];
+};
+
 export type RestoreSnapshot = { id: "latest"; content: string; createdAt: string; updatedAt: string };
 export const restoreSnapshotCollection = "restore-snapshots";
 
 export async function createBackupCandidate(localeOverride?: Locale, options: { allowCorrupted?: boolean } = {}): Promise<BackupCandidate> {
-  const [accounts, stocks, plans, trades, observations, reviews, rules, notes, languages, dashboardNotes, earningsEvents, preferences] = await Promise.all([
+  const [accounts, stocks, plans, trades, observations, reviews, rules, notes, languages, dashboardNotes, earningsEvents, preferences, portfolioPlanState, portfolioPlanRevisions, portfolioAllocationTargets] = await Promise.all([
     loadCollection<InvestmentAccount>("accounts", []),
     loadCollection<Stock>("stocks", []),
     loadCollection<BuyPlan>("plans", []),
@@ -68,8 +79,11 @@ export async function createBackupCandidate(localeOverride?: Locale, options: { 
     loadCollection<DashboardNoteBackup>("dashboard-notes", [emptyDashboardNote]),
     loadCollection<EarningsEventBackup>("earnings-events", []),
     loadCollection<CurrencyPreference>("preferences", [fallbackCurrencyPreference]),
+    loadCollection<PortfolioPlanState>("portfolio-plan-state", []),
+    loadCollection<PortfolioPlanRevision>("portfolio-plan-revisions", []),
+    loadCollection<PortfolioAllocationTarget>("portfolio-allocation-targets", []),
   ]);
-  const sourceValues = [accounts, stocks, plans, trades, observations, reviews, rules, notes, languages, dashboardNotes, earningsEvents, preferences] as const;
+  const sourceValues = [accounts, stocks, plans, trades, observations, reviews, rules, notes, languages, dashboardNotes, earningsEvents, preferences, portfolioPlanState, portfolioPlanRevisions, portfolioAllocationTargets] as const;
   const sourceCounts = automaticBackupSourceCollections.map((collection, index) => ({ collection, count: sourceValues[index].length }));
   const sourceCollectionSet = new Set<string>(automaticBackupSourceCollections);
   if (!options.allowCorrupted && getCorruptionSnapshot().collections.some((item) => sourceCollectionSet.has(item.collection))) {
@@ -77,8 +91,8 @@ export async function createBackupCandidate(localeOverride?: Locale, options: { 
   }
   const exportedAt = new Date().toISOString();
   const migrated = migrateLegacyAccounts(accounts, trades, exportedAt);
-  const backup: BackupV5 = {
-    version: 5,
+  const backup: BackupV6 = {
+    version: 6,
     exportedAt,
     accounts: migrated.accounts,
     stocks,
@@ -92,25 +106,28 @@ export async function createBackupCandidate(localeOverride?: Locale, options: { 
     dashboardNotes,
     earningsEvents,
     displayCurrency: preferences[0]?.displayCurrency ?? fallbackCurrencyPreference.displayCurrency,
+    portfolioPlanState,
+    portfolioPlanRevisions,
+    portfolioAllocationTargets,
   };
-  for (const collection of ["accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "dashboardNotes", "earningsEvents"] as const) {
+  for (const collection of ["accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "dashboardNotes", "earningsEvents", "portfolioPlanState", "portfolioPlanRevisions", "portfolioAllocationTargets"] as const) {
     if (!Array.isArray(backup[collection])) throw new Error("AUTOMATIC_BACKUP_VALIDATION_FAILED");
   }
   let validated: ValidatedBackup;
   try { validated = validateBackupPayload(backup); }
   catch { throw new Error("AUTOMATIC_BACKUP_VALIDATION_FAILED"); }
-  if (validated.version !== 5) throw new Error("AUTOMATIC_BACKUP_VALIDATION_FAILED");
+  if (validated.version !== 6) throw new Error("AUTOMATIC_BACKUP_VALIDATION_FAILED");
   return { backup: validated, sourceCounts };
 }
 
-export async function createBackupPayload(localeOverride?: Locale, options: { allowCorrupted?: boolean } = {}): Promise<BackupV5> {
+export async function createBackupPayload(localeOverride?: Locale, options: { allowCorrupted?: boolean } = {}): Promise<BackupV6> {
   return (await createBackupCandidate(localeOverride, options)).backup;
 }
 
 export function backupWrites(parsed: ValidatedBackup): CollectionWrite[] {
   const extended = parsed.version === 1 ? null : parsed;
-  const current = parsed.version === 4 || parsed.version === 5 ? parsed : null;
-  const migrated = parsed.version === 5
+  const current = parsed.version === 4 || parsed.version === 5 || parsed.version === 6 ? parsed : null;
+  const migrated = parsed.version === 5 || parsed.version === 6
     ? { accounts: parsed.accounts, trades: parsed.trades }
     : migrateLegacyAccounts([], parsed.trades, migrationTimestamp(parsed.exportedAt));
   return [
@@ -126,20 +143,23 @@ export function backupWrites(parsed: ValidatedBackup): CollectionWrite[] {
     { collection: "dashboard-notes", values: current?.dashboardNotes ?? [emptyDashboardNote] },
     { collection: "earnings-events", values: current?.earningsEvents ?? [] },
     { collection: "preferences", values: current?.displayCurrency !== undefined ? [{ ...fallbackCurrencyPreference, displayCurrency: current.displayCurrency, updatedAt: new Date().toISOString() }] as CurrencyPreference[] : [fallbackCurrencyPreference] },
+    { collection: "portfolio-plan-state", values: parsed.version === 6 ? parsed.portfolioPlanState : [] },
+    { collection: "portfolio-plan-revisions", values: parsed.version === 6 ? parsed.portfolioPlanRevisions : [] },
+    { collection: "portfolio-allocation-targets", values: parsed.version === 6 ? parsed.portfolioAllocationTargets : [] },
   ];
 }
 
-export async function restoreBackup(current: BackupV5, backup: ValidatedBackup) {
+export async function restoreBackup(current: BackupV5 | BackupV6, backup: ValidatedBackup) {
   await saveCollectionsAtomically([snapshotWrite(current), ...backupWrites(backup)], { resolveCorruption: true, source: "backupRestore" });
 }
 
-export function snapshotWrite(backup: BackupV5): CollectionWrite {
+export function snapshotWrite(backup: BackupV5 | BackupV6): CollectionWrite {
   const now = new Date().toISOString();
   return { collection: restoreSnapshotCollection, values: [{ id: "latest", content: JSON.stringify(backup), createdAt: now, updatedAt: now } as RestoreSnapshot] };
 }
 
 export function backupCounts(backup: ValidatedBackup) {
-  const accounts = backup.version === 5
+  const accounts = backup.version === 5 || backup.version === 6
     ? backup.accounts.length
     : migrateLegacyAccounts([], backup.trades, migrationTimestamp(backup.exportedAt)).accounts.length;
   return {
@@ -149,7 +169,8 @@ export function backupCounts(backup: ValidatedBackup) {
     trades: backup.trades.length,
     observations: backup.version === 1 ? 0 : backup.observations.length,
     reviews: backup.version === 1 ? 0 : backup.reviews.length,
-    notes: backup.version === 4 || backup.version === 5 ? backup.notes.length : 0,
+    notes: backup.version === 4 || backup.version === 5 || backup.version === 6 ? backup.notes.length : 0,
+    portfolioPlan: backup.version === 6 ? backup.portfolioPlanRevisions.length : 0,
   };
 }
 

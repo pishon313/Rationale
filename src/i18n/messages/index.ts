@@ -18,8 +18,9 @@ import { accountFeeMessages } from "./account-fees";
 import { tradeFeeMessages } from "./trade-fees";
 import { registeredStockPickerMessages } from "./registered-stock-picker";
 import { tradeLedgerResetMessages } from "./trade-ledger-reset";
+import { portfolioPlanMessages } from "./portfolio-plan";
 
-const catalogs: MessageCatalog[] = [tradeLedgerResetMessages, registeredStockPickerMessages, tradeFeeMessages, accountFeeMessages, portfolioClassificationMessages, importMessages, marketObservationMessages, systemLanguageMessages, sampleEscapedMessages, sampleDataMessages, commonMessages, appMessages, stockMessages, stockAccountMessages, tradeMessages, journalMessages, securityMessages, redesignMessages, dashboardMessages, accountMessages];
+const catalogs: MessageCatalog[] = [portfolioPlanMessages, tradeLedgerResetMessages, registeredStockPickerMessages, tradeFeeMessages, accountFeeMessages, portfolioClassificationMessages, importMessages, marketObservationMessages, systemLanguageMessages, sampleEscapedMessages, sampleDataMessages, commonMessages, appMessages, stockMessages, stockAccountMessages, tradeMessages, journalMessages, securityMessages, redesignMessages, dashboardMessages, accountMessages];
 
 export function translate(locale: Locale, key: string) {
   if (locale === "ko") return key;

@@ -4,6 +4,7 @@ import { sampleStocks } from "@/features/stocks/sample-data";
 import type { InvestmentAccount } from "@/features/accounts/types";
 import { sampleTrades } from "@/features/trades/sample-data";
 import type { TradeLedgerResetSnapshotV1 } from "@/features/trades/trade-ledger-reset";
+import type { PortfolioAllocationTarget, PortfolioPlanRevision, PortfolioPlanState } from "@/features/portfolio-plan/types";
 
 describe("import mapping profile storage validation", () => {
   const profile = { id: "p1", name: "Broker", version: 1, bindings: { tradedAt: { normalizedHeader: "date", occurrence: 0 } }, headerSignature: "date#0", createdAt: "2026-08-12T00:00:00Z", updatedAt: "2026-08-12T00:00:00Z" };
@@ -102,5 +103,25 @@ describe("Trade-ledger reset snapshot storage validation", () => {
 
   it("rejects more than one snapshot record", () => {
     expect(validateStoredCollection("trade-ledger-reset-snapshots", [snapshot, { ...snapshot }])).toEqual({ valid: false, errorType: "INVALID_COLLECTION_SHAPE" });
+  });
+});
+
+describe("Portfolio Plan storage validation", () => {
+  const now = "2026-08-18T00:00:00Z";
+  const state: PortfolioPlanState = { id: "default", activeRevisionId: "r1", updatedAt: now };
+  const revision: PortfolioPlanRevision = { id: "r1", revisionNumber: 1, basedOnRevisionId: null, thesis: "", changeNote: "", createdAt: now, activatedAt: now, updatedAt: now };
+  const target: PortfolioAllocationTarget = { id: "t1", revisionId: "r1", targetType: "stock", stockId: sampleStocks[0].id, targetWeightBps: 10000, sortOrder: 0, updatedAt: now };
+
+  it("accepts valid state, revision, and target records", () => {
+    expect(validateStoredCollection("portfolio-plan-state", [state])).toEqual({ valid: true });
+    expect(validateStoredCollection("portfolio-plan-revisions", [revision])).toEqual({ valid: true });
+    expect(validateStoredCollection("portfolio-allocation-targets", [target])).toEqual({ valid: true });
+  });
+
+  it("rejects malformed Portfolio Plan records", () => {
+    expect(validateStoredCollection("portfolio-plan-state", [{ ...state, id: "other" }])).toMatchObject({ valid: false });
+    expect(validateStoredCollection("portfolio-plan-revisions", [{ ...revision, revisionNumber: 0 }])).toMatchObject({ valid: false });
+    expect(validateStoredCollection("portfolio-allocation-targets", [{ ...target, targetWeightBps: 100.5 }])).toMatchObject({ valid: false });
+    expect(validateStoredCollection("portfolio-allocation-targets", [{ ...target, targetType: "cash", stockId: sampleStocks[0].id }])).toMatchObject({ valid: false });
   });
 });

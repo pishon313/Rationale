@@ -17,6 +17,7 @@ import { marketSectors } from "@/features/stocks/market-sectors";
 import type { AccountFeePolicyV1 } from "@/features/accounts/account-fee-policy";
 import Decimal from "decimal.js";
 import type { AccountFeeCalculationSnapshotV1, Trade } from "@/features/trades/types";
+import type { PortfolioAllocationTarget, PortfolioPlanRevision, PortfolioPlanState } from "@/features/portfolio-plan/types";
 
 const repositoryMocks = vi.hoisted(() => ({ saveCollectionsAtomically: vi.fn() }));
 vi.mock("@/lib/local-repository", () => ({ loadCollection: vi.fn(), saveCollectionsAtomically: repositoryMocks.saveCollectionsAtomically }));
@@ -41,6 +42,13 @@ function version4(overrides: Record<string, unknown> = {}) {
 function version5(overrides: Record<string, unknown> = {}) {
   const migrated = migrateLegacyAccounts([], sampleTrades, valid.exportedAt);
   return { ...version4(), version: 5, accounts: migrated.accounts, trades: migrated.trades, ...overrides };
+}
+
+const portfolioRevision: PortfolioPlanRevision = { id: "portfolio-r1", revisionNumber: 1, basedOnRevisionId: null, thesis: "Target", changeNote: "", createdAt: valid.exportedAt, activatedAt: valid.exportedAt, updatedAt: valid.exportedAt };
+const portfolioState: PortfolioPlanState = { id: "default", activeRevisionId: portfolioRevision.id, updatedAt: valid.exportedAt };
+const portfolioTarget: PortfolioAllocationTarget = { id: "portfolio-t1", revisionId: portfolioRevision.id, targetType: "stock", stockId: sampleStocks[0].id, targetWeightBps: 10000, sortOrder: 0, updatedAt: valid.exportedAt };
+function version6(overrides: Record<string, unknown> = {}) {
+  return { ...version5(), version: 6, portfolioPlanState: [portfolioState], portfolioPlanRevisions: [portfolioRevision], portfolioAllocationTargets: [portfolioTarget], ...overrides };
 }
 
 function feeSnapshotFor(trade: Trade): AccountFeeCalculationSnapshotV1 {
@@ -107,6 +115,40 @@ describe("validateBackupPayload", () => {
     expect((writes.get("trades") as readonly Trade[]).some((trade) => !trade.deletedAt)).toBe(true);
     expect(writes.has("trade-ledger-reset-snapshots")).toBe(false);
   });
+
+  it("round-trips Portfolio Plan collections in Backup V6", () => {
+    const parsed = validateBackupPayload(version6());
+    expect(parsed.version).toBe(6);
+    if (parsed.version !== 6) throw new Error("expected version 6");
+    expect(parsed.portfolioPlanState).toEqual([portfolioState]);
+    expect(parsed.portfolioPlanRevisions).toEqual([portfolioRevision]);
+    expect(parsed.portfolioAllocationTargets).toEqual([portfolioTarget]);
+    const writes = writesByCollection(parsed);
+    expect(writes.get("portfolio-plan-state")).toEqual([portfolioState]);
+    expect(writes.get("portfolio-plan-revisions")).toEqual([portfolioRevision]);
+    expect(writes.get("portfolio-allocation-targets")).toEqual([portfolioTarget]);
+  });
+
+  it("rejects broken Portfolio Plan references in Backup V6", () => {
+    expect(() => validateBackupPayload(version6({ portfolioPlanState: [] }))).toThrow("활성 리비전");
+    expect(() => validateBackupPayload(version6({ portfolioPlanState: [{ ...portfolioState, activeRevisionId: "missing" }] }))).toThrow("활성 포트폴리오");
+    expect(() => validateBackupPayload(version6({ portfolioAllocationTargets: [{ ...portfolioTarget, revisionId: "missing" }] }))).toThrow("리비전이 존재하지 않습니다");
+    expect(() => validateBackupPayload(version6({ portfolioAllocationTargets: [{ ...portfolioTarget, stockId: "missing" }] }))).toThrow("종목이 존재하지 않습니다");
+  });
+
+  it("rejects invalid activated allocations in Backup V6", () => {
+    expect(() => validateBackupPayload(version6({ portfolioAllocationTargets: [{ ...portfolioTarget, targetWeightBps: 9000 }] }))).toThrow("100%");
+    expect(() => validateBackupPayload(version6({ portfolioAllocationTargets: [] }))).toThrow("배분 대상");
+    expect(() => validateBackupPayload(version6({ portfolioAllocationTargets: [portfolioTarget, { ...portfolioTarget, id: "duplicate" }] }))).toThrow("같은 종목");
+    const cash: PortfolioAllocationTarget = { ...portfolioTarget, id: "cash-1", targetType: "cash", stockId: null, targetWeightBps: 0 };
+    expect(() => validateBackupPayload(version6({ portfolioAllocationTargets: [portfolioTarget, cash, { ...cash, id: "cash-2" }] }))).toThrow("현금 목표");
+  });
+
+  it("rejects duplicate revision numbers and a non-activated active revision in Backup V6", () => {
+    expect(() => validateBackupPayload(version6({ portfolioPlanRevisions: [portfolioRevision, { ...portfolioRevision, id: "portfolio-r2" }] }))).toThrow("리비전 번호");
+    expect(() => validateBackupPayload(version6({ portfolioPlanRevisions: [{ ...portfolioRevision, activatedAt: null }] }))).toThrow("활성화 일시");
+  });
+
   it("keeps Backup V5 compatible with missing, null, and valid fee policies", () => {
     const backup = version5();
     const base = backup.accounts[0];
@@ -274,7 +316,7 @@ describe("validateBackupPayload", () => {
   it("prepares every version 4 collection for an atomic restore", () => {
     const parsed = validateBackupPayload({ ...valid, version: 4, observations: sampleObservations, reviews: sampleReviews, rules: sampleRules, notes: [], language: "ko", dashboardNotes: [], earningsEvents: [], displayCurrency: "KRW" });
     const names = backupWrites(parsed).map((write) => write.collection);
-    expect(names).toEqual(["accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences"]);
+    expect(names).toEqual(["accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences", "portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-targets"]);
     expect(backupCounts(parsed)).toMatchObject({ stocks: sampleStocks.length, trades: sampleTrades.length, notes: 0 });
   });
 
@@ -283,7 +325,7 @@ describe("validateBackupPayload", () => {
     const writes = backupWrites(parsed);
     const byCollection = writesByCollection(parsed);
 
-    expect(writes.map((write) => write.collection)).toEqual(["accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences"]);
+    expect(writes.map((write) => write.collection)).toEqual(["accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences", "portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-targets"]);
     expect(byCollection.get("stocks")).toEqual(sampleStocks);
     expect(byCollection.get("plans")).toEqual(samplePlans);
     expect(byCollection.get("trades")).toHaveLength(sampleTrades.length);
@@ -293,13 +335,16 @@ describe("validateBackupPayload", () => {
     expect(byCollection.get("language-preferences")).toEqual([fallbackLanguagePreference]);
     expect(byCollection.get("dashboard-notes")).toEqual([emptyDashboardNote]);
     expect(byCollection.get("preferences")).toEqual([fallbackCurrencyPreference]);
+    expect(byCollection.get("portfolio-plan-state")).toEqual([]);
+    expect(byCollection.get("portfolio-plan-revisions")).toEqual([]);
+    expect(byCollection.get("portfolio-allocation-targets")).toEqual([]);
   });
 
   it.each([2, 3])("restores version %s extended data and resets newer fields", (version) => {
     const parsed = validateBackupPayload({ ...valid, version, observations: sampleObservations, reviews: sampleReviews, rules: sampleRules });
     const byCollection = writesByCollection(parsed);
 
-    expect(byCollection.size).toBe(12);
+    expect(byCollection.size).toBe(15);
     expect(byCollection.get("observations")).toEqual(sampleObservations.map(normalizeObservation));
     expect(byCollection.get("reviews")).toEqual(sampleReviews);
     expect(byCollection.get("rules")).toEqual(sampleRules);
@@ -314,7 +359,7 @@ describe("validateBackupPayload", () => {
     const parsed = validateBackupPayload(version4());
     const byCollection = writesByCollection(parsed);
 
-    expect(byCollection.size).toBe(12);
+    expect(byCollection.size).toBe(15);
     expect(byCollection.get("notes")).toEqual([note]);
     expect(byCollection.get("language-preferences")).toEqual([expect.objectContaining({ id: "language", locale: "en" })]);
     expect(byCollection.get("dashboard-notes")).toEqual([dashboardNote]);
@@ -326,7 +371,7 @@ describe("validateBackupPayload", () => {
     const parsed = validateBackupPayload(version4({ dashboardNotes: undefined, earningsEvents: undefined, displayCurrency: undefined }));
     const byCollection = writesByCollection(parsed);
 
-    expect(byCollection.size).toBe(12);
+    expect(byCollection.size).toBe(15);
     expect(byCollection.get("dashboard-notes")).toEqual([emptyDashboardNote]);
     expect(byCollection.get("earnings-events")).toEqual([]);
     expect(byCollection.get("preferences")).toEqual([fallbackCurrencyPreference]);
@@ -339,7 +384,7 @@ describe("validateBackupPayload", () => {
     const saved = JSON.parse(String((write.values[0] as unknown as { content: string }).content));
     expect(saved).toMatchObject({ version: 5, accounts: backup.accounts, stocks: sampleStocks, notes: [note], language: "en", dashboardNotes: [dashboardNote], earningsEvents: [earningsEvent], displayCurrency: "USD" });
     const undoWrites = backupWrites(validateBackupPayload(saved));
-    expect(undoWrites.map((item) => item.collection)).toHaveLength(12);
+    expect(undoWrites.map((item) => item.collection)).toHaveLength(15);
     expect(undoWrites.find((item) => item.collection === "accounts")?.values).toEqual(backup.accounts);
     expect(undoWrites.some((item) => item.collection === "restore-snapshots")).toBe(false);
   });
@@ -354,6 +399,6 @@ describe("validateBackupPayload", () => {
     expect(repositoryMocks.saveCollectionsAtomically).toHaveBeenCalledTimes(1);
     expect(repositoryMocks.saveCollectionsAtomically).toHaveBeenCalledWith(expect.any(Array), { resolveCorruption: true, source: "backupRestore" });
     const writes = repositoryMocks.saveCollectionsAtomically.mock.calls[0]?.[0];
-    expect(writes.map((write: { collection: string }) => write.collection)).toEqual(["restore-snapshots", "accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences"]);
+    expect(writes.map((write: { collection: string }) => write.collection)).toEqual(["restore-snapshots", "accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences", "portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-targets"]);
   });
 });

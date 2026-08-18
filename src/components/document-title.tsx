@@ -6,6 +6,7 @@ import { useI18n } from "@/i18n/i18n-provider";
 
 const routeTitles: Record<string, string> = {
   dashboard: "대시보드",
+  portfolio: "포트폴리오",
   stocks: "종목",
   plans: "매수 계획",
   trades: "매매",
