@@ -13,7 +13,7 @@ const en = {
   "올바른 Rationale 백업 파일이 아니거나 데이터 형식이 손상되었습니다.": "This is not a valid Rationale backup, or its data format is damaged.",
   "암호화 백업은 Mac 앱에서 사용할 수 있습니다. 브라우저 미리보기에서는 일반 JSON 백업을 사용하세요.": "Encrypted backups are available in the Mac app. Use plain JSON backups in the browser preview.",
   "투자 기록은 서버에 업로드되지 않습니다. 로컬 SQLite 파일에는 앱 자체 암호화가 적용되지 않으므로 macOS 사용자 계정과 FileVault로 Mac을 보호하세요. 공용 Mac이나 여러 사람이 공유하는 계정에서는 사용에 주의하고 민감한 인증정보를 메모에 저장하지 마세요.": "Investment records are not uploaded to a server. The local SQLite file is not encrypted by the app, so protect your Mac with your macOS account and FileVault. Take care on shared Macs or accounts, and never store sensitive credentials in notes.",
-  "주가 갱신 시 티커만 Twelve Data로, 환율 갱신 시 통화 코드만 Frankfurter로 전송됩니다. 다른 Mac과 자동 동기화되지 않으므로 정기적으로 백업하세요.": "Price updates send only tickers to Twelve Data, and exchange-rate updates send only currency codes to Frankfurter. Macs do not sync automatically, so back up regularly.",
+  "종목 검색 시 검색어가 EODHD로, 주가 갱신 시 종목 식별자가 Twelve Data 또는 EODHD로, 환율 갱신 시 통화 코드가 Frankfurter로 전송됩니다. 다른 Mac과 자동 동기화되지 않으므로 정기적으로 백업하세요.": "Stock searches send the query to EODHD, price updates send instrument identifiers to Twelve Data or EODHD, and exchange-rate updates send currency codes to Frankfurter. Macs do not sync automatically, so back up regularly.",
   "백업 비밀번호는 10자 이상이어야 합니다.": "The backup password must be at least 10 characters.", "비밀번호 확인이 일치하지 않습니다.": "Password confirmation does not match.",
   "백업을 암호화하지 못했습니다.": "Could not encrypt the backup.", "복호화는 성공했지만 백업 데이터 형식이 손상되었습니다.": "Decryption succeeded, but the backup data format is damaged.",
   "지원하지 않는 암호화 백업 버전입니다.": "This encrypted backup version is not supported.",

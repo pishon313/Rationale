@@ -19,7 +19,7 @@ export type RegisteredStockPickerProps = {
   disabled?: boolean;
   includeDeletedSelected?: boolean;
   includeDeletedIds?: readonly string[];
-  noResultsAction?: React.ReactNode;
+  noResultsAction?: React.ReactNode | ((query: string, closePicker: () => void) => React.ReactNode);
   missingValueLabel?: string;
   className?: string;
 };
@@ -185,7 +185,7 @@ export function RegisteredStockPicker({
         })}
         {results.length === 0 && <div className="px-3 py-3 text-sm text-[var(--muted)]">
           <p>{t("등록된 종목에서 찾을 수 없습니다.")}</p>
-          {noResultsAction && <div className="mt-1">{noResultsAction}</div>}
+          {noResultsAction && <div className="mt-1">{typeof noResultsAction === "function" ? noResultsAction(query, closePicker) : noResultsAction}</div>}
         </div>}
       </div>
     </div>}

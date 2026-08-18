@@ -37,4 +37,4 @@ Review keeps its two existing modes. A linked Review takes its name from the sel
 
 ## Phase boundary
 
-Version 1 searches registered local Stocks only. It performs no provider or network search and never creates a Stock automatically. A future Phase 2 may add online discovery, but it must explicitly resolve or create a registered Stock before these forms receive a `Stock.id`; the picker’s ID-based persistence contract remains the dependency boundary.
+Version 1 searches registered local Stocks only. It performs no provider or network search and never creates a Stock automatically. Buy Plan Phase 2 adds explicit online discovery outside this picker while preserving its ID-based dependency boundary; identity resolution, confirmation, draft creation, and atomic Stock+Plan persistence are documented in [`buy-plan-stock-search-v1.md`](buy-plan-stock-search-v1.md).

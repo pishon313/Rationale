@@ -460,6 +460,97 @@ test("매수 계획의 테이블과 칸반 보기를 전환한다", async ({ pag
   await expect(page.getByRole("heading", { name: "아이디어" })).toBeVisible();
 });
 
+test("매수 계획에서 온라인 종목을 확인한 뒤 Stock과 Plan을 함께 저장하고 취소 시 orphan을 남기지 않는다", async ({ page }) => {
+  const initialStock = e2eStock("local-stock", "등록 종목", "테스트", { ticker: "LOCAL" });
+  const remote = {
+    provider: "eodhd", providerSymbol: "CRWD.US", ticker: "CRWD", name: "CrowdStrike Holdings", countryCode: "US", countryName: "USA",
+    exchangeCode: "US", exchangeMic: "XNAS", exchangeName: "NASDAQ", currency: "USD", assetType: "Common Stock", isin: "US22788C1053",
+    previousClose: 430.25, previousCloseDate: "2026-08-17", isPrimary: true,
+  };
+  await page.addInitScript((stock) => {
+    if (localStorage.getItem("tradejournal.stocks.v1") === null) {
+      localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([stock]));
+    }
+    if (localStorage.getItem("tradejournal.plans.v1") === null) {
+      localStorage.setItem("tradejournal.plans.v1", "[]");
+    }
+  }, initialStock);
+  await page.goto("/plans");
+  await page.getByRole("button", { name: "계획 추가" }).click();
+  const picker = page.getByRole("combobox", { name: "종목" });
+  await picker.fill("CRWD");
+  await page.evaluate((result) => {
+    (window as typeof window & { __TAURI_INTERNALS__?: { invoke: (command: string) => Promise<unknown> } }).__TAURI_INTERNALS__ = {
+      invoke: async (command) => command === "search_instruments" ? [result] : undefined,
+    };
+  }, remote);
+  await page.getByRole("button", { name: "온라인에서 ‘CRWD’ 검색" }).click();
+  await page.getByRole("button", { name: /CRWD · CrowdStrike Holdings/ }).click();
+  await page.getByRole("alertdialog", { name: "종목 추가 확인" }).getByRole("button", { name: "추가하고 계획 만들기" }).click();
+  await page.evaluate(() => { delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__; });
+  await page.getByLabel("계획 제목").fill("CRWD 진입 계획");
+  await page.getByLabel("무효화 조건").fill("보안 성장률 훼손");
+  await page.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(page.getByText("CRWD 진입 계획")).toBeVisible();
+
+  const persisted = await page.evaluate(() => ({
+    stocks: JSON.parse(localStorage.getItem("tradejournal.stocks.v1") ?? "[]"),
+    plans: JSON.parse(localStorage.getItem("tradejournal.plans.v1") ?? "[]"),
+  }));
+  const created = persisted.stocks.find((stock: { ticker: string }) => stock.ticker === "CRWD");
+  expect(created).toMatchObject({ status: "관찰", investmentType: "관찰 전용", providerRefs: [{ provider: "eodhd", symbol: "CRWD.US", exchangeCode: "US" }] });
+  expect(persisted.plans).toEqual([expect.objectContaining({ stockId: created.id, stockName: "CrowdStrike Holdings", ticker: "CRWD" })]);
+  await page.reload();
+  await expect(page.getByText("CRWD 진입 계획")).toBeVisible();
+
+  await page.getByRole("button", { name: "계획 추가" }).click();
+  const secondPicker = page.getByRole("combobox", { name: "종목" });
+  await secondPicker.fill("NET");
+  const secondRemote = { ...remote, providerSymbol: "NET.US", ticker: "NET", name: "Cloudflare", isin: "US18915M1071" };
+  await page.evaluate((result) => {
+    (window as typeof window & { __TAURI_INTERNALS__?: { invoke: (command: string) => Promise<unknown> } }).__TAURI_INTERNALS__ = { invoke: async () => [result] };
+  }, secondRemote);
+  await page.getByRole("button", { name: "온라인에서 ‘NET’ 검색" }).click();
+  await page.getByRole("button", { name: /NET · Cloudflare/ }).click();
+  await page.getByRole("alertdialog", { name: "종목 추가 확인" }).getByRole("button", { name: "추가하고 계획 만들기" }).click();
+  await page.evaluate(() => { delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__; });
+  await page.getByRole("button", { name: "취소", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.stocks.v1") ?? "[]").length)).toBe(2);
+});
+
+test("Stock+Plan 원자 저장 실패는 draft Stock과 Plan을 모두 롤백한다", async ({ page }) => {
+  const initialStock = e2eStock("local-stock", "등록 종목", "테스트", { ticker: "LOCAL" });
+  const remote = {
+    provider: "eodhd", providerSymbol: "FAIL.US", ticker: "FAIL", name: "Failure Test", countryCode: "US", countryName: "USA",
+    exchangeCode: "US", exchangeMic: "XNAS", exchangeName: "NASDAQ", currency: "USD", assetType: "Common Stock", isin: "US0000000001",
+    previousClose: null, previousCloseDate: null, isPrimary: true,
+  };
+  await page.addInitScript((stock) => { localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([stock])); localStorage.setItem("tradejournal.plans.v1", "[]"); }, initialStock);
+  await page.goto("/plans");
+  await page.getByRole("button", { name: "계획 추가" }).click();
+  await page.getByRole("combobox", { name: "종목" }).fill("FAIL");
+  await page.evaluate((result) => {
+    (window as typeof window & { __TAURI_INTERNALS__?: { invoke: () => Promise<unknown> } }).__TAURI_INTERNALS__ = { invoke: async () => [result] };
+  }, remote);
+  await page.getByRole("button", { name: "온라인에서 ‘FAIL’ 검색" }).click();
+  await page.getByRole("button", { name: /FAIL · Failure Test/ }).click();
+  await page.getByRole("alertdialog", { name: "종목 추가 확인" }).getByRole("button", { name: "추가하고 계획 만들기" }).click();
+  await page.evaluate(() => {
+    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    const original = Storage.prototype.setItem;
+    let failed = false;
+    Storage.prototype.setItem = function (key, value) {
+      if (key === "tradejournal.plans.v1" && !failed) { failed = true; throw new Error("simulated plan failure"); }
+      return original.call(this, key, value);
+    };
+  });
+  await page.getByLabel("계획 제목").fill("실패 계획");
+  await page.getByLabel("무효화 조건").fill("실패 조건");
+  await page.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(page.getByText("종목과 매수 계획을 저장하지 못했습니다. 다시 시도해 주세요.", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => ({ stocks: JSON.parse(localStorage.getItem("tradejournal.stocks.v1") ?? "[]"), plans: JSON.parse(localStorage.getItem("tradejournal.plans.v1") ?? "[]") }))).toEqual({ stocks: [initialStock], plans: [] });
+});
+
 test("백업 복원 전에 기록 수와 덮어쓰기 안내를 보여준다", async ({ page }) => {
   await page.goto("/settings");
   const chooser = page.waitForEvent("filechooser");

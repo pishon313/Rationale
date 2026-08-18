@@ -203,6 +203,28 @@ describe("browser local repository", () => {
     expect(JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "null")).toEqual([{ id: "old-trade" }]);
   });
 
+  it.each([
+    ["stocks", "stock write failed"],
+    ["plans", "plan write failed"],
+  ])("leaves neither a Stock nor Plan committed when the %s write fails", async (failedCollection, message) => {
+    localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([{ id: "old-stock" }]));
+    localStorage.setItem("tradejournal.plans.v1", JSON.stringify([{ id: "old-plan" }]));
+    const originalSetItem = Storage.prototype.setItem;
+    let failed = false;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+      if (key === `tradejournal.${failedCollection}.v1` && !failed) { failed = true; throw new Error(message); }
+      return originalSetItem.call(this, key, value);
+    });
+
+    await expect(saveCollectionsAtomically([
+      { collection: "stocks", values: [{ id: "new-stock" }] },
+      { collection: "plans", values: [{ id: "new-plan" }] },
+    ])).rejects.toThrow(message);
+
+    expect(JSON.parse(localStorage.getItem("tradejournal.stocks.v1") ?? "null")).toEqual([{ id: "old-stock" }]);
+    expect(JSON.parse(localStorage.getItem("tradejournal.plans.v1") ?? "null")).toEqual([{ id: "old-plan" }]);
+  });
+
   it("keeps a failed write available for retry", async () => {
     const originalSetItem = Storage.prototype.setItem;
     let failed = false;
