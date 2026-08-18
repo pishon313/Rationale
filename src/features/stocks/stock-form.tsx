@@ -15,6 +15,7 @@ import type { StockAccountHolding } from "./stock-account-holdings";
 import { analyzeStockCurrencyCorrection, StockCurrencyCorrectionError } from "./stock-currency-correction";
 import { marketSectorLabel, marketSectors } from "./market-sectors";
 import { canonicalPortfolioCategoryName, collectPortfolioCategories } from "./portfolio-categories";
+import { createStockFromInstrumentSearchResult, supportedInstrumentCurrency } from "./stock-from-instrument";
 import { currencies, investmentTypes, markets, stockStatuses, stockViews, type MarketDataProvider, type Stock } from "./types";
 
 type Props = {
@@ -175,7 +176,7 @@ export function StockForm({ stock, holdings = [], trades = [], categoryStocks = 
   }
 
   function selectResult(result: InstrumentSearchResult) {
-    const currency = supportedCurrency(result.currency);
+    const currency = supportedInstrumentCurrency(result.currency);
     if (!currency) return;
     setSelectedSearchResult(result);
     setValue("ticker", result.ticker);
@@ -250,8 +251,12 @@ export function StockForm({ stock, holdings = [], trades = [], categoryStocks = 
       const portfolioCategory = stock && !dirtyFields.sector
         ? stock.sector
         : canonicalPortfolioCategoryName(categoryStocks, parsed.sector);
+      const searchedBase = selectedSearchResult && !stock
+        ? createStockFromInstrumentSearchResult(selectedSearchResult, { id: crypto.randomUUID(), now })
+        : null;
       const next: Stock = {
-        id: stock?.id ?? crypto.randomUUID(),
+        ...(searchedBase ?? {} as Stock),
+        id: stock?.id ?? searchedBase?.id ?? crypto.randomUUID(),
         ticker: keepStoredIdentity ? stock.ticker : parsed.ticker,
         name: keepStoredIdentity ? stock.name : parsed.name,
         market: keepStoredIdentity ? stock.market : parsed.market,
@@ -288,7 +293,7 @@ export function StockForm({ stock, holdings = [], trades = [], categoryStocks = 
         priceFreshness: searchedPrice !== null ? "eod" : priceChanged ? "manual" : stock?.priceFreshness ?? "manual",
         priceDelayMinutes: searchedPrice !== null || priceChanged ? null : stock?.priceDelayMinutes ?? null,
         priceStatus: searchedPrice !== null ? "online" : priceChanged ? "manual" : stock?.priceStatus ?? "manual",
-        ledgerInitializedAt: stock ? stock.ledgerInitializedAt ?? null : now,
+        ledgerInitializedAt: stock ? stock.ledgerInitializedAt ?? null : searchedBase?.ledgerInitializedAt ?? now,
         createdAt: stock?.createdAt ?? now,
         updatedAt: now,
         deletedAt: null,
@@ -487,7 +492,7 @@ function SearchPanel({ searchQuery, countryFilter, searchResults, searchState, o
     {searchState === "loading" && <p className="mt-3 text-sm text-[var(--muted)]">검색 중...</p>}
     {(searchState === "empty" || searchState === "error") && <p className="mt-3 text-sm text-[var(--muted)]">검색 결과를 가져오지 못했습니다.{onManualFallback && <> <button type="button" className="text-[var(--accent)] underline" onClick={onManualFallback}>직접 입력으로 계속</button></>}</p>}
     <div className="mt-3 space-y-2">{searchResults.map((result) => {
-      const unsupported = !supportedCurrency(result.currency);
+      const unsupported = !supportedInstrumentCurrency(result.currency);
       return <button type="button" disabled={unsupported} key={`${result.providerSymbol}:${result.exchangeCode}`} onClick={() => onSelect(result)} className="block w-full rounded-lg border p-3 text-left disabled:cursor-not-allowed disabled:opacity-50">
         <b>{result.ticker} · {result.name}</b>
         <span className="mt-1 block text-xs text-[var(--muted)]">{result.countryCode ?? "—"} · {result.exchangeCode} · {result.currency} · {result.assetType} · {result.providerSymbol}{result.previousClose ? ` · ${result.previousClose} (${result.previousCloseDate ?? "—"})` : ""}</span>
@@ -495,10 +500,6 @@ function SearchPanel({ searchQuery, countryFilter, searchResults, searchState, o
       </button>;
     })}</div>
   </div>;
-}
-
-function supportedCurrency(value: string): Stock["currency"] | null {
-  return currencies.includes(value as Stock["currency"]) ? value as Stock["currency"] : null;
 }
 
 function providerName(provider: Exclude<MarketDataProvider, "manual">) {
