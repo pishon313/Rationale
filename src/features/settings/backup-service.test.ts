@@ -36,6 +36,9 @@ function sourceCollections() {
     "dashboard-notes": [emptyDashboardNote],
     "earnings-events": [],
     preferences: [fallbackCurrencyPreference],
+    "portfolio-plan-state": [],
+    "portfolio-plan-revisions": [],
+    "portfolio-allocation-targets": [],
   };
 }
 
@@ -93,7 +96,7 @@ describe("automatic backup candidate", () => {
     useSources({ stocks: [eodhdStock] });
     const candidate = await createBackupCandidate("en");
     const payload = await createBackupPayload("en");
-    expect(payload).toMatchObject({ version: 5, stocks: [eodhdStock] });
+    expect(payload).toMatchObject({ version: 6, stocks: [eodhdStock], portfolioPlanState: [], portfolioPlanRevisions: [], portfolioAllocationTargets: [] });
     expect(candidate.backup.stocks[0]).toEqual(eodhdStock);
   });
 });

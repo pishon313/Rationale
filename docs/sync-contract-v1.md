@@ -11,11 +11,11 @@ This contract is shared by Rationale macOS and the future iOS client. Local data
 - Payload: UTF-8 JSON
 - Schema version: `1`
 
-Every record represents `SyncEnvelopeV1 { recordName, entityType, logicalId, schemaVersion, updatedAt, deletedAt, payload }`. CloudKit system fields and change tags are device-local sync metadata and never enter domain entities or Backup V5.
+Every record represents `SyncEnvelopeV1 { recordName, entityType, logicalId, schemaVersion, updatedAt, deletedAt, payload }`. CloudKit system fields and change tags are device-local sync metadata and never enter domain entities or Backup V6.
 
 ## Projections
 
-Account syncs user-owned metadata, including the optional `feePolicy` v1 value, but excludes `isDefault`, which is a device preference. Missing `feePolicy` remains valid for older Sync V1 records, `null` means no configured policy, and a valid value round-trips without changing the Sync schema version. Unknown future versions and malformed rules fail closed through the same Account validator used by local storage and Backup V5. A newly imported Account defaults `isDefault` to false; device normalization may choose a default when none exists.
+Account syncs user-owned metadata, including the optional `feePolicy` v1 value, but excludes `isDefault`, which is a device preference. Missing `feePolicy` remains valid for older Sync V1 records, `null` means no configured policy, and a valid value round-trips without changing the Sync schema version. Unknown future versions and malformed rules fail closed through the same Account validator used by local storage and Backup V6. A newly imported Account defaults `isDefault` to false; device normalization may choose a default when none exists.
 
 Stock syncs identity, classification, thesis, review dates, ledger initialization, tags, and lifecycle timestamps. The optional `marketSector` stable ID is additive; legacy Sync V1 payloads may omit it, while the user-authored My category continues through the existing `sector` field. It excludes authoritative `quantity` and `averagePrice`, all quote-cache fields, and the legacy device-local opening account label. Holdings are projected from merged Trades by the production ledger.
 
@@ -37,6 +37,6 @@ First sync compares deterministic record names and merges both sides. Local-only
 
 ## Local state and restore
 
-Outbox, record state, conflicts, status, CloudKit tokens, serialized engine state, and the `import-mapping-profiles` collection are device-local and excluded from Backup V5. Mapping profiles contain no raw imported rows and are never synchronized. Local domain writes and outbox changes share a SQLite transaction. Remote, sample, derived, and backup sources never echo as ordinary local edits. Backup restore sets `needsReconciliation` and pauses outgoing sync until explicit reconciliation.
+Outbox, record state, conflicts, status, CloudKit tokens, serialized engine state, and the `import-mapping-profiles` collection are device-local and excluded from Backup V6. Mapping profiles contain no raw imported rows and are never synchronized. Portfolio Plan state, revisions, and allocation targets participate in Backup V6 but remain intentionally outside Sync V1. Local domain writes and outbox changes share a SQLite transaction. Remote, sample, derived, and backup sources never echo as ordinary local edits. Backup restore sets `needsReconciliation` and pauses outgoing sync until explicit reconciliation.
 
 iCloud account sign-out/change pauses sync and preserves all local records. A different private database is never automatically merged without reconciliation.

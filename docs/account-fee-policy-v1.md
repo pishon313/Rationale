@@ -1,6 +1,6 @@
 # Account Fee Policy v1
 
-Account Fee Policy v1 is an optional Account-owned configuration for calculating a brokerage fee from a future trade's gross amount. The foundation provides the Decimal calculator, validation, Account management UI, preview, local persistence, Backup V5, and Sync V1 compatibility. Trade Fee Automation v1 now applies matching rules to new buy/sell entries without recalculating historical Trades.
+Account Fee Policy v1 is an optional Account-owned configuration for calculating a brokerage fee from a future trade's gross amount. The foundation provides the Decimal calculator, validation, Account management UI, preview, local persistence, Backup V6 (with V5 restore compatibility), and Sync V1 compatibility. Trade Fee Automation v1 now applies matching rules to new buy/sell entries without recalculating historical Trades.
 
 ## Stored contract
 
@@ -14,7 +14,7 @@ Each rule has a stable ID and user-authored name, market (`all` or an existing S
 
 Rules are limited to 50 per Account. IDs must be unique, names are 1–60 characters, the percentage rate is 0–100, the rounding unit is greater than zero, minimum cannot exceed maximum, and a gross lower bound must be below its upper bound. Date-only values use strict `YYYY-MM-DD` calendar dates.
 
-Unknown fields and unknown future policy versions fail closed. Local collection loading, Backup V5 restore, and Sync V1 candidate validation all use this same policy validator.
+Unknown fields and unknown future policy versions fail closed. Local collection loading, Backup V5/V6 restore, and Sync V1 candidate validation all use this same policy validator.
 
 ## Matching
 
@@ -62,7 +62,7 @@ Account cards and detail pages show whether automatic fee calculation is off or 
 
 ## Backup and Sync compatibility
 
-Backup remains version 5 and Sync remains version 1. Older payloads that omit `feePolicy` remain valid. `null` and valid v1 policies round-trip through plaintext/encrypted Backup V5 and Sync V1. Invalid rules and future versions reject the complete candidate before persistence. Backup collection counts and Sync's device-local `isDefault` behavior are unchanged.
+Current backup is version 6 and Sync remains version 1. Older payloads that omit `feePolicy` remain valid. `null` and valid v1 policies round-trip through plaintext/encrypted Backup V5/V6 and Sync V1. Invalid rules and future versions reject the complete candidate before persistence. Sync's device-local `isDefault` behavior is unchanged.
 
 ## Integration boundary
 

@@ -6,7 +6,7 @@ import { importFields, type ColumnReference, type ImportMappingProfile } from "@
 export type CollectionValidationErrorType = "INVALID_COLLECTION_SHAPE" | "INVALID_RECORD";
 export type CollectionValidationResult = { valid: true } | { valid: false; errorType: CollectionValidationErrorType; index?: number };
 
-const backupCollections = new Set(["accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "dashboard-notes", "earnings-events"]);
+const backupCollections = new Set(["accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "dashboard-notes", "earnings-events", "portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-targets"]);
 
 export function validateStoredCollection(collection: string, value: unknown): CollectionValidationResult {
   if (!Array.isArray(value)) return { valid: false, errorType: "INVALID_COLLECTION_SHAPE" };

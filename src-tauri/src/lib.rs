@@ -38,7 +38,7 @@ const AUTOMATIC_BACKUP_SUFFIX: &str = ".json";
 const AUTOMATIC_BACKUP_INTERVAL_SECONDS: u64 = 24 * 60 * 60;
 const AUTOMATIC_BACKUP_FUTURE_TOLERANCE_SECONDS: u64 = 5 * 60;
 const AUTOMATIC_BACKUP_RETENTION: usize = 7;
-const AUTOMATIC_BACKUP_SOURCE_COLLECTIONS: [&str; 12] = [
+const AUTOMATIC_BACKUP_SOURCE_COLLECTIONS: [&str; 15] = [
     "accounts",
     "stocks",
     "plans",
@@ -51,6 +51,9 @@ const AUTOMATIC_BACKUP_SOURCE_COLLECTIONS: [&str; 12] = [
     "dashboard-notes",
     "earnings-events",
     "preferences",
+    "portfolio-plan-state",
+    "portfolio-plan-revisions",
+    "portfolio-allocation-targets",
 ];
 static AUTOMATIC_BACKUP_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static AUTOMATIC_BACKUP_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -1454,7 +1457,7 @@ fn automatic_backup_summary(content: &[u8]) -> Result<AutomaticBackupCounts, Str
         .get("version")
         .and_then(serde_json::Value::as_u64)
         .ok_or_else(|| "AUTOMATIC_BACKUP_UNSUPPORTED_VERSION".to_string())?;
-    if !(1..=5).contains(&version) {
+    if !(1..=6).contains(&version) {
         return Err("AUTOMATIC_BACKUP_UNSUPPORTED_VERSION".into());
     }
     let stocks = backup_array_count(object, "stocks", true)?;
@@ -1462,12 +1465,17 @@ fn automatic_backup_summary(content: &[u8]) -> Result<AutomaticBackupCounts, Str
     let trades = backup_array_count(object, "trades", true)?;
     let extended = version >= 2;
     let current = version >= 4;
-    if version == 5 {
+    if version >= 5 {
         backup_array_count(object, "dashboardNotes", true)?;
         backup_array_count(object, "earningsEvents", true)?;
     }
+    if version == 6 {
+        backup_array_count(object, "portfolioPlanState", true)?;
+        backup_array_count(object, "portfolioPlanRevisions", true)?;
+        backup_array_count(object, "portfolioAllocationTargets", true)?;
+    }
     Ok(AutomaticBackupCounts {
-        accounts: backup_array_count(object, "accounts", version == 5)?,
+        accounts: backup_array_count(object, "accounts", version >= 5)?,
         stocks,
         plans,
         trades,
@@ -1677,7 +1685,7 @@ mod encrypted_backup_tests {
 
     fn backup_payload(stocks: usize, trades: usize) -> String {
         serde_json::json!({
-            "version": 5,
+            "version": 6,
             "exportedAt": "2026-08-16T00:00:00.000Z",
             "accounts": [],
             "stocks": vec![serde_json::json!({"id": "stock"}); stocks],
@@ -1690,7 +1698,10 @@ mod encrypted_backup_tests {
             "language": "en",
             "dashboardNotes": [],
             "earningsEvents": [],
-            "displayCurrency": "KRW"
+            "displayCurrency": "KRW",
+            "portfolioPlanState": [],
+            "portfolioPlanRevisions": [],
+            "portfolioAllocationTargets": []
         })
         .to_string()
     }
@@ -1784,7 +1795,7 @@ mod encrypted_backup_tests {
             Err("AUTOMATIC_BACKUP_INVALID_JSON".into())
         );
         assert_eq!(
-            automatic_backup_summary(br#"{"version":6,"stocks":[],"plans":[],"trades":[]}"#),
+            automatic_backup_summary(br#"{"version":7,"stocks":[],"plans":[],"trades":[]}"#),
             Err("AUTOMATIC_BACKUP_UNSUPPORTED_VERSION".into())
         );
         assert_eq!(
@@ -1797,6 +1808,15 @@ mod encrypted_backup_tests {
         });
         assert_eq!(
             automatic_backup_summary(missing_settings.to_string().as_bytes()),
+            Err("AUTOMATIC_BACKUP_INVALID_STRUCTURE".into())
+        );
+        let missing_portfolio_plan = serde_json::json!({
+            "version": 6, "accounts": [], "stocks": [], "plans": [], "trades": [],
+            "observations": [], "reviews": [], "rules": [], "notes": [],
+            "dashboardNotes": [], "earningsEvents": []
+        });
+        assert_eq!(
+            automatic_backup_summary(missing_portfolio_plan.to_string().as_bytes()),
             Err("AUTOMATIC_BACKUP_INVALID_STRUCTURE".into())
         );
         assert_eq!(
