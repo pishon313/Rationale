@@ -203,6 +203,33 @@ describe("browser local repository", () => {
     expect(JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "null")).toEqual([{ id: "old-trade" }]);
   });
 
+  it("rolls back Trade, Stock, and local reset snapshot together when a ledger-reset write fails", async () => {
+    const resetAt = "2026-08-21T00:00:00.000Z";
+    const oldTrade = sampleTrades[0];
+    const oldStock = sampleStocks[0];
+    localStorage.setItem("tradejournal.trades.v1", JSON.stringify([oldTrade]));
+    localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([oldStock]));
+    localStorage.setItem("tradejournal.trade-ledger-reset-snapshots.v1", "[]");
+    const originalSetItem = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+      if (key === "tradejournal.trade-ledger-reset-snapshots.v1") throw new Error("snapshot write failed");
+      return originalSetItem.call(this, key, value);
+    });
+    const resetTrades = [{ ...oldTrade, deletedAt: resetAt, updatedAt: resetAt }];
+    const resetStocks = [{ ...oldStock, ledgerInitializedAt: resetAt, quantity: 0, averagePrice: 0, updatedAt: resetAt }];
+    const resetSnapshots = [{ id: "latest", version: 1, resetAt, tradeIds: [oldTrade.id], createdAt: resetAt, updatedAt: resetAt }];
+
+    await expect(saveCollectionsAtomically([
+      { collection: "trades", values: resetTrades },
+      { collection: "stocks", values: resetStocks },
+      { collection: "trade-ledger-reset-snapshots", values: resetSnapshots },
+    ])).rejects.toThrow("snapshot write failed");
+
+    expect(JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "null")).toEqual([oldTrade]);
+    expect(JSON.parse(localStorage.getItem("tradejournal.stocks.v1") ?? "null")).toEqual([oldStock]);
+    expect(JSON.parse(localStorage.getItem("tradejournal.trade-ledger-reset-snapshots.v1") ?? "null")).toEqual([]);
+  });
+
   it.each([
     ["stocks", "stock write failed"],
     ["plans", "plan write failed"],

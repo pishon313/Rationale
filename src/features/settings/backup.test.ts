@@ -101,6 +101,12 @@ describe("validateBackupPayload", () => {
     expect(parsed.trades.every((trade) => parsed.accounts.some((account) => account.id === trade.accountId))).toBe(true);
   });
 
+  it("restores active Trades from a pre-reset Backup V5 without any local reset snapshot", () => {
+    const preReset = validateBackupPayload(version5());
+    const writes = writesByCollection(preReset);
+    expect((writes.get("trades") as readonly Trade[]).some((trade) => !trade.deletedAt)).toBe(true);
+    expect(writes.has("trade-ledger-reset-snapshots")).toBe(false);
+  });
   it("keeps Backup V5 compatible with missing, null, and valid fee policies", () => {
     const backup = version5();
     const base = backup.accounts[0];

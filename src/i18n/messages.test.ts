@@ -10,6 +10,7 @@ import { canonicalTradeAccount, displayTradeSystemText, translateTradeText } fro
 import { translate } from "./messages";
 import { accountMessages } from "./messages/accounts";
 import { tradeFeeMessageKeys } from "./messages/trade-fees";
+import { tradeLedgerResetMessageKeys } from "./messages/trade-ledger-reset";
 import { locales, type TranslatedLocale } from "./types";
 
 const translatedLocales = locales.filter((locale): locale is TranslatedLocale => locale !== "ko");
@@ -22,7 +23,7 @@ describe("translations", () => {
   });
 
   it("translates every literal Korean UI key used by the app", () => {
-    const keys = [...new Set([...literalUiKeys(), ...indirectUiKeys, ...tradeFeeMessageKeys])];
+    const keys = [...new Set([...literalUiKeys(), ...indirectUiKeys, ...tradeFeeMessageKeys, ...tradeLedgerResetMessageKeys])];
     for (const locale of translatedLocales) {
       const missing = keys.filter((key) => translate(locale, key) === key);
       expect(missing, `${locale} is missing: ${missing.join(" | ")}`).toEqual([]);
@@ -30,7 +31,7 @@ describe("translations", () => {
   });
 
   it("preserves every interpolation placeholder", () => {
-    for (const key of [...new Set([...literalUiKeys(), ...indirectUiKeys, ...tradeFeeMessageKeys])]) {
+    for (const key of [...new Set([...literalUiKeys(), ...indirectUiKeys, ...tradeFeeMessageKeys, ...tradeLedgerResetMessageKeys])]) {
       const expected = placeholders(key);
       for (const locale of translatedLocales) {
         expect(placeholders(translate(locale, key)), `${locale}: ${key}`).toEqual(expected);

@@ -3,6 +3,7 @@ import { validateStoredCollection } from "./collection-validation";
 import { sampleStocks } from "@/features/stocks/sample-data";
 import type { InvestmentAccount } from "@/features/accounts/types";
 import { sampleTrades } from "@/features/trades/sample-data";
+import type { TradeLedgerResetSnapshotV1 } from "@/features/trades/trade-ledger-reset";
 
 describe("import mapping profile storage validation", () => {
   const profile = { id: "p1", name: "Broker", version: 1, bindings: { tradedAt: { normalizedHeader: "date", occurrence: 0 } }, headerSignature: "date#0", createdAt: "2026-08-12T00:00:00Z", updatedAt: "2026-08-12T00:00:00Z" };
@@ -78,5 +79,28 @@ describe("Trade fee provenance storage validation", () => {
 
   it("identifies only the invalid fee-provenance record index", () => {
     expect(validateStoredCollection("trades", [legacy, { ...legacy, id: "invalid", feeMode: "accountPolicy", feeCalculation: null }])).toEqual({ valid: false, errorType: "INVALID_RECORD", index: 1 });
+  });
+});
+describe("Trade-ledger reset snapshot storage validation", () => {
+  const now = "2026-08-21T00:00:00.000Z";
+  const snapshot: TradeLedgerResetSnapshotV1 = { id: "latest", version: 1, resetAt: now, tradeIds: ["trade-1", "trade-2"], createdAt: now, updatedAt: now };
+
+  it("accepts one strict, minimal snapshot", () => {
+    expect(validateStoredCollection("trade-ledger-reset-snapshots", [snapshot])).toEqual({ valid: true });
+  });
+
+  it.each([
+    ["duplicate Trade IDs", { ...snapshot, tradeIds: ["trade-1", "trade-1"] }],
+    ["an empty Trade ID", { ...snapshot, tradeIds: [""] }],
+    ["an empty snapshot", { ...snapshot, tradeIds: [] }],
+    ["an invalid reset timestamp", { ...snapshot, resetAt: "not-a-date" }],
+    ["an unknown version", { ...snapshot, version: 2 }],
+    ["an unknown field", { ...snapshot, rawTrades: [{ private: true }] }],
+  ])("rejects %s", (_label, value) => {
+    expect(validateStoredCollection("trade-ledger-reset-snapshots", [value])).toMatchObject({ valid: false, errorType: "INVALID_RECORD", index: 0 });
+  });
+
+  it("rejects more than one snapshot record", () => {
+    expect(validateStoredCollection("trade-ledger-reset-snapshots", [snapshot, { ...snapshot }])).toEqual({ valid: false, errorType: "INVALID_COLLECTION_SHAPE" });
   });
 });

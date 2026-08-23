@@ -7,6 +7,8 @@ import { buildTabularColumns, detectImportMapping, exactProfileToAutoApply, hasD
 import { adaptTabularRow, buildImportMutationPlan, buildImportPreview, parseExecutionDateTime, parseOptionalNumber, preflightImport } from "./import-pipeline";
 import type { ImportContext, ImportMappingProfile, ParsedTabularFile } from "./import-types";
 import { parseDelimitedImport, parseExcelImport } from "./tabular-parser";
+import { buildTradeLedgerReset } from "@/features/trades/trade-ledger-reset";
+import { sampleStocks } from "@/features/stocks/sample-data";
 
 const now = "2026-08-12T00:00:00.000Z";
 const accounts: InvestmentAccount[] = [{ id: "a1", name: "기본 계좌", institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault: true, archivedAt: null, memo: "", createdAt: now, updatedAt: now }];
@@ -283,6 +285,25 @@ describe("Import Pipeline v1", () => {
     expect(preflight.plan.restoredTradeIds).toEqual([original.id]);
     expect(preflight.plan.nextTrades).toHaveLength(1);
     expect(preflight.plan.nextTrades[0]).toMatchObject({ id: original.id, createdAt: original.createdAt, origin: original.origin, journalStatus: "recorded", feeMode: "sourceProvided", feeCalculation: null, planId: "plan-1", memo: "사용자 메모", emotion: "확신", deletedAt: null });
+  });
+
+  it("treats an imported Trade bulk-deleted by a ledger reset as the same restoration candidate", async () => {
+    const row = "2026-08-12T10:00:01,005930,매수,1,70000,0,0,reset-exec,";
+    const first = await preview([row]);
+    const imported = { ...(first.candidates[0].trade as Trade), planId: "plan-1", memo: "kept journal", journalStatus: "recorded" as const };
+    const resetStocks = [{ ...sampleStocks[0], id: "s1", ticker: "005930", name: "삼성전자", currency: "KRW" as const, quantity: 1, averagePrice: 70_000, ledgerInitializedAt: now }];
+    const reset = buildTradeLedgerReset({ trades: [imported], stocks: resetStocks, accounts, now: "2026-08-13T00:00:00.000Z" });
+    const tombstone = reset.nextTrades[0];
+
+    const reimport = await preview([row], [tombstone]);
+    expect(reimport.candidates).toHaveLength(1);
+    expect(reimport.candidates[0]).toMatchObject({ status: "previously_deleted", action: "restore", selectedByDefault: false, matchedTradeIds: [imported.id] });
+    const preflight = preflightImport(reimport, new Set([reimport.candidates[0].id]), { existingTrades: [tombstone], accounts });
+    expect(preflight.ok).toBe(true);
+    if (!preflight.ok) throw new Error("expected restoration plan");
+    expect(preflight.plan.insertedTrades).toEqual([]);
+    expect(preflight.plan.restoredTradeIds).toEqual([imported.id]);
+    expect(preflight.plan.nextTrades[0]).toMatchObject({ id: imported.id, createdAt: imported.createdAt, origin: imported.origin, planId: "plan-1", memo: "kept journal", deletedAt: null });
   });
 
   it("blocks a deleted source conflict and stale preview changes", async () => {
