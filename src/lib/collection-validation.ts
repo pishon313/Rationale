@@ -2,6 +2,7 @@ import { currencies } from "@/domain/currency";
 import { validateBackupCollectionRecord, validateBackupPayload } from "@/features/settings/backup";
 import { isLocale } from "@/i18n/types";
 import { importFields, type ColumnReference, type ImportMappingProfile } from "@/features/import/import-types";
+import type { TradeLedgerResetSnapshotV1 } from "@/features/trades/trade-ledger-reset";
 
 export type CollectionValidationErrorType = "INVALID_COLLECTION_SHAPE" | "INVALID_RECORD";
 export type CollectionValidationResult = { valid: true } | { valid: false; errorType: CollectionValidationErrorType; index?: number };
@@ -10,6 +11,7 @@ const backupCollections = new Set(["accounts", "stocks", "plans", "trades", "obs
 
 export function validateStoredCollection(collection: string, value: unknown): CollectionValidationResult {
   if (!Array.isArray(value)) return { valid: false, errorType: "INVALID_COLLECTION_SHAPE" };
+  if (collection === "trade-ledger-reset-snapshots" && value.length > 1) return { valid: false, errorType: "INVALID_COLLECTION_SHAPE" };
   const ids = new Set<string>();
   for (const [index, item] of value.entries()) {
     try {
@@ -48,7 +50,18 @@ export function validateStoredRecord(collection: string, value: unknown, index: 
     case "import-mapping-profiles":
       validateImportMappingProfile(record as ImportMappingProfile);
       break;
+    case "trade-ledger-reset-snapshots":
+      validateTradeLedgerResetSnapshot(record as TradeLedgerResetSnapshotV1);
+      break;
   }
+}
+
+function validateTradeLedgerResetSnapshot(snapshot: TradeLedgerResetSnapshotV1) {
+  const allowedKeys = new Set(["id", "version", "resetAt", "tradeIds", "createdAt", "updatedAt"]);
+  if (Object.keys(snapshot).some((key) => !allowedKeys.has(key))) throw new Error("invalid trade ledger reset snapshot field");
+  if (snapshot.id !== "latest" || snapshot.version !== 1 || !isTimestamp(snapshot.resetAt) || !isTimestamp(snapshot.createdAt) || !isTimestamp(snapshot.updatedAt)) throw new Error("invalid trade ledger reset snapshot");
+  if (!Array.isArray(snapshot.tradeIds) || snapshot.tradeIds.length === 0 || snapshot.tradeIds.length > 100_000) throw new Error("invalid trade ledger reset trade ids");
+  if (snapshot.tradeIds.some((id) => typeof id !== "string" || !id.trim()) || new Set(snapshot.tradeIds).size !== snapshot.tradeIds.length) throw new Error("invalid trade ledger reset trade ids");
 }
 
 function validateImportMappingProfile(profile: ImportMappingProfile) {

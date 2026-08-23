@@ -203,6 +203,34 @@ describe("browser local repository", () => {
     expect(JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "null")).toEqual([{ id: "old-trade" }]);
   });
 
+  it("rolls back Trade, Stock, and local reset snapshot together when a ledger-reset write fails", async () => {
+    const resetAt = "2026-08-21T00:00:00.000Z";
+    const oldTrade = sampleTrades[0];
+    const oldStock = sampleStocks[0];
+    localStorage.setItem("tradejournal.trades.v1", JSON.stringify([oldTrade]));
+    localStorage.setItem("tradejournal.stocks.v1", JSON.stringify([oldStock]));
+    localStorage.setItem("tradejournal.trade-ledger-reset-snapshots.v1", "[]");
+    const originalSetItem = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+      if (key === "tradejournal.trade-ledger-reset-snapshots.v1") throw new Error("snapshot write failed");
+      return originalSetItem.call(this, key, value);
+    });
+    const resetTrades = [{ ...oldTrade, deletedAt: resetAt, updatedAt: resetAt }];
+    const resetStocks = [{ ...oldStock, ledgerInitializedAt: resetAt, quantity: 0, averagePrice: 0, updatedAt: resetAt }];
+    const resetSnapshots = [{ id: "latest", version: 1, resetAt, tradeIds: [oldTrade.id], createdAt: resetAt, updatedAt: resetAt }];
+
+    await expect(saveCollectionsAtomically([
+      { collection: "trades", values: resetTrades },
+      { collection: "stocks", values: resetStocks },
+      { collection: "trade-ledger-reset-snapshots", values: resetSnapshots },
+    ], { failurePolicy: "caller-managed" })).rejects.toThrow("snapshot write failed");
+
+    expect(JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "null")).toEqual([oldTrade]);
+    expect(JSON.parse(localStorage.getItem("tradejournal.stocks.v1") ?? "null")).toEqual([oldStock]);
+    expect(JSON.parse(localStorage.getItem("tradejournal.trade-ledger-reset-snapshots.v1") ?? "null")).toEqual([]);
+    expect(getPersistenceSnapshot()).toMatchObject({ error: null, canRetry: false, pendingWrites: 0 });
+  });
+
   it.each([
     ["stocks", "stock write failed"],
     ["plans", "plan write failed"],
@@ -225,7 +253,7 @@ describe("browser local repository", () => {
     expect(JSON.parse(localStorage.getItem("tradejournal.plans.v1") ?? "null")).toEqual([{ id: "old-plan" }]);
   });
 
-  it("keeps a failed write available for retry", async () => {
+  it("keeps a default-policy failed write available for global retry", async () => {
     const originalSetItem = Storage.prototype.setItem;
     let failed = false;
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
@@ -238,6 +266,85 @@ describe("browser local repository", () => {
 
     await retryLastSave();
     expect(JSON.parse(localStorage.getItem("tradejournal.notes.v1") ?? "null")).toEqual([{ id: "note-1" }]);
+    expect(getPersistenceSnapshot()).toMatchObject({ error: null, canRetry: false, pendingWrites: 0 });
+  });
+
+  it("leaves a caller-managed failure out of the global retry queue", async () => {
+    const originalSetItem = Storage.prototype.setItem;
+    let attempts = 0;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+      if (key === "tradejournal.trades.v1") {
+        attempts += 1;
+        throw new Error("caller handles this");
+      }
+      return originalSetItem.call(this, key, value);
+    });
+    const lastSavedAt = getPersistenceSnapshot().lastSavedAt;
+
+    await expect(saveCollectionsAtomically([
+      { collection: "trades", values: [{ id: "reset-candidate" }] },
+    ], { failurePolicy: "caller-managed" })).rejects.toThrow("caller handles this");
+
+    expect(getPersistenceSnapshot()).toEqual({ error: null, canRetry: false, pendingWrites: 0, lastSavedAt });
+    await retryLastSave();
+    expect(attempts).toBe(1);
+    expect(localStorage.getItem("tradejournal.trades.v1")).toBeNull();
+  });
+
+  it("persists only the latest candidate when a caller-managed direct retry succeeds", async () => {
+    vi.useFakeTimers();
+    try {
+      const originalSetItem = Storage.prototype.setItem;
+      let failed = false;
+      vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+        if (key === "tradejournal.trades.v1" && !failed) {
+          failed = true;
+          throw new Error("first direct attempt failed");
+        }
+        return originalSetItem.call(this, key, value);
+      });
+      const previousLastSavedAt = getPersistenceSnapshot().lastSavedAt;
+      vi.setSystemTime(new Date("2026-08-23T00:00:00.000Z"));
+
+      await expect(saveCollectionsAtomically([
+        { collection: "trades", values: [{ id: "first-candidate" }] },
+      ], { failurePolicy: "caller-managed" })).rejects.toThrow("first direct attempt failed");
+      expect(getPersistenceSnapshot()).toMatchObject({ error: null, canRetry: false, pendingWrites: 0, lastSavedAt: previousLastSavedAt });
+
+      vi.setSystemTime(new Date("2026-08-23T01:00:00.000Z"));
+      await saveCollectionsAtomically([
+        { collection: "trades", values: [{ id: "latest-candidate" }] },
+      ], { failurePolicy: "caller-managed" });
+
+      expect(JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "null")).toEqual([{ id: "latest-candidate" }]);
+      expect(getPersistenceSnapshot()).toMatchObject({ error: null, canRetry: false, pendingWrites: 0, lastSavedAt: "2026-08-23T01:00:00.000Z" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not erase, replace, or expand an existing unrelated global failure", async () => {
+    const originalSetItem = Storage.prototype.setItem;
+    let notesAttempts = 0;
+    const attemptedKeys: string[] = [];
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+      attemptedKeys.push(key);
+      if (key === "tradejournal.notes.v1" && notesAttempts++ === 0) throw new Error("existing notes failure");
+      if (key === "tradejournal.trades.v1") throw new Error("caller-managed reset failure");
+      return originalSetItem.call(this, key, value);
+    });
+
+    await expect(saveCollection("notes", [{ id: "note-1" }])).rejects.toThrow("existing notes failure");
+    const existingError = getPersistenceSnapshot().error;
+    await expect(saveCollectionsAtomically([
+      { collection: "trades", values: [{ id: "reset-candidate" }] },
+    ], { failurePolicy: "caller-managed" })).rejects.toThrow("caller-managed reset failure");
+    expect(getPersistenceSnapshot()).toMatchObject({ error: existingError, canRetry: true, pendingWrites: 0 });
+
+    attemptedKeys.length = 0;
+    await retryLastSave();
+    expect(attemptedKeys).toEqual(["tradejournal.notes.v1"]);
+    expect(localStorage.getItem("tradejournal.trades.v1")).toBeNull();
     expect(getPersistenceSnapshot()).toMatchObject({ error: null, canRetry: false, pendingWrites: 0 });
   });
 

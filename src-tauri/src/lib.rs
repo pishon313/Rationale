@@ -290,6 +290,43 @@ async fn quarantine_corrupt_records(
         .map_err(|_| "QUARANTINE_FAILED".to_string())
 }
 
+async fn replace_collection_records(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    writes: Vec<AtomicCollectionWrite>,
+    state_updated_at: &str,
+) -> Result<(), String> {
+    for write in writes {
+        sqlx::query("DELETE FROM app_records WHERE collection = ?")
+            .bind(&write.collection)
+            .execute(&mut **transaction)
+            .await
+            .map_err(|error| error.to_string())?;
+
+        for record in write.records {
+            sqlx::query(
+                "INSERT INTO app_records (collection, id, data, updated_at) VALUES (?, ?, ?, ?)",
+            )
+            .bind(&write.collection)
+            .bind(record.id)
+            .bind(record.data)
+            .bind(record.updated_at)
+            .execute(&mut **transaction)
+            .await
+            .map_err(|error| error.to_string())?;
+        }
+
+        sqlx::query("INSERT INTO app_records (collection, id, data, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(collection, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at")
+            .bind(COLLECTION_STATE)
+            .bind(&write.collection)
+            .bind("{}")
+            .bind(state_updated_at)
+            .execute(&mut **transaction)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 #[tauri::command(rename_all = "camelCase")]
 async fn save_collections_atomically(
     db_instances: State<'_, DbInstances>,
@@ -334,37 +371,8 @@ async fn save_collections_atomically(
             }
         }
     }
-
     let mut transaction = pool.begin().await.map_err(|error| error.to_string())?;
-    for write in writes {
-        sqlx::query("DELETE FROM app_records WHERE collection = ?")
-            .bind(&write.collection)
-            .execute(&mut *transaction)
-            .await
-            .map_err(|error| error.to_string())?;
-
-        for record in write.records {
-            sqlx::query(
-                "INSERT INTO app_records (collection, id, data, updated_at) VALUES (?, ?, ?, ?)",
-            )
-            .bind(&write.collection)
-            .bind(record.id)
-            .bind(record.data)
-            .bind(record.updated_at)
-            .execute(&mut *transaction)
-            .await
-            .map_err(|error| error.to_string())?;
-        }
-
-        sqlx::query("INSERT INTO app_records (collection, id, data, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(collection, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at")
-            .bind(COLLECTION_STATE)
-            .bind(&write.collection)
-            .bind("{}")
-            .bind(&state_updated_at)
-            .execute(&mut *transaction)
-            .await
-            .map_err(|error| error.to_string())?;
-    }
+    replace_collection_records(&mut transaction, writes, &state_updated_at).await?;
     if source == "localUser" || source == "remoteSync" {
         for envelope in envelopes {
             if envelope.schema_version != 1
@@ -2059,5 +2067,96 @@ mod sync_state_tests {
             comparable_sync_envelope(first).unwrap(),
             comparable_sync_envelope(changed).unwrap()
         );
+    }
+}
+
+#[cfg(test)]
+mod atomic_collection_tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    #[test]
+    fn ledger_reset_collections_roll_back_together_when_snapshot_write_fails() {
+        tauri::async_runtime::block_on(async {
+            let pool = SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect("sqlite::memory:")
+                .await
+                .unwrap();
+            sqlx::query("CREATE TABLE app_records (collection TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (collection, id))")
+                .execute(&pool)
+                .await
+                .unwrap();
+            for (collection, id, data) in [
+                ("trades", "trade-1", r#"{"id":"trade-1","deletedAt":null}"#),
+                ("stocks", "stock-1", r#"{"id":"stock-1","quantity":2}"#),
+            ] {
+                sqlx::query("INSERT INTO app_records (collection, id, data, updated_at) VALUES (?, ?, ?, ?)")
+                    .bind(collection)
+                    .bind(id)
+                    .bind(data)
+                    .bind("2026-08-20T00:00:00.000Z")
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+            sqlx::query("CREATE TRIGGER fail_reset_snapshot BEFORE INSERT ON app_records WHEN NEW.collection = 'trade-ledger-reset-snapshots' BEGIN SELECT RAISE(ABORT, 'synthetic snapshot failure'); END")
+                .execute(&pool)
+                .await
+                .unwrap();
+
+            let writes = vec![
+                AtomicCollectionWrite {
+                    collection: "trades".into(),
+                    records: vec![AtomicRecordWrite {
+                        id: "trade-1".into(),
+                        data: r#"{"id":"trade-1","deletedAt":"2026-08-21T00:00:00.000Z"}"#.into(),
+                        updated_at: "2026-08-21T00:00:00.000Z".into(),
+                    }],
+                },
+                AtomicCollectionWrite {
+                    collection: "stocks".into(),
+                    records: vec![AtomicRecordWrite {
+                        id: "stock-1".into(),
+                        data: r#"{"id":"stock-1","quantity":0}"#.into(),
+                        updated_at: "2026-08-21T00:00:00.000Z".into(),
+                    }],
+                },
+                AtomicCollectionWrite {
+                    collection: "trade-ledger-reset-snapshots".into(),
+                    records: vec![AtomicRecordWrite {
+                        id: "latest".into(),
+                        data: r#"{"id":"latest","version":1}"#.into(),
+                        updated_at: "2026-08-21T00:00:00.000Z".into(),
+                    }],
+                },
+            ];
+            let mut transaction = pool.begin().await.unwrap();
+            let result =
+                replace_collection_records(&mut transaction, writes, "2026-08-21T00:00:00.000Z")
+                    .await;
+            assert!(result.is_err());
+            transaction.rollback().await.unwrap();
+
+            let trade_data = sqlx::query_scalar::<_, String>(
+                "SELECT data FROM app_records WHERE collection = 'trades' AND id = 'trade-1'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            let stock_data = sqlx::query_scalar::<_, String>(
+                "SELECT data FROM app_records WHERE collection = 'stocks' AND id = 'stock-1'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            let snapshot_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_records WHERE collection = 'trade-ledger-reset-snapshots'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(trade_data, r#"{"id":"trade-1","deletedAt":null}"#);
+            assert_eq!(stock_data, r#"{"id":"stock-1","quantity":2}"#);
+            assert_eq!(snapshot_count, 0);
+        });
     }
 }

@@ -110,6 +110,31 @@ describe("Sync Contract v1", () => {
     expect(feeMerge.collections.trades[0]).toMatchObject({ feeMode: "sourceProvided", feeCalculation: null });
   });
 
+  it("projects reset tombstones and undo records through unchanged Sync V1 LWW semantics", () => {
+    const original = trade("ledger-reset", 1, "2026-08-20T00:00:00.000Z");
+    const resetAt = "2026-08-21T00:00:00.000Z";
+    const undoAt = "2026-08-22T00:00:00.000Z";
+    const tombstone = { ...original, deletedAt: resetAt, updatedAt: resetAt };
+    const restored = { ...tombstone, deletedAt: null, updatedAt: undoAt };
+    const resetEnvelope = toSyncEnvelope("trades", tombstone);
+    const undoEnvelope = toSyncEnvelope("trades", restored);
+
+    expect(resetEnvelope).toMatchObject({ schemaVersion: 1, deletedAt: resetAt, payload: { id: original.id, deletedAt: resetAt, updatedAt: resetAt } });
+    expect(undoEnvelope).toMatchObject({ schemaVersion: 1, deletedAt: null, payload: { id: original.id, deletedAt: null, updatedAt: undoAt } });
+    expect(mergeSyncCollections(collections([original]), [resetEnvelope], undoAt).collections.trades[0]).toEqual(toTradeSyncPayload(tombstone));
+    expect(mergeSyncCollections(collections([tombstone]), [undoEnvelope], undoAt).collections.trades[0]).toEqual(toTradeSyncPayload(restored));
+  });
+
+  it("keeps sample reset tombstones device-local while every ordinary affected Trade is syncable", () => {
+    const resetAt = "2026-08-21T00:00:00.000Z";
+    const values = [
+      { ...trade("ordinary-1", 1), deletedAt: resetAt, updatedAt: resetAt },
+      { ...trade("ordinary-2", 1), deletedAt: resetAt, updatedAt: resetAt },
+      { ...trade("sample:v1:trade:local", 1), deletedAt: resetAt, updatedAt: resetAt },
+    ];
+    expect(values.filter(isSyncableRecord).map((value) => toSyncEnvelope("trades", value).logicalId)).toEqual(["ordinary-1", "ordinary-2"]);
+  });
+
   it("validates remote ledger and references without weakening production rules", () => {
     expect(buildTradingLedger(collections().trades, [account]).positions[0].quantity).toBe(0.35); expect(validateSyncCandidate(collections()).errors).toEqual([]);
     expect(() => validateSyncCandidate(collections([{ ...trade("bad", 1), stockId: "missing" }]))).toThrow("SYNC_INVALID_STOCK_REFERENCE");

@@ -31,6 +31,10 @@ Remote envelopes are decoded and schema-validated, merged into a candidate, chec
 
 `deletedAt` is synchronized as ordinary record state. Cloud records are not physically deleted in v1, preventing stale-device resurrection. Accounts continue to use `archivedAt`.
 
+### Trade-ledger reset and undo
+
+An account-wide Trade-ledger reset uses ordinary Trade tombstones: every affected Trade keeps its ID and payload while one shared timestamp becomes both `deletedAt` and `updatedAt`. A newer reset tombstone therefore wins over an older active remote record without a hard delete or a new Sync entity. Local undo restores the same IDs with a newer `updatedAt` and `deletedAt: null`, so ordinary whole-record LWW also carries the restoration. Every affected non-sample Trade is projected; sample Trades and the device-local `trade-ledger-reset-snapshots` collection are never synchronized. Sync schema version remains 1.
+
 ## Bootstrap
 
 First sync compares deterministic record names and merges both sides. Local-only records become upload candidates, remote-only records become import candidates, and conflicts use the policy above. Neither side replaces the other wholesale.
