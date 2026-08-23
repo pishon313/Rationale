@@ -59,7 +59,7 @@ describe("automatic backup candidate", () => {
     const candidate = await createBackupCandidate("en");
     expect(candidate.sourceCounts.map((item) => item.collection)).toEqual(automaticBackupSourceCollections);
     expect(new Set(candidate.sourceCounts.map((item) => item.collection)).size).toBe(automaticBackupSourceCollections.length);
-    for (const excluded of ["restore-snapshots", "import-mapping-profiles", "exchange-rates", "corrupt-records"]) {
+    for (const excluded of ["restore-snapshots", "trade-ledger-reset-snapshots", "import-mapping-profiles", "exchange-rates", "corrupt-records"]) {
       expect(candidate.sourceCounts.map((item) => item.collection)).not.toContain(excluded);
     }
     expect(candidate.sourceCounts.every((item) => Number.isInteger(item.count) && item.count >= 0)).toBe(true);
@@ -79,6 +79,22 @@ describe("automatic backup candidate", () => {
     const candidate = await createBackupCandidate("en");
     expect(candidate.sourceCounts.find((item) => item.collection === "stocks")?.count).toBe(2);
     expect(candidate.backup.stocks).toHaveLength(2);
+  });
+
+  it("preserves reset Trade tombstones in current Backup V6 without exporting the device-local undo snapshot", async () => {
+    const resetAt = "2026-08-21T00:00:00.000Z";
+    const sources = sourceCollections();
+    const tombstones = sources.trades.map((trade) => ({ ...trade, deletedAt: resetAt, updatedAt: resetAt }));
+    useSources({ trades: tombstones });
+
+    const candidate = await createBackupCandidate("en");
+
+    expect(candidate.backup.version).toBe(6);
+    expect(candidate.backup.trades).toHaveLength(tombstones.length);
+    expect(candidate.backup.trades).toEqual(tombstones.map((trade) => expect.objectContaining({ id: trade.id, createdAt: trade.createdAt, quantity: trade.quantity, price: trade.price, origin: expect.any(Object), deletedAt: resetAt, updatedAt: resetAt })));
+    expect(candidate.backup.trades.every((trade) => trade.deletedAt === resetAt)).toBe(true);
+    expect(candidate).not.toHaveProperty("tradeLedgerResetSnapshots");
+    expect(repositoryMocks.loadCollection).not.toHaveBeenCalledWith("trade-ledger-reset-snapshots", expect.anything());
   });
 
   it("refuses a candidate when any source collection has unresolved corruption", async () => {

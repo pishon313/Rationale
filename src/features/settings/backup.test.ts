@@ -122,6 +122,13 @@ describe("validateBackupPayload", () => {
     expect(writes.get("portfolio-allocation-targets")).toEqual([portfolioTarget]);
   });
 
+  it("restores active Trades from a pre-reset Backup V6 without any local reset snapshot", () => {
+    const preReset = validateBackupPayload(version6());
+    const writes = writesByCollection(preReset);
+    expect((writes.get("trades") as readonly Trade[]).some((trade) => !trade.deletedAt)).toBe(true);
+    expect(writes.has("trade-ledger-reset-snapshots")).toBe(false);
+  });
+
   it("rejects broken Portfolio Plan references in Backup V6", () => {
     expect(() => validateBackupPayload(version6({ portfolioPlanState: [] }))).toThrow("활성 리비전");
     expect(() => validateBackupPayload(version6({ portfolioPlanState: [{ ...portfolioState, activeRevisionId: "missing" }] }))).toThrow("활성 포트폴리오");

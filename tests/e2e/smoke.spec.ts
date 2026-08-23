@@ -1309,3 +1309,102 @@ test("계좌가 없으면 종목 상세에서 계좌 추가를 안내한다", as
   await expect(page.getByText("먼저 계좌를 추가해 주세요.", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "계좌 추가" })).toHaveAttribute("href", "/accounts");
 });
+
+test("설정에서 전체 매매 원장을 soft-delete하고 최근 1회를 같은 ID로 되돌린다", async ({ page }) => {
+  const timestamp = "2026-08-20T00:00:00.000Z";
+  const accounts = [e2eAccount("reset-a1", "초기화 계좌", true), e2eAccount("reset-a2", "이체 계좌", false)];
+  const stock = e2eStock("reset-stock", "초기화 종목", "Core", { ticker: "RST", status: "보유", currency: "USD", quantity: 0, averagePrice: 0, currentPrice: 150, ledgerInitializedAt: timestamp });
+  const baseTrade = {
+    stockId: stock.id, stockName: stock.name, planId: null, tradeType: "매수", tradedAt: "2026-08-20T09:00:00.000Z",
+    quantity: 10, price: 100, currency: "USD", exchangeRate: 1300, fee: 0, tax: 0, accountId: accounts[0].id, accountName: accounts[0].name,
+    memo: "synthetic", emotion: "평온", emotionIntensity: 1, confidenceScore: 3, ruleComplianceScore: 4, ruleViolations: [],
+    journalStatus: "recorded", origin: { kind: "manual" }, createdAt: timestamp, updatedAt: timestamp, deletedAt: null,
+  };
+  const cash = (id: string, tradeType: "입금" | "출금" | "배당", amount: number, overrides: Record<string, unknown> = {}) => ({ ...baseTrade, id, stockId: tradeType === "배당" ? stock.id : null, stockName: tradeType === "배당" ? stock.name : "", tradeType, quantity: 0, price: 0, amount, tradedAt: `2026-08-20T${id === "deposit" ? "08:00" : "12:00"}:00.000Z`, ...overrides });
+  const transferCommon = { cashFlowKind: "transfer", transferId: "reset-transfer", tradedAt: "2026-08-20T14:00:00.000Z", amount: 200 };
+  const trades = [
+    cash("deposit", "입금", 2_000),
+    { ...baseTrade, id: "buy" },
+    { ...baseTrade, id: "sell", tradeType: "매도", quantity: 2, price: 120, tradedAt: "2026-08-20T10:00:00.000Z" },
+    cash("dividend", "배당", 50, { tradedAt: "2026-08-20T11:00:00.000Z" }),
+    cash("withdrawal", "출금", 100, { tradedAt: "2026-08-20T12:00:00.000Z" }),
+    cash("reconciliation", "입금", 500, { cashFlowKind: "reconciliation", tradedAt: "2026-08-20T13:00:00.000Z" }),
+    cash("transfer-out", "출금", 200, { ...transferCommon, accountId: accounts[0].id, accountName: accounts[0].name }),
+    cash("transfer-in", "입금", 200, { ...transferCommon, accountId: accounts[1].id, accountName: accounts[1].name }),
+    { ...baseTrade, id: "imported", quantity: 1, price: 110, tradedAt: "2026-08-20T15:00:00.000Z", journalStatus: "unreviewed", origin: { kind: "fileImport", sourceKey: "file:v2:reset", provider: "synthetic", externalExecutionId: "reset-exec", importBatchId: "batch-reset", importedAt: timestamp, sourceRow: 2, timePrecision: "second" } },
+  ];
+  const plan = { id: "reset-plan", stockId: stock.id, stockName: stock.name, ticker: stock.ticker, title: "보존 계획", scenarioType: "눌림목", conditionType: "가격 범위 진입", conditionDescription: "synthetic", targetPrice: 130, stopLossPrice: null, takeProfitPrice: null, priceRangeMin: 90, priceRangeMax: 100, plannedAmount: 1000, plannedQuantity: 10, plannedPortfolioPercent: 20, priority: 1, status: "관찰 중", invalidationCondition: "none", expectedHoldingPeriod: "long", memo: "keep", conditions: [], createdAt: timestamp, updatedAt: timestamp, executedAt: null, deletedAt: null };
+  const observation = { id: "reset-observation", stockId: stock.id, stockName: stock.name, observedAt: timestamp, title: "보존 관찰", content: "keep", marketCondition: "synthetic", stockView: "중립", tags: [], attachmentUrls: [], createdAt: timestamp, updatedAt: timestamp, deletedAt: null };
+  const review = { id: "reset-review", stockId: stock.id, stockName: stock.name, tradeId: "buy", reviewedAt: "2026-08-20", result: "keep", decisionQuality: "keep", executionQuality: "keep", planCompliance: true, emotionState: "평온", strengths: "keep", mistakes: "none", nextAction: "keep", lessons: "keep", evaluation: "좋은 판단, 좋은 결과", resultScore: 4, processScore: 4, createdAt: timestamp, updatedAt: timestamp, deletedAt: null };
+  await page.addInitScript((seed) => {
+    for (const [collection, values] of Object.entries(seed)) {
+      const storageKey = `tradejournal.${collection}.v1`;
+      if (localStorage.getItem(storageKey) === null) localStorage.setItem(storageKey, JSON.stringify(values));
+    }
+  }, {
+    accounts,
+    stocks: [stock],
+    trades,
+    plans: [plan],
+    observations: [observation],
+    reviews: [review],
+    "trade-ledger-reset-snapshots": [],
+    "language-preferences": [{ id: "language", locale: "ko", updatedAt: "" }],
+  });
+
+  await page.goto("/settings");
+  await expect(page.getByText("현재 활성 원장 기록: 9건")).toBeVisible();
+  await page.getByRole("button", { name: "매매 기록 전체 삭제" }).click();
+  const resetDialog = page.getByRole("alertdialog", { name: "매매 기록 9건을 모두 삭제할까요?" });
+  await expect(resetDialog).toContainText("매수·매도");
+  await expect(resetDialog).toContainText("종목");
+  await expect(resetDialog).toContainText("계획과 회고는 삭제된 매매 기록을 참조하더라도 변경되지 않습니다.");
+  await resetDialog.getByRole("checkbox", { name: "삭제 범위와 영향을 확인했습니다." }).check();
+  await resetDialog.getByRole("button", { name: "매매 기록 9건 삭제" }).click();
+  await expect(page.getByRole("status")).toContainText("매매 기록 9건을 삭제하고 원장을 초기화했습니다.");
+
+  const afterReset = await page.evaluate(() => ({
+    trades: JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]"),
+    stocks: JSON.parse(localStorage.getItem("tradejournal.stocks.v1") ?? "[]"),
+    accounts: JSON.parse(localStorage.getItem("tradejournal.accounts.v1") ?? "[]"),
+    plans: JSON.parse(localStorage.getItem("tradejournal.plans.v1") ?? "[]"),
+    observations: JSON.parse(localStorage.getItem("tradejournal.observations.v1") ?? "[]"),
+    reviews: JSON.parse(localStorage.getItem("tradejournal.reviews.v1") ?? "[]"),
+    snapshots: JSON.parse(localStorage.getItem("tradejournal.trade-ledger-reset-snapshots.v1") ?? "[]"),
+  }));
+  expect(new Set(afterReset.trades.map((item: { deletedAt: string }) => item.deletedAt)).size).toBe(1);
+  expect(afterReset.trades.every((item: { deletedAt: string; updatedAt: string }) => item.deletedAt && item.deletedAt === item.updatedAt)).toBe(true);
+  expect(afterReset.snapshots[0].tradeIds).toEqual(trades.map((item) => item.id));
+  expect(afterReset.stocks).toEqual([stock]);
+  expect(afterReset.accounts).toEqual(accounts);
+  expect(afterReset.plans).toEqual([plan]);
+  expect(afterReset.observations).toEqual([observation]);
+  expect(afterReset.reviews).toEqual([review]);
+
+  await page.reload();
+  await page.goto("/trades");
+  await expect(page.getByText("아직 원장 기록이 없습니다.")).toBeVisible();
+  await expect(page.locator("article").filter({ hasText: "열린 포지션" })).toContainText("0개");
+  await expect(page.getByText("입출금 또는 매매 기록이 없습니다.")).toBeVisible();
+
+  await page.goto("/settings");
+  await page.getByRole("button", { name: "마지막 매매 기록 삭제 되돌리기" }).click();
+  const undoDialog = page.getByRole("alertdialog", { name: "마지막 매매 기록 삭제를 되돌릴까요?" });
+  await undoDialog.getByRole("button", { name: "기록 복원" }).click();
+  await expect(page.getByRole("status")).toContainText("매매 기록 9건을 복원했습니다.");
+  await page.reload();
+
+  const afterUndo = await page.evaluate(() => ({
+    trades: JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]"),
+    snapshots: JSON.parse(localStorage.getItem("tradejournal.trade-ledger-reset-snapshots.v1") ?? "[]"),
+  }));
+  expect(afterUndo.trades.map((item: { id: string }) => item.id)).toEqual(trades.map((item) => item.id));
+  expect(afterUndo.trades.every((item: { deletedAt: null }) => item.deletedAt === null)).toBe(true);
+  expect(afterUndo.trades.map((item: { id: string; quantity: number; price: number; amount?: number }) => [item.id, item.quantity, item.price, item.amount]))
+    .toEqual(trades.map((item) => [item.id, item.quantity, item.price, "amount" in item ? item.amount : undefined]));
+  expect(afterUndo.snapshots).toEqual([]);
+
+  await page.goto("/trades");
+  await expect(page.locator("article").filter({ hasText: "열린 포지션" })).toContainText("1개");
+  await expect(page.getByRole("row").filter({ hasText: "초기화 종목" })).toHaveCount(4);
+});

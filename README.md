@@ -21,6 +21,7 @@
 - 저장 대기열, 저장 상태 표시, 실패한 저장 재시도
 - 전체 기록 JSON 백업, 선택적 비밀번호 암호화 백업, 안전한 복원 미리보기와 복원 취소
 - Mac 앱의 하루 1회 자동 백업(최근 7개 보관)
+- 설정의 안전한 매매 원장 전체 soft-delete와 이 Mac에 한정된 최근 1회 되돌리기
 
 ## 저장 방식
 
@@ -110,3 +111,5 @@ GitHub Actions CI는 `main` push와 pull request에서 고정된 pnpm 의존성�
 - 수수료 자동 계산은 새 매수·매도에만 적용되며, 기존 거래와 파일에서 제공된 수수료를 자동으로 덮어쓰지 않습니다. 세금은 계속 직접 입력합니다.
 
 수수료 규칙의 매칭·반올림 계약은 [`docs/account-fee-policy-v1.md`](docs/account-fee-policy-v1.md), 매매 입력·출처·호환성 계약은 [`docs/trade-fee-automation-v1.md`](docs/trade-fee-automation-v1.md)를 참고하세요.
+
+매매 원장 초기화의 보존 범위, tombstone, 로컬 되돌리기 계약은 [`docs/trade-ledger-reset-v1.md`](docs/trade-ledger-reset-v1.md)를 참고하세요.
