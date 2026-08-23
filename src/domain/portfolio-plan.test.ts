@@ -46,6 +46,17 @@ describe("comparePortfolioPlan", () => {
     expect(result.allocations.map((row) => row.currentWeight)).toEqual([50, 50]);
   });
 
+  it("uses the plan target amount for row values independently of current valuation", () => {
+    const plannedRevision = { ...revision, targetAmountKrw: 1_800_000 };
+    const result = comparePortfolioPlan({ revision: plannedRevision, targets: [target("samsung", 6000), cashTarget(4000)], ledger: ledger([{ stockId: "samsung", quantity: 1 }]), stocks: [samsung], ratesToKrw: fallbackRatesToKrw });
+    expect(result.targetTotalValueKrw).toBe(1_800_000);
+    expect(result.allocations.map((row) => row.targetValueKrw)).toEqual([1_080_000, 720_000]);
+
+    const unavailable = comparePortfolioPlan({ revision: plannedRevision, targets: [target("samsung", 10000)], ledger: ledger([{ stockId: "samsung", quantity: 1 }]), stocks: [{ ...samsung, currentPrice: 0 }], ratesToKrw: fallbackRatesToKrw });
+    expect(unavailable).toMatchObject({ valuationAvailable: false, targetTotalValueKrw: 1_800_000 });
+    expect(unavailable.allocations[0]).toMatchObject({ currentValueKrw: null, targetValueKrw: 1_800_000 });
+  });
+
   it("keeps target values at zero while current percentages are unavailable for a zero portfolio", () => {
     const result = comparePortfolioPlan({ revision, targets: [target("samsung", 10000)], ledger: ledger(), stocks: [samsung], ratesToKrw: fallbackRatesToKrw });
     expect(result).toMatchObject({ valuationAvailable: true, totalCurrentValueKrw: 0 });

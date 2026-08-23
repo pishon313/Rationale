@@ -18,6 +18,7 @@ export function buildPortfolioPlanActivation(input: {
   targets: readonly PortfolioAllocationTarget[];
   stocks: readonly Stock[];
   draftTargets: readonly PortfolioAllocationDraft[];
+  targetAmountKrw: number;
   thesis: string;
   changeNote: string;
   now?: string;
@@ -29,6 +30,7 @@ export function buildPortfolioPlanActivation(input: {
   if (activeRevisionId !== null && !input.revisions.some((revision) => revision.id === activeRevisionId)) throw new Error("ACTIVE_PORTFOLIO_REVISION_MISSING");
   const sum = input.draftTargets.reduce((total, target) => total + target.targetWeightBps, 0);
   if (!input.draftTargets.length || sum !== 10000) throw new Error("PORTFOLIO_TARGET_TOTAL_INVALID");
+  if (!Number.isSafeInteger(input.targetAmountKrw) || input.targetAmountKrw < 0) throw new Error("PORTFOLIO_TARGET_AMOUNT_INVALID");
   const revisionId = input.revisionId ?? crypto.randomUUID();
   const ids = input.targetIds ?? input.draftTargets.map(() => crypto.randomUUID());
   if (ids.length !== input.draftTargets.length) throw new Error("PORTFOLIO_TARGET_IDS_INVALID");
@@ -36,6 +38,7 @@ export function buildPortfolioPlanActivation(input: {
     id: revisionId,
     revisionNumber: Math.max(0, ...input.revisions.map((value) => value.revisionNumber)) + 1,
     basedOnRevisionId: activeRevisionId,
+    targetAmountKrw: input.targetAmountKrw,
     thesis: input.thesis.trim(),
     changeNote: input.changeNote.trim(),
     createdAt: now,

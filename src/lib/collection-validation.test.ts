@@ -85,7 +85,7 @@ describe("Trade fee provenance storage validation", () => {
 describe("Portfolio Plan storage validation", () => {
   const now = "2026-08-18T00:00:00Z";
   const state: PortfolioPlanState = { id: "default", activeRevisionId: "r1", updatedAt: now };
-  const revision: PortfolioPlanRevision = { id: "r1", revisionNumber: 1, basedOnRevisionId: null, thesis: "", changeNote: "", createdAt: now, activatedAt: now, updatedAt: now };
+  const revision: PortfolioPlanRevision = { id: "r1", revisionNumber: 1, basedOnRevisionId: null, targetAmountKrw: 1_800_000, thesis: "", changeNote: "", createdAt: now, activatedAt: now, updatedAt: now };
   const target: PortfolioAllocationTarget = { id: "t1", revisionId: "r1", targetType: "stock", stockId: sampleStocks[0].id, targetWeightBps: 10000, sortOrder: 0, updatedAt: now };
 
   it("accepts valid state, revision, and target records", () => {
@@ -97,6 +97,7 @@ describe("Portfolio Plan storage validation", () => {
   it("rejects malformed Portfolio Plan records", () => {
     expect(validateStoredCollection("portfolio-plan-state", [{ ...state, id: "other" }])).toMatchObject({ valid: false });
     expect(validateStoredCollection("portfolio-plan-revisions", [{ ...revision, revisionNumber: 0 }])).toMatchObject({ valid: false });
+    expect(validateStoredCollection("portfolio-plan-revisions", [{ ...revision, targetAmountKrw: -1 }])).toMatchObject({ valid: false });
     expect(validateStoredCollection("portfolio-allocation-targets", [{ ...target, targetWeightBps: 100.5 }])).toMatchObject({ valid: false });
     expect(validateStoredCollection("portfolio-allocation-targets", [{ ...target, targetType: "cash", stockId: sampleStocks[0].id }])).toMatchObject({ valid: false });
   });

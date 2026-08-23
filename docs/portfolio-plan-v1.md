@@ -2,7 +2,7 @@
 
 ## Product intent
 
-Portfolio Plan records the allocation the user intends to hold and compares that intent with the portfolio calculated from current records. It is descriptive: the feature shows target, current allocation, and drift in percentage points, but does not recommend trades or rebalancing.
+Portfolio Plan records the allocation the user intends to hold and compares that intent with the portfolio calculated from current records. It is descriptive: the feature shows target, current allocation, and drift in percentage points, but does not recommend trades or rebalancing. The active plan also stores an optional KRW target operating amount so each target row can show a formula-derived target value.
 
 The page is available at `/portfolio`. Creating a plan is optional and the rest of Rationale remains usable without one.
 
@@ -14,7 +14,7 @@ Portfolio Plan is not the existing `BuyPlan` domain. The `plans` collection and 
 
 v1 has one implicit portfolio and at most one active plan revision. `PortfolioPlanState.activeRevisionId` selects that revision.
 
-Saving the first plan creates revision 1. Editing copies the active plan into UI draft state; activation creates a new revision with an incremented number and `basedOnRevisionId`, creates new target rows, and switches the active ID. Historical activated revisions and their targets are retained unchanged. The three collection writes are committed atomically so a partial plan cannot become active.
+The page is an always-editable worksheet rather than a separate create/edit flow. Saving the first valid worksheet creates revision 1. Later edits copy the active plan into UI draft state; activation creates a new revision with an incremented number and `basedOnRevisionId`, creates new target rows, and switches the active ID. Historical activated revisions and their targets are retained unchanged. The three collection writes are committed atomically so a partial plan cannot become active.
 
 There is deliberately no revision-history UI in v1.
 
@@ -24,7 +24,7 @@ There is deliberately no revision-history UI in v1.
 - `portfolio-plan-revisions`: immutable activated revision metadata, thesis, and optional change note.
 - `portfolio-allocation-targets`: registered Stock or Cash targets belonging to a revision.
 
-Targets reference existing `Stock.id` values; they do not duplicate ticker, name, exchange, currency, or provider identity. Cash is a target type, not a synthetic Stock. Target weights are integer basis points and an activated revision must total exactly 10,000 bps. A revision permits each Stock once and at most one Cash target. Target amounts and comparison results are derived and are never persisted.
+Targets reference existing `Stock.id` values; they do not duplicate ticker, name, exchange, currency, or provider identity. Cash is a target type, not a synthetic Stock. Target weights are integer basis points and an activated revision must total exactly 10,000 bps. A revision permits each Stock once and at most one Cash target. `PortfolioPlanRevision.targetAmountKrw` stores the user-entered operating amount; each row target amount is derived as `targetAmountKrw × targetWeightBps ÷ 10,000` and is never persisted separately. Legacy revisions without the field fall back to the currently valued portfolio total.
 
 ## Source-of-truth boundaries
 

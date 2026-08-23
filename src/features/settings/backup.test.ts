@@ -44,7 +44,7 @@ function version5(overrides: Record<string, unknown> = {}) {
   return { ...version4(), version: 5, accounts: migrated.accounts, trades: migrated.trades, ...overrides };
 }
 
-const portfolioRevision: PortfolioPlanRevision = { id: "portfolio-r1", revisionNumber: 1, basedOnRevisionId: null, thesis: "Target", changeNote: "", createdAt: valid.exportedAt, activatedAt: valid.exportedAt, updatedAt: valid.exportedAt };
+const portfolioRevision: PortfolioPlanRevision = { id: "portfolio-r1", revisionNumber: 1, basedOnRevisionId: null, targetAmountKrw: 1_800_000, thesis: "Target", changeNote: "", createdAt: valid.exportedAt, activatedAt: valid.exportedAt, updatedAt: valid.exportedAt };
 const portfolioState: PortfolioPlanState = { id: "default", activeRevisionId: portfolioRevision.id, updatedAt: valid.exportedAt };
 const portfolioTarget: PortfolioAllocationTarget = { id: "portfolio-t1", revisionId: portfolioRevision.id, targetType: "stock", stockId: sampleStocks[0].id, targetWeightBps: 10000, sortOrder: 0, updatedAt: valid.exportedAt };
 function version6(overrides: Record<string, unknown> = {}) {

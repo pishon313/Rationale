@@ -10,6 +10,8 @@ export type PortfolioPlanRevision = {
   id: string;
   revisionNumber: number;
   basedOnRevisionId: string | null;
+  /** KRW amount the allocation percentages are applied to. Missing on legacy V1 records. */
+  targetAmountKrw?: number | null;
   thesis: string;
   changeNote: string;
   createdAt: string;
