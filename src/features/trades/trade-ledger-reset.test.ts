@@ -120,7 +120,23 @@ describe("Trade-ledger reset builder", () => {
     const save = vi.fn(async () => undefined);
     await persistTradeLedgerReset(plan, save);
     expect(save).toHaveBeenCalledOnce();
-    expect(save).toHaveBeenCalledWith(plan.writes);
+    expect(save).toHaveBeenCalledWith(plan.writes, { failurePolicy: "caller-managed" });
+  });
+
+  it("uses the same caller-managed policy for undo", async () => {
+    const affected = trade("buy", { deletedAt: resetAt, updatedAt: resetAt });
+    const plan = buildTradeLedgerResetUndo({ currentTrades: [affected], accounts, snapshot: snapshot([affected.id]), now: undoAt });
+    const save = vi.fn(async () => undefined);
+    await persistTradeLedgerReset(plan, save);
+    expect(save).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledWith(plan.writes, { failurePolicy: "caller-managed" });
+  });
+
+  it("does not call persistence for a no-op reset plan", async () => {
+    const plan = buildTradeLedgerReset({ trades: [trade("old", { deletedAt: before })], stocks: [initializedStock], accounts, now: resetAt });
+    const save = vi.fn(async () => undefined);
+    await persistTradeLedgerReset(plan, save);
+    expect(save).not.toHaveBeenCalled();
   });
 
   it("includes sample Trades in the local reset snapshot", () => {

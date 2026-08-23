@@ -176,7 +176,7 @@ export async function persistTradeLedgerReset(
   save: typeof saveCollectionsAtomically = saveCollectionsAtomically,
 ) {
   if (!plan.writes.length) return;
-  await save(plan.writes);
+  await save(plan.writes, { failurePolicy: "caller-managed" });
 }
 
 function assertUndoLedgerSafety(currentTrades: Trade[], nextTrades: Trade[], affectedIds: ReadonlySet<string>, accounts: InvestmentAccount[]) {

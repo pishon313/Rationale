@@ -1,12 +1,17 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PersistenceStatus } from "@/components/persistence-status";
 import type { InvestmentAccount } from "@/features/accounts/types";
 import { sampleStocks } from "@/features/stocks/sample-data";
 import type { Stock } from "@/features/stocks/types";
 import type { Trade } from "@/features/trades/types";
 import { I18nProvider } from "@/i18n/i18n-provider";
-import { clearPersistenceError, getCorruptionSnapshot, resolveCorruption } from "@/lib/local-repository";
+import { clearPersistenceError, getCorruptionSnapshot, getPersistenceSnapshot, resolveCorruption, saveCollection } from "@/lib/local-repository";
 import { TradeLedgerResetCard } from "./trade-ledger-reset-card";
+
+const tauriMocks = vi.hoisted(() => ({ load: vi.fn(), invoke: vi.fn() }));
+vi.mock("@tauri-apps/plugin-sql", () => ({ default: { load: tauriMocks.load } }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: tauriMocks.invoke }));
 
 const before = "2026-08-20T00:00:00.000Z";
 const resetAt = "2026-08-21T00:00:00.000Z";
@@ -32,7 +37,7 @@ function seed({ trades = [trade], snapshots = [], locale = "ko" }: { trades?: Tr
 }
 
 function renderCard() {
-  return render(<I18nProvider><TradeLedgerResetCard /></I18nProvider>);
+  return render(<I18nProvider><TradeLedgerResetCard /><PersistenceStatus /></I18nProvider>);
 }
 
 describe("TradeLedgerResetCard", () => {
@@ -41,6 +46,9 @@ describe("TradeLedgerResetCard", () => {
     clearPersistenceError();
     resolveCorruption(getCorruptionSnapshot().collections.map((item) => item.collection));
     vi.restoreAllMocks();
+    tauriMocks.load.mockReset();
+    tauriMocks.invoke.mockReset();
+    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
   });
 
   it("counts active canonical records, explains impact, and gates deletion behind a checkbox", async () => {
@@ -81,12 +89,21 @@ describe("TradeLedgerResetCard", () => {
     expect(JSON.parse(localStorage.getItem(key("trade-ledger-reset-snapshots")) ?? "null")).toEqual([]);
   });
 
-  it("keeps the dialog and all stored data intact when the atomic reset write fails", async () => {
+  it("keeps a failed reset out of global retry and rebuilds it for an in-dialog retry", async () => {
     seed();
     const originalTrades = localStorage.getItem(key("trades"));
     const originalSetItem = Storage.prototype.setItem;
+    let failed = false;
+    const resetCandidates: Trade[][] = [];
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, storageKey, value) {
-      if (storageKey === key("trade-ledger-reset-snapshots")) throw new Error("disk full");
+      if (storageKey === key("trades")) {
+        const candidate = JSON.parse(value) as Trade[];
+        if (candidate.some((item) => item.deletedAt)) resetCandidates.push(candidate);
+      }
+      if (storageKey === key("trade-ledger-reset-snapshots") && value !== "[]" && !failed) {
+        failed = true;
+        throw new Error("disk full");
+      }
       return originalSetItem.call(this, storageKey, value);
     });
     renderCard();
@@ -97,6 +114,66 @@ describe("TradeLedgerResetCard", () => {
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     expect(localStorage.getItem(key("trades"))).toBe(originalTrades);
     expect(localStorage.getItem(key("trade-ledger-reset-snapshots"))).toBe("[]");
+    expect(getPersistenceSnapshot()).toMatchObject({ error: null, canRetry: false, pendingWrites: 0 });
+    expect(screen.queryByRole("button", { name: "재시도" })).not.toBeInTheDocument();
+    const retry = screen.getByRole("button", { name: "매매 기록 1건 삭제" });
+    await waitFor(() => expect(retry).toBeEnabled());
+    expect(screen.getByRole("checkbox", { name: "삭제 범위와 영향을 확인했습니다." })).toBeChecked();
+
+    await new Promise((resolve) => window.setTimeout(resolve, 5));
+    fireEvent.click(retry);
+
+    expect(await screen.findByRole("status")).toHaveTextContent("매매 기록 1건을 삭제하고 원장을 초기화했습니다.");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.getByText("현재 활성 원장 기록: 0건")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "마지막 매매 기록 삭제 되돌리기" })).toBeEnabled();
+    expect(resetCandidates).toHaveLength(2);
+    expect(resetCandidates[1][0].deletedAt).not.toBe(resetCandidates[0][0].deletedAt);
+    expect(getPersistenceSnapshot()).toMatchObject({ error: null, canRetry: false, pendingWrites: 0 });
+  });
+
+  it("keeps a failed undo local and rebuilds it for an in-dialog retry", async () => {
+    const deleted = { ...trade, deletedAt: resetAt, updatedAt: resetAt };
+    const snapshot = { id: "latest", version: 1, resetAt, tradeIds: [trade.id], createdAt: resetAt, updatedAt: resetAt };
+    seed({ trades: [deleted], snapshots: [snapshot] });
+    const originalSetItem = Storage.prototype.setItem;
+    let failed = false;
+    const restoreCandidates: Trade[][] = [];
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, storageKey, value) {
+      if (storageKey === key("trades")) {
+        const candidate = JSON.parse(value) as Trade[];
+        if (candidate.some((item) => item.deletedAt === null)) restoreCandidates.push(candidate);
+      }
+      if (storageKey === key("trade-ledger-reset-snapshots") && value === "[]" && !failed) {
+        failed = true;
+        throw new Error("disk full");
+      }
+      return originalSetItem.call(this, storageKey, value);
+    });
+    renderCard();
+    fireEvent.click(await screen.findByRole("button", { name: "마지막 매매 기록 삭제 되돌리기" }));
+    fireEvent.click(screen.getByRole("button", { name: "기록 복원" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("매매 기록을 복원하지 못했습니다. 현재 데이터는 변경되지 않았습니다.");
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem(key("trades")) ?? "[]")).toEqual([deleted]);
+    expect(JSON.parse(localStorage.getItem(key("trade-ledger-reset-snapshots")) ?? "[]")).toEqual([snapshot]);
+    expect(getPersistenceSnapshot()).toMatchObject({ error: null, canRetry: false, pendingWrites: 0 });
+    expect(screen.queryByRole("button", { name: "재시도" })).not.toBeInTheDocument();
+    const retry = screen.getByRole("button", { name: "기록 복원" });
+    await waitFor(() => expect(retry).toBeEnabled());
+
+    await new Promise((resolve) => window.setTimeout(resolve, 5));
+    fireEvent.click(retry);
+
+    expect(await screen.findByRole("status")).toHaveTextContent("매매 기록 1건을 복원했습니다.");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.getByText("현재 활성 원장 기록: 1건")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "마지막 매매 기록 삭제 되돌리기" })).not.toBeInTheDocument();
+    expect(restoreCandidates).toHaveLength(2);
+    expect(restoreCandidates[1][0].updatedAt).not.toBe(restoreCandidates[0][0].updatedAt);
+    expect(JSON.parse(localStorage.getItem(key("trade-ledger-reset-snapshots")) ?? "null")).toEqual([]);
+    expect(getPersistenceSnapshot()).toMatchObject({ error: null, canRetry: false, pendingWrites: 0 });
   });
 
   it("blocks stale undo without changing data or clearing the snapshot", async () => {
@@ -110,6 +187,62 @@ describe("TradeLedgerResetCard", () => {
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     expect(JSON.parse(localStorage.getItem(key("trades")) ?? "[]")).toEqual([stale]);
     expect(JSON.parse(localStorage.getItem(key("trade-ledger-reset-snapshots")) ?? "[]")).toEqual([snapshot]);
+  });
+
+  it("blocks Reset and Undo without clearing an existing unrelated global failure", async () => {
+    const deleted = { ...trade, deletedAt: resetAt, updatedAt: resetAt };
+    const active = { ...trade, id: "t2", createdAt: "2026-08-22T00:00:00.000Z", updatedAt: "2026-08-22T00:00:00.000Z" };
+    const snapshot = { id: "latest", version: 1, resetAt, tradeIds: [trade.id], createdAt: resetAt, updatedAt: resetAt };
+    seed({ trades: [deleted, active], snapshots: [snapshot] });
+    const originalSetItem = Storage.prototype.setItem;
+    let failed = false;
+    const storageSpy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, storageKey, value) {
+      if (storageKey === key("notes") && !failed) {
+        failed = true;
+        throw new Error("unrelated notes failure");
+      }
+      return originalSetItem.call(this, storageKey, value);
+    });
+    await expect(saveCollection("notes", [{ id: "note-1" }])).rejects.toThrow("unrelated notes failure");
+    storageSpy.mockRestore();
+    const existingError = getPersistenceSnapshot().error;
+
+    renderCard();
+
+    expect(await screen.findByRole("button", { name: "매매 기록 전체 삭제" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "마지막 매매 기록 삭제 되돌리기" })).toBeDisabled();
+    expect(screen.getByText("현재 저장 오류를 먼저 해결한 뒤 매매 원장을 초기화하거나 복원해 주세요.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "재시도" })).toBeEnabled();
+    expect(getPersistenceSnapshot()).toMatchObject({ error: existingError, canRetry: true, pendingWrites: 0 });
+  });
+
+  it("disables Reset and Undo while an unrelated write is pending", async () => {
+    const deleted = { ...trade, deletedAt: resetAt, updatedAt: resetAt };
+    const active = { ...trade, id: "t2", createdAt: "2026-08-22T00:00:00.000Z", updatedAt: "2026-08-22T00:00:00.000Z" };
+    const snapshot = { id: "latest", version: 1, resetAt, tradeIds: [trade.id], createdAt: resetAt, updatedAt: resetAt };
+    seed({ trades: [deleted, active], snapshots: [snapshot] });
+    renderCard();
+    const reset = await screen.findByRole("button", { name: "매매 기록 전체 삭제" });
+    const undo = await screen.findByRole("button", { name: "마지막 매매 기록 삭제 되돌리기" });
+    expect(reset).toBeEnabled();
+    expect(undo).toBeEnabled();
+
+    let finishSave: (() => void) | undefined;
+    tauriMocks.load.mockResolvedValue({ select: vi.fn(), execute: vi.fn() });
+    tauriMocks.invoke.mockImplementation(() => new Promise<void>((resolve) => { finishSave = resolve; }));
+    (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const pendingSave = saveCollection("notes", [{ id: "note-1" }]);
+
+    await waitFor(() => expect(tauriMocks.invoke).toHaveBeenCalledOnce());
+    await waitFor(() => expect(reset).toBeDisabled());
+    expect(undo).toBeDisabled();
+    expect(getPersistenceSnapshot().pendingWrites).toBe(1);
+
+    finishSave?.();
+    await act(async () => { await pendingSave; });
+    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    await waitFor(() => expect(reset).toBeEnabled());
+    expect(undo).toBeEnabled();
   });
 
   it("disables deletion with no data, dismisses by Escape, and restores focus", async () => {

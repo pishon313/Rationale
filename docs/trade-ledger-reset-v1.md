@@ -38,6 +38,8 @@ Reset commits these writes once through `saveCollectionsAtomically()`:
 
 Undo commits the restored Trade collection and empty snapshot collection through the same boundary. Browser localStorage rolls back earlier collection writes if a later write fails. The Tauri command performs collection, Sync outbox, and state updates in one SQLite transaction. Mounted stores update only after persistence succeeds.
 
+Reset and Undo use caller-managed failure handling. A failed destructive write is never added to the application-wide persistence retry queue, so it cannot later be replayed without the Reset card's direct success callback. The failed dialog stays open, and retrying there rebuilds the candidate from the current mounted Trade, Stock, Account, and snapshot collections. A successful direct retry updates persistence and the mounted stores together without a reload. An existing unrelated global save failure blocks opening or executing Reset and Undo until that failure is resolved; its queued writes and error state remain untouched.
+
 ## Sync, Backup, and Import
 
 Sync remains version 1. An ordinary Trade tombstone with a newer `updatedAt` wins over an older active record. Undo produces the same Trade ID with an even newer `updatedAt` and `deletedAt: null`. Sample IDs remain device-local, and the reset snapshot is never a Sync entity.

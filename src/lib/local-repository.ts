@@ -5,6 +5,15 @@ import type { SyncConflictV1, SyncEntityType, SyncEnvelopeV1, SyncWriteSource } 
 
 type Identifiable = { id: string; updatedAt?: string };
 export type CollectionWrite = { collection: string; values: readonly Identifiable[] };
+export type SaveFailurePolicy = "global-retry" | "caller-managed";
+export type SaveCollectionsOptions = {
+  resolveCorruption?: boolean;
+  source?: SyncWriteSource;
+  conflicts?: readonly SyncConflictV1[];
+  acknowledgedRecordNames?: readonly string[];
+  queuedEnvelopes?: readonly SyncEnvelopeV1[];
+  failurePolicy?: SaveFailurePolicy;
+};
 export type PersistenceSnapshot = { pendingWrites: number; error: string | null; canRetry: boolean; lastSavedAt: string | null };
 export type CorruptionSource = "localStorage" | "sqlite";
 export type CorruptionErrorType = "JSON_PARSE_ERROR" | CollectionValidationErrorType;
@@ -150,12 +159,13 @@ export async function saveCollection<T extends Identifiable>(collection: string,
   await saveCollectionsAtomically([{ collection, values }]);
 }
 
-export function saveCollectionsAtomically(writes: readonly CollectionWrite[], options: { resolveCorruption?: boolean; source?: SyncWriteSource; conflicts?: readonly SyncConflictV1[]; acknowledgedRecordNames?: readonly string[]; queuedEnvelopes?: readonly SyncEnvelopeV1[] } = {}) {
+export function saveCollectionsAtomically(writes: readonly CollectionWrite[], options: SaveCollectionsOptions = {}) {
   assertUniqueCollections(writes);
+  const failurePolicy = options.failurePolicy ?? "global-retry";
   const blocked = writes.map((write) => write.collection).filter(hasUnresolvedCorruption);
   if (blocked.length && !options.resolveCorruption) {
     const error = new Error(`손상된 데이터의 복구 방법을 선택하기 전에는 저장할 수 없습니다: ${blocked.join(", ")}`);
-    updatePersistence({ error: error.message, canRetry: false });
+    if (failurePolicy === "global-retry") updatePersistence({ error: error.message, canRetry: false });
     return Promise.reject(error);
   }
   const prepared = versionWrites(cloneWrites(writes));
@@ -169,7 +179,9 @@ export function saveCollectionsAtomically(writes: readonly CollectionWrite[], op
       if (options.resolveCorruption) resolveCorruption(prepared.map((write) => write.collection));
     },
     (error) => {
-      recordFailure(prepared, error, { source: options.source ?? "localUser", conflicts: options.conflicts ?? [], acknowledgedRecordNames: options.acknowledgedRecordNames ?? [], queuedEnvelopes: options.queuedEnvelopes ?? [] });
+      if (failurePolicy === "global-retry") {
+        recordFailure(prepared, error, { source: options.source ?? "localUser", conflicts: options.conflicts ?? [], acknowledgedRecordNames: options.acknowledgedRecordNames ?? [], queuedEnvelopes: options.queuedEnvelopes ?? [] });
+      }
       throw error;
     },
   ).finally(() => updatePersistence({ pendingWrites: Math.max(0, persistenceSnapshot.pendingWrites - 1) }));

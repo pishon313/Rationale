@@ -43,9 +43,10 @@ export function TradeLedgerResetCard() {
   const relevantCollections = new Set(["trades", "stocks", tradeLedgerResetSnapshotCollection]);
   const hasCorruption = corruption.collections.some((item) => relevantCollections.has(item.collection));
   const pending = persistence.pendingWrites > 0;
+  const hasGlobalPersistenceFailure = Boolean(persistence.error) || persistence.canRetry;
   const legacyBlocked = migration.unresolvedStockIds.length > 0;
-  const canReset = ready && !pending && !saving && !hasCorruption && !legacyBlocked && impact.totalRecords > 0;
-  const canUndo = ready && !pending && !saving && !hasCorruption && Boolean(snapshot);
+  const canReset = ready && !pending && !hasGlobalPersistenceFailure && !saving && !hasCorruption && !legacyBlocked && impact.totalRecords > 0;
+  const canUndo = ready && !pending && !hasGlobalPersistenceFailure && !saving && !hasCorruption && Boolean(snapshot);
 
   function restoreFocus(target: React.RefObject<HTMLButtonElement | null>) {
     window.setTimeout(() => {
@@ -68,7 +69,8 @@ export function TradeLedgerResetCard() {
   }
 
   async function resetLedger() {
-    if (!confirmed || !canReset) return;
+    const latestPersistence = getPersistenceSnapshot();
+    if (!confirmed || !canReset || latestPersistence.pendingWrites > 0 || Boolean(latestPersistence.error) || latestPersistence.canRetry) return;
     setSaving(true);
     setMessage(null);
     try {
@@ -96,7 +98,8 @@ export function TradeLedgerResetCard() {
   }
 
   async function undoReset() {
-    if (!snapshot || !canUndo) return;
+    const latestPersistence = getPersistenceSnapshot();
+    if (!snapshot || !canUndo || latestPersistence.pendingWrites > 0 || Boolean(latestPersistence.error) || latestPersistence.canRetry) return;
     setSaving(true);
     setMessage(null);
     try {
@@ -126,6 +129,7 @@ export function TradeLedgerResetCard() {
           <p className="mt-2 text-xs leading-5 text-[var(--muted)]">{t("삭제된 기록은 원장 계산과 화면에서 제외됩니다. 동기화와 복구를 위해 삭제 기록 자체는 보존됩니다.")}</p>
           {legacyBlocked && <p role="alert" className="mt-3 rounded-lg bg-amber-50 p-3 text-xs leading-5 text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">{t("기존 보유 수량과 매매 원장이 일치하지 않는 종목이 있습니다. 매매 원장에서 해당 기록을 먼저 확인한 뒤 다시 시도해 주세요.")}</p>}
           {hasCorruption && <p role="alert" className="mt-3 rounded-lg bg-amber-50 p-3 text-xs leading-5 text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">{t("손상된 데이터의 복구 방법을 선택하기 전에는 매매 원장을 초기화할 수 없습니다.")}</p>}
+          {hasGlobalPersistenceFailure && <p role="alert" className="mt-3 rounded-lg bg-amber-50 p-3 text-xs leading-5 text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">{t("현재 저장 오류를 먼저 해결한 뒤 매매 원장을 초기화하거나 복원해 주세요.")}</p>}
           {message && !resetOpen && !undoOpen && <MessageBanner message={message} />}
           <div className="mt-4 flex flex-wrap gap-2">
             <button ref={resetTrigger} type="button" disabled={!canReset} onClick={() => { setMessage(null); setConfirmed(false); setResetOpen(true); }} className="flex items-center gap-2 rounded-lg bg-red-700 px-4 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-50"><Trash2 size={16} aria-hidden="true" />{t("매매 기록 전체 삭제")}</button>
@@ -155,7 +159,7 @@ export function TradeLedgerResetCard() {
         <p className="mt-4 text-xs text-[var(--muted)]">{t("매매 {security}건 · 배당 {dividend}건 · 현금흐름 {cash}건 · 이체 {transfer}쌍 · 기초 포지션 {opening}건 · 가져온 기록 {imported}건", { security: formatNumber(impact.securityRecords), dividend: formatNumber(impact.dividendRecords), cash: formatNumber(impact.cashFlowRecords), transfer: formatNumber(impact.transferPairs), opening: formatNumber(impact.openingPositions), imported: formatNumber(impact.importedRecords) })}</p>
         {message?.kind === "error" && <MessageBanner message={message} />}
         <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm"><input autoFocus type="checkbox" checked={confirmed} disabled={saving} onChange={(event) => setConfirmed(event.target.checked)} className="mt-0.5 size-4" /><span>{t("삭제 범위와 영향을 확인했습니다.")}</span></label>
-        <div className="mt-5 flex justify-end gap-2"><button type="button" disabled={saving} onClick={closeReset} className="rounded-lg border px-4 py-2 text-sm disabled:opacity-50">{t("취소")}</button><button type="button" disabled={!confirmed || saving} onClick={() => void resetLedger()} className="rounded-lg bg-red-700 px-4 py-2 text-sm text-white disabled:opacity-50">{saving ? t("삭제 중...") : t("매매 기록 {count}건 삭제", { count: formatNumber(impact.totalRecords) })}</button></div>
+        <div className="mt-5 flex justify-end gap-2"><button type="button" disabled={saving} onClick={closeReset} className="rounded-lg border px-4 py-2 text-sm disabled:opacity-50">{t("취소")}</button><button type="button" disabled={!confirmed || !canReset} onClick={() => void resetLedger()} className="rounded-lg bg-red-700 px-4 py-2 text-sm text-white disabled:opacity-50">{saving ? t("삭제 중...") : t("매매 기록 {count}건 삭제", { count: formatNumber(impact.totalRecords) })}</button></div>
       </section>
     </div>}
 
@@ -165,7 +169,7 @@ export function TradeLedgerResetCard() {
         <p id="trade-reset-undo-description" className="mt-2 text-sm leading-6 text-[var(--muted)]">{t("최근 전체 삭제의 대상 기록 {count}건을 복원합니다.", { count: formatNumber(snapshot.tradeIds.length) })}</p>
         {impact.totalRecords > 0 && <p className="mt-3 rounded-lg bg-[var(--surface-muted)] p-3 text-xs leading-5 text-[var(--muted)]">{t("삭제 후 추가한 기록은 유지하고 이전 기록을 복원합니다.")}</p>}
         {message?.kind === "error" && <MessageBanner message={message} />}
-        <div className="mt-5 flex justify-end gap-2"><button autoFocus type="button" disabled={saving} onClick={closeUndo} className="rounded-lg border px-4 py-2 text-sm disabled:opacity-50">{t("취소")}</button><button type="button" disabled={saving} onClick={() => void undoReset()} className="flex items-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm text-white disabled:opacity-50"><RotateCcw size={15} aria-hidden="true" />{saving ? t("복원 중...") : t("기록 복원")}</button></div>
+        <div className="mt-5 flex justify-end gap-2"><button autoFocus type="button" disabled={saving} onClick={closeUndo} className="rounded-lg border px-4 py-2 text-sm disabled:opacity-50">{t("취소")}</button><button type="button" disabled={!canUndo} onClick={() => void undoReset()} className="flex items-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm text-white disabled:opacity-50"><RotateCcw size={15} aria-hidden="true" />{saving ? t("복원 중...") : t("기록 복원")}</button></div>
       </section>
     </div>}
   </>;
