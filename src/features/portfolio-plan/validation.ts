@@ -8,6 +8,7 @@ export function validatePortfolioPlanStateRecord(value: Record<string, unknown>)
 export function validatePortfolioPlanRevisionRecord(value: Record<string, unknown>) {
   if (!nonEmptyString(value.id) || !Number.isInteger(value.revisionNumber) || Number(value.revisionNumber) <= 0) throw new Error("포트폴리오 계획 리비전 번호가 올바르지 않습니다.");
   if (value.basedOnRevisionId !== null && !nonEmptyString(value.basedOnRevisionId)) throw new Error("포트폴리오 계획 기반 리비전이 올바르지 않습니다.");
+  if (value.targetAmountKrw !== undefined && value.targetAmountKrw !== null && (!Number.isSafeInteger(value.targetAmountKrw) || Number(value.targetAmountKrw) < 0)) throw new Error("포트폴리오 목표 운용 금액이 올바르지 않습니다.");
   if (typeof value.thesis !== "string" || typeof value.changeNote !== "string") throw new Error("포트폴리오 계획 근거가 올바르지 않습니다.");
   if (!timestamp(value.createdAt) || !timestamp(value.updatedAt) || value.activatedAt !== null && !timestamp(value.activatedAt)) throw new Error("포트폴리오 계획 일시가 올바르지 않습니다.");
 }
