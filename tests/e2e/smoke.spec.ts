@@ -36,6 +36,36 @@ test("대시보드 앱 셸을 표시한다", async ({ page }) => {
   await expect(page.getByRole("navigation", { name: "주요 메뉴" })).toBeVisible();
 });
 
+test("포트폴리오 셸이 여섯 경로를 공유하고 Allocation의 기존 경로를 유지한다", async ({ page }) => {
+  await page.goto("/portfolio");
+  const nav = page.getByRole("navigation", { name: "포트폴리오 메뉴" });
+  await expect(nav).toBeVisible();
+  await expect(nav.getByRole("link")).toHaveCount(6);
+  await expect(nav.getByRole("link", { name: "배분" })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("heading", { name: "목표 배분 워크시트" })).toBeVisible();
+
+  await nav.getByRole("link", { name: "보유 자산" }).click();
+  await expect(page).toHaveURL(/\/portfolio\/holdings$/);
+  await expect(page.getByRole("heading", { name: "보유 자산" })).toBeVisible();
+  await expect(nav.getByRole("link", { name: "보유 자산" })).toHaveAttribute("aria-current", "page");
+
+  await nav.getByRole("link", { name: "배분" }).click();
+  await expect(page).toHaveURL(/\/portfolio$/);
+  await expect(page.getByRole("heading", { name: "목표 배분 워크시트" })).toBeVisible();
+});
+
+test("포트폴리오 셸은 320px에서 모든 탭과 핵심 메타데이터를 가로 스크롤 없이 표시한다", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.goto("/portfolio/reports");
+  const nav = page.getByRole("navigation", { name: "포트폴리오 메뉴" });
+  await expect(nav.getByRole("link")).toHaveCount(6);
+  await expect(nav.getByRole("link", { name: "보고서" })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByLabel("포트폴리오 선택")).toBeVisible();
+  await expect(page.getByText("기준 통화", { exact: true })).toBeVisible();
+  const widths = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }));
+  expect(widths.content).toBeLessThanOrEqual(widths.viewport);
+});
+
 test("대시보드 자산을 내 분류와 시장 섹터로 전환하고 보기·색상·비중을 안정적으로 유지한다", async ({ page }) => {
   const stocks = [
     e2eStock("core-tech", "코어 기술", "Core", { marketSector: "information-technology", status: "보유", quantity: 6, averagePrice: 80, currentPrice: 100, ledgerInitializedAt: null }),
