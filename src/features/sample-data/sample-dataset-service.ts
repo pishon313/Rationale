@@ -2,6 +2,7 @@ import type { InvestmentAccount } from "@/features/accounts/types";
 import type { Note } from "@/features/notes/types";
 import type { Observation } from "@/features/observations/types";
 import type { BuyPlan } from "@/features/plans/types";
+import type { PortfolioAllocationTarget } from "@/features/portfolio-plan/types";
 import type { Review } from "@/features/reviews/types";
 import type { InvestmentRule } from "@/features/rules/types";
 import type { Stock } from "@/features/stocks/types";
@@ -10,18 +11,19 @@ import { loadCollection, saveCollectionsAtomically, type CollectionWrite } from 
 import { buildSampleDataset, knownSampleIds, sampleCollectionNames, type SampleCollectionName, type SampleDataset } from "./sample-dataset";
 
 export type SampleDatasetState = "none" | "installed" | "partial";
-export type SampleCollections = SampleDataset;
-export type SampleDependencySummary = Partial<Record<SampleCollectionName, number>>;
+export type SampleCollections = SampleDataset & { portfolioAllocationTargets: PortfolioAllocationTarget[] };
+export type SampleDependencySummary = Partial<Record<SampleCollectionName | "portfolioAllocationTargets", number>>;
 
 export async function loadSampleCollections(): Promise<SampleCollections> {
-  const [accounts, stocks, trades, plans, observations, reviews, rules, notes] = await Promise.all([
+  const [accounts, stocks, trades, plans, observations, reviews, rules, notes, portfolioAllocationTargets] = await Promise.all([
     loadCollection<InvestmentAccount>("accounts", []), loadCollection<Stock>("stocks", []), loadCollection<Trade>("trades", []), loadCollection<BuyPlan>("plans", []),
     loadCollection<Observation>("observations", []), loadCollection<Review>("reviews", []), loadCollection<InvestmentRule>("rules", []), loadCollection<Note>("notes", []),
+    loadCollection<PortfolioAllocationTarget>("portfolio-allocation-targets", []),
   ]);
-  return { accounts, stocks, trades, plans, observations, reviews, rules, notes };
+  return { accounts, stocks, trades, plans, observations, reviews, rules, notes, portfolioAllocationTargets };
 }
 
-export function deriveSampleDatasetState(collections: SampleCollections, dataset = buildSampleDataset(new Date())): SampleDatasetState {
+export function deriveSampleDatasetState(collections: SampleDataset, dataset = buildSampleDataset(new Date())): SampleDatasetState {
   const known = knownSampleIds(dataset); let found = 0; let expected = 0;
   for (const name of sampleCollectionNames) { expected += known[name].size; found += collections[name].filter((item) => known[name].has(item.id)).length; }
   return found === 0 ? "none" : found === expected ? "installed" : "partial";
@@ -57,6 +59,7 @@ function findUserDependencies(current: SampleCollections, known: ReturnType<type
     plans: count("plans", (item: BuyPlan) => known.stocks.has(item.stockId)),
     observations: count("observations", (item: Observation) => Boolean(item.stockId && known.stocks.has(item.stockId))),
     reviews: count("reviews", (item: Review) => Boolean(item.stockId && known.stocks.has(item.stockId) || item.tradeId && known.trades.has(item.tradeId))),
+    portfolioAllocationTargets: current.portfolioAllocationTargets.filter((target) => target.targetType === "stock" && known.stocks.has(target.stockId)).length,
   };
   return Object.fromEntries(Object.entries(summary).filter(([, value]) => value)) as SampleDependencySummary;
 }

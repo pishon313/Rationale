@@ -26,6 +26,8 @@ There is deliberately no revision-history UI in v1.
 
 Targets reference existing `Stock.id` values; they do not duplicate ticker, name, exchange, currency, or provider identity. Cash is a target type, not a synthetic Stock. Target weights are integer basis points and an activated revision must total exactly 10,000 bps. A revision permits each Stock once and at most one Cash target. `PortfolioPlanRevision.targetAmountKrw` stores the user-entered operating amount; each row target amount is derived as `targetAmountKrw × targetWeightBps ÷ 10,000` and is never persisted separately. Legacy revisions without the field fall back to the currently valued portfolio total.
 
+Because revisions are immutable, sample Stocks referenced by any historical allocation target are treated as user dependencies. Sample-data removal is blocked before those Stock records can be removed and orphan the plan history.
+
 ## Source-of-truth boundaries
 
 Portfolio Plan stores intent only. Existing data remains authoritative for actual economics:

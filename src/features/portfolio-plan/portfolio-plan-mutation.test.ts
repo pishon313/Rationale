@@ -30,6 +30,7 @@ describe("Portfolio Plan activation", () => {
     await persistPortfolioPlanActivation(activation, save);
     expect(save).toHaveBeenCalledTimes(1);
     expect(save.mock.calls[0][0].map((write: { collection: string }) => write.collection)).toEqual(["portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-targets"]);
+    expect(save).toHaveBeenCalledWith(activation.writes, { failurePolicy: "caller-managed" });
   });
 
   it("editing creates revision 2 and preserves the activated historical revision and targets", () => {
@@ -42,7 +43,9 @@ describe("Portfolio Plan activation", () => {
 
   it("does not expose a switched active state when atomic persistence fails", async () => {
     const activation = buildPortfolioPlanActivation({ states: [state], revisions: [first], targets: [firstTarget], stocks: sampleStocks, draftTargets: [{ targetType: "stock", stockId: sampleStocks[0].id, targetWeightBps: 10000, sortOrder: 0 }], targetAmountKrw: 1_800_000, thesis: "", changeNote: "", now, revisionId: "r2", targetIds: ["t2"] });
-    await expect(persistPortfolioPlanActivation(activation, vi.fn().mockRejectedValue(new Error("disk full")))).rejects.toThrow("disk full");
+    const save = vi.fn().mockRejectedValue(new Error("disk full"));
+    await expect(persistPortfolioPlanActivation(activation, save)).rejects.toThrow("disk full");
+    expect(save).toHaveBeenCalledWith(activation.writes, { failurePolicy: "caller-managed" });
     expect(state.activeRevisionId).toBe("r1");
     expect(firstTarget.revisionId).toBe("r1");
   });

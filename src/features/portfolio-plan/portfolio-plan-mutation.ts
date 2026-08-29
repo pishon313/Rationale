@@ -61,5 +61,5 @@ export function buildPortfolioPlanActivation(input: {
 }
 
 export async function persistPortfolioPlanActivation(activation: PortfolioPlanActivation, save = saveCollectionsAtomically) {
-  await save(activation.writes);
+  await save(activation.writes, { failurePolicy: "caller-managed" });
 }

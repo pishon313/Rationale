@@ -2,9 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { buildSampleDataset, knownSampleIds, sampleCollectionNames, validateSampleDataset } from "./sample-dataset";
 import { deriveSampleDatasetState, installSampleDataset, removeSampleDataset, SampleDependencyError, type SampleCollections } from "./sample-dataset-service";
 import { validateBackupPayload } from "@/features/settings/backup";
+import type { PortfolioAllocationTarget } from "@/features/portfolio-plan/types";
 
 const now = "2026-08-10T12:00:00.000Z";
-const empty = (): SampleCollections => ({ accounts: [], stocks: [], trades: [], plans: [], observations: [], reviews: [], rules: [], notes: [] });
+const empty = (): SampleCollections => ({ accounts: [], stocks: [], trades: [], plans: [], observations: [], reviews: [], rules: [], notes: [], portfolioAllocationTargets: [] });
 
 describe("Sample Dataset v1", () => {
   it("builds deterministic, valid, relative sample records", () => {
@@ -48,7 +49,7 @@ describe("Sample Dataset v1", () => {
 
   it("removes exact IDs atomically while preserving user records", async () => {
     const sample = buildSampleDataset(now); const userNote = { ...sample.notes[0], id: "user:note" };
-    let stored: SampleCollections = { ...sample, notes: [...sample.notes, userNote] };
+    let stored: SampleCollections = { ...sample, notes: [...sample.notes, userNote], portfolioAllocationTargets: [] };
     const save = vi.fn(async (writes) => { stored = Object.fromEntries(writes.map((write: { collection: string; values: unknown[] }) => [write.collection, write.values])) as SampleCollections; });
     await removeSampleDataset(now, { load: async () => stored, save });
     expect(save).toHaveBeenCalledTimes(1); expect(stored.notes).toEqual([userNote]);
@@ -57,9 +58,21 @@ describe("Sample Dataset v1", () => {
 
   it("blocks removal when user records reference sample entities", async () => {
     const sample = buildSampleDataset(now);
-    const stored = { ...sample, trades: [...sample.trades, { ...sample.trades[1], id: "user:trade" }] };
+    const stored: SampleCollections = { ...sample, trades: [...sample.trades, { ...sample.trades[1], id: "user:trade" }], portfolioAllocationTargets: [] };
     const save = vi.fn();
     await expect(removeSampleDataset(now, { load: async () => stored, save })).rejects.toBeInstanceOf(SampleDependencyError);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("blocks removal when an immutable Portfolio Plan target references a sample Stock", async () => {
+    const sample = buildSampleDataset(now);
+    const target: PortfolioAllocationTarget = { id: "user:portfolio-target", revisionId: "user:portfolio-revision", targetType: "stock", stockId: sample.stocks[0].id, targetWeightBps: 10000, sortOrder: 0, updatedAt: now };
+    const stored: SampleCollections = { ...sample, portfolioAllocationTargets: [target] };
+    const save = vi.fn();
+
+    await expect(removeSampleDataset(now, { load: async () => stored, save })).rejects.toMatchObject({
+      summary: { portfolioAllocationTargets: 1 },
+    });
     expect(save).not.toHaveBeenCalled();
   });
 });
