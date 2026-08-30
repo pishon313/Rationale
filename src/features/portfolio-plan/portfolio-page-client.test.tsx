@@ -43,7 +43,7 @@ describe("Portfolio Overview", () => {
     expect(screen.getByRole("heading", { name: "현재 자산과 다음 저축 계획을 한눈에 보세요." })).toBeInTheDocument();
     expect(screen.getByText("아직 평가할 자산이 없습니다.")).toBeInTheDocument();
     expect(screen.getByText("아직 Contribution Plan이 없습니다.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Plan 만들기" })).toHaveAttribute("href", "/portfolio/plan");
+    expect(screen.getAllByRole("link", { name: "Plan 만들기" })[0]).toHaveAttribute("href", "/portfolio/plan");
   });
 
   it("renders current assets separately from the normalized next contribution", () => {
@@ -69,10 +69,35 @@ describe("Portfolio Overview", () => {
     mocks.ledger = { ...mocks.ledger, positions: [{ key: "p", stockId: sampleStocks[0]!.id, stockName: "Samsung", accountId: "a", accountName: "A", currency: "KRW", quantity: 80_000, averagePrice: 0, investedAmount: 0, investedAmountKrw: 0, realizedProfit: 0, realizedProfitKrw: 0 }] };
     render(<PortfolioPageClient />);
     expect(screen.getByText("균형 맞추기 제안")).toBeInTheDocument();
-    expect(screen.getAllByText("목표 비중")).toHaveLength(3);
+    expect(within(screen.getByRole("region", { name: "현재 자산 배분" })).getByText("현재 / 목표")).toBeInTheDocument();
+    expect(screen.getByText("조정 필요")).toBeInTheDocument();
+    expect(screen.getByText("목표보다 30%p 부족")).toBeInTheDocument();
     expect(screen.getByText("₩1,350,000")).toBeInTheDocument();
     expect(screen.getByText("₩450,000")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Plan에서 금액과 비율 수정" })).toHaveAttribute("href", "/portfolio/plan");
+  });
+
+  it("shows Allocation targets even before a Plan or Account exists", () => {
+    mocks.collections.set("portfolio-plan-state", [{ ...state, activeRevisionId: null, balancePolicy: { version: 1, mode: "fixed", targetWeightsBps: { savings: 3000, stocks: 6000, bonds: 1000 }, toleranceBps: 500, updatedAt: now } }]);
+    render(<PortfolioPageClient />);
+    const allocation = screen.getByRole("region", { name: "현재 자산 배분" });
+    expect(within(allocation).getByText("현재 자산은 없지만 저장된 Allocation 목표는 확인할 수 있습니다.")).toBeInTheDocument();
+    expect(within(allocation).getByText("현금성 자산")).toBeInTheDocument();
+    expect(screen.getByText("비교 대기")).toBeInTheDocument();
+  });
+
+  it("shows optional stock targets with their next contribution amounts", () => {
+    reset(true);
+    mocks.collections.set("portfolio-plan-state", [{ ...state, balancePolicy: {
+      version: 1, mode: "fixed", targetWeightsBps: { savings: 0, stocks: 10000, bonds: 0 }, toleranceBps: 500,
+      stockTargets: [{ stockId: sampleStocks[0]!.id, targetWeightBps: 7000 }, { stockId: sampleStocks[1]!.id, targetWeightBps: 3000 }], stockToleranceBps: 300, updatedAt: now,
+    } }]);
+    render(<PortfolioPageClient />);
+    const stockPlan = screen.getByRole("region", { name: "종목별 다음 투자 계획" });
+    expect(within(stockPlan).getByText("삼성전자")).toBeInTheDocument();
+    expect(within(stockPlan).getByText("현대차")).toBeInTheDocument();
+    expect(within(stockPlan).getByText("₩1,260,000")).toBeInTheDocument();
+    expect(within(stockPlan).getByText("₩540,000")).toBeInTheDocument();
   });
 
   it("atomically upgrades locally stored V6 Portfolio records before rendering", async () => {
