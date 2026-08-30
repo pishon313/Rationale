@@ -12,6 +12,7 @@ const phaseTwoKeys = [
   "Group 내부 Target 비중 합계는 정확히 100%여야 합니다.",
   "Allocation Group 비중 합계는 정확히 100%여야 합니다.",
   "This Contribution",
+  "수동 실행표",
   "새 리비전 저장",
   "Contribution 저장",
   "이전 Plan의 Account 연결을 완료해 주세요.",

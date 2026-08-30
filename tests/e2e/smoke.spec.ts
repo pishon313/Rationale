@@ -36,30 +36,30 @@ test("대시보드 앱 셸을 표시한다", async ({ page }) => {
   await expect(page.getByRole("navigation", { name: "주요 메뉴" })).toBeVisible();
 });
 
-test("포트폴리오 셸이 여섯 경로를 공유하고 Allocation의 기존 경로를 유지한다", async ({ page }) => {
+test("포트폴리오 셸이 Overview와 Plan 두 경로를 공유한다", async ({ page }) => {
   await page.goto("/portfolio");
   const nav = page.getByRole("navigation", { name: "포트폴리오 메뉴" });
   await expect(nav).toBeVisible();
-  await expect(nav.getByRole("link")).toHaveCount(6);
-  await expect(nav.getByRole("link", { name: "배분" })).toHaveAttribute("aria-current", "page");
-  await expect(page.getByRole("heading", { name: "목표 배분 워크시트" })).toBeVisible();
+  await expect(nav.getByRole("link")).toHaveCount(2);
+  await expect(nav.getByRole("link", { name: "개요" })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("heading", { name: "포트폴리오" })).toBeVisible();
 
-  await nav.getByRole("link", { name: "보유 자산" }).click();
-  await expect(page).toHaveURL(/\/portfolio\/holdings$/);
-  await expect(page.getByRole("heading", { name: "보유 자산" })).toBeVisible();
-  await expect(nav.getByRole("link", { name: "보유 자산" })).toHaveAttribute("aria-current", "page");
+  await nav.getByRole("link", { name: "계획" }).click();
+  await expect(page).toHaveURL(/\/portfolio\/plan$/);
+  await expect(page.getByRole("heading", { name: "배분을 실행 가능한 금액으로 전환합니다." })).toBeVisible();
+  await expect(nav.getByRole("link", { name: "계획" })).toHaveAttribute("aria-current", "page");
 
-  await nav.getByRole("link", { name: "배분" }).click();
+  await nav.getByRole("link", { name: "개요" }).click();
   await expect(page).toHaveURL(/\/portfolio$/);
-  await expect(page.getByRole("heading", { name: "목표 배분 워크시트" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "포트폴리오" })).toBeVisible();
 });
 
-test("포트폴리오 셸은 320px에서 모든 탭과 핵심 메타데이터를 가로 스크롤 없이 표시한다", async ({ page }) => {
+test("포트폴리오 셸은 320px에서 두 탭과 핵심 메타데이터를 가로 스크롤 없이 표시한다", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 844 });
-  await page.goto("/portfolio/reports");
+  await page.goto("/portfolio/plan");
   const nav = page.getByRole("navigation", { name: "포트폴리오 메뉴" });
-  await expect(nav.getByRole("link")).toHaveCount(6);
-  await expect(nav.getByRole("link", { name: "보고서" })).toHaveAttribute("aria-current", "page");
+  await expect(nav.getByRole("link")).toHaveCount(2);
+  await expect(nav.getByRole("link", { name: "계획" })).toHaveAttribute("aria-current", "page");
   await expect(page.getByLabel("포트폴리오 선택")).toBeVisible();
   await expect(page.getByText("기준 통화", { exact: true })).toBeVisible();
   const widths = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }));

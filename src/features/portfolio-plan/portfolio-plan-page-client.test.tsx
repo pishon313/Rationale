@@ -36,7 +36,7 @@ describe("Contribution Plan page", () => {
 
   it("builds and activates the first complete Group/Target plan", async () => {
     render(<PortfolioPlanPageClient />);
-    expect(screen.getByRole("heading", { name: "Contribution Plan" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "배분을 실행 가능한 금액으로 전환합니다." })).toBeInTheDocument();
     expect(screen.getByText("첫 Allocation Group을 추가해 주세요.")).toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: "Allocation Group 추가" })[0]!);
     fireEvent.change(screen.getByLabelText(/^Group 이름/), { target: { value: "Core" } });
@@ -97,8 +97,9 @@ describe("Contribution Plan page", () => {
     render(<PortfolioPlanPageClient />);
     expect(screen.getByText("01 · Contribution Amount")).toBeInTheDocument();
     expect(screen.getByText("02 · Target Allocation")).toBeInTheDocument();
-    const summary = screen.getByRole("complementary", { name: "This Contribution" });
+    const summary = screen.getByRole("complementary", { name: "수동 실행표" });
     expect(within(summary).getByText("03 · This Contribution")).toBeInTheDocument();
+    expect(within(summary).getByRole("heading", { name: "수동 실행표" })).toBeInTheDocument();
     expect(within(summary).getByLabelText("합계")).toHaveTextContent("₩1,000,000");
     expect(within(summary).getByText("Rationale은 주문을 실행하지 않습니다. 계산된 금액을 사용해 관련 은행 또는 증권 계좌에서 직접 매수하세요.")).toBeInTheDocument();
   });

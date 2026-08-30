@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRight, CircleDollarSign, Info, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, CircleDollarSign, Info, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
 import { calculateContributionPlan, type ContributionPlanCalculation } from "@/domain/portfolio-contribution";
 import { currencies, minorUnitsToMajor, type Currency } from "@/domain/currency";
@@ -237,12 +237,12 @@ function PortfolioPlanEditor({ state, activeRevision, revisions, groups, targets
               const groupErrorPath = `groups.${group.id}`;
               const groupAmount = calculation?.groups.find((item) => item.groupId === group.id)?.amountMinor;
               return <article key={group.id} className="overflow-visible rounded-xl border bg-[var(--surface)]">
-                <div className="grid min-w-0 grid-cols-[2.5rem_minmax(0,1fr)_2.5rem] gap-2 p-3 lg:grid-cols-[2.5rem_minmax(10rem,1fr)_7rem_9rem_2.5rem] lg:items-center">
+                <div className="grid min-w-0 grid-cols-[2.5rem_minmax(0,1fr)_5.5rem_2.5rem] items-center gap-2 p-3 lg:grid-cols-[2.5rem_minmax(10rem,1fr)_7rem_9rem_2.5rem]">
                   <button type="button" aria-expanded={Boolean(expanded[group.id])} aria-label={t("{name} Group 펼치기", { name: group.name || t("이름 없는") })} onClick={() => setExpanded((current) => ({ ...current, [group.id]: !current[group.id] }))} className="grid size-10 place-items-center rounded-lg bg-[var(--surface-muted)] text-[var(--muted)]"><ChevronRight size={18} aria-hidden="true" className={`transition-transform ${expanded[group.id] ? "rotate-90" : ""}`} /></button>
-                  <div className="col-start-2 row-start-1 min-w-0 lg:col-auto lg:row-auto"><LabeledInput label={t("Group 이름")} value={group.name} onChange={(value) => updateGroup(group.id, (current) => ({ ...current, name: value }))} error={validation.fields[`${groupErrorPath}.name`]} labelDisplay="sr-only" /></div>
-                  <div className="col-start-2 row-start-2 lg:col-auto lg:row-auto"><LabeledInput label={t("Target Weight") + " (%)"} value={group.weightInput} inputMode="decimal" onChange={(value) => updateGroup(group.id, (current) => ({ ...current, weightInput: value }))} error={validation.fields[`${groupErrorPath}.weight`]} /></div>
-                  <div className="col-start-2 row-start-3 lg:col-auto lg:row-auto"><ReadOnlyMetric label={t("Contribution 금액")} value={groupAmount === undefined ? "—" : formatCurrency(minorUnitsToMajor(groupAmount, draft.contributionCurrency), draft.contributionCurrency, localeTag)} compact /></div>
-                  <button type="button" aria-label={t("{name} Group 삭제", { name: group.name || t("이름 없는") })} onClick={() => deleteGroup(group)} className="col-start-3 row-start-1 grid size-10 place-items-center rounded-lg text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/30 lg:col-auto lg:row-auto"><Trash2 size={17} aria-hidden="true" /></button>
+                  <div className="min-w-0"><LabeledInput label={t("Group 이름")} value={group.name} onChange={(value) => updateGroup(group.id, (current) => ({ ...current, name: value }))} error={validation.fields[`${groupErrorPath}.name`]} labelDisplay="sr-only" plain /></div>
+                  <PercentageInput label={t("Target Weight")} value={group.weightInput} onChange={(value) => updateGroup(group.id, (current) => ({ ...current, weightInput: value }))} error={validation.fields[`${groupErrorPath}.weight`]} />
+                  <div className="hidden lg:block"><ReadOnlyMetric label={t("Contribution 금액")} value={groupAmount === undefined ? "—" : formatCurrency(minorUnitsToMajor(groupAmount, draft.contributionCurrency), draft.contributionCurrency, localeTag)} compact /></div>
+                  <button type="button" aria-label={t("{name} Group 삭제", { name: group.name || t("이름 없는") })} onClick={() => deleteGroup(group)} className="grid size-10 place-items-center rounded-lg text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/30"><Trash2 size={17} aria-hidden="true" /></button>
                 </div>
                 {expanded[group.id] && <div className="border-t bg-[var(--surface-muted)]/30">
                   <div className="hidden min-h-9 grid-cols-[minmax(9rem,1.15fr)_minmax(8.5rem,1fr)_7rem_6rem_7.5rem_2.5rem] items-center gap-3 px-3 text-[0.65rem] font-semibold uppercase tracking-[0.08em] text-[var(--muted)] lg:grid"><span>{t("Target")}</span><span>{t("Account")}</span><span>{t("Within Group")}</span><span className="text-right">{t("유효 배분")}</span><span className="text-right">{t("Contribution 금액")}</span><span /></div>
@@ -255,8 +255,8 @@ function PortfolioPlanEditor({ state, activeRevision, revisions, groups, targets
             })}</div>}
         </section>
 
-        <details className="rounded-2xl border bg-[var(--surface)]">
-          <summary className="flex min-h-14 cursor-pointer items-center justify-between gap-3 px-4 font-medium sm:px-5"><span>{t("Investment Thesis와 Change Note")} <span className="font-normal text-[var(--muted)]">· {t("선택 사항")}</span></span><ChevronRight size={17} aria-hidden="true" className="text-[var(--muted)]" /></summary>
+        <details className="group rounded-2xl border bg-[var(--surface)]">
+          <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 px-4 font-medium sm:px-5"><span>{t("Investment Thesis와 Change Note")} <span className="font-normal text-[var(--muted)]">· {t("선택 사항")}</span></span><ChevronDown size={17} aria-hidden="true" className="text-[var(--muted)] transition-transform group-open:rotate-180" /></summary>
           <div className="grid gap-4 border-t p-4 sm:p-5 lg:grid-cols-2"><label className="text-sm font-medium">{t("투자 근거 (선택)")}<textarea value={draft.thesis} onChange={(event) => { setDraft((current) => ({ ...current, thesis: event.target.value })); clearFeedback(); }} rows={4} className="mt-1 w-full resize-y rounded-lg border bg-[var(--surface)] p-3 font-normal" /></label>{activeRevision && changeKind === "revision" && <label className="text-sm font-medium">{t("변경 이유 (선택)")}<textarea value={draft.changeNote} onChange={(event) => setDraft((current) => ({ ...current, changeNote: event.target.value }))} rows={4} className="mt-1 w-full resize-y rounded-lg border bg-[var(--surface)] p-3 font-normal" /></label>}</div>
         </details>
       </div>
@@ -323,7 +323,7 @@ function PortfolioRepairEditor({ state, stocks, accounts, stores, onSaved, onCha
 
 function PlanHeader({ activeRevision, dirty, repair = false }: { activeRevision: PortfolioPlanRevision | LegacyPortfolioPlanRevisionV6 | null; dirty: boolean; repair?: boolean }) {
   const { t, formatNumber } = useI18n();
-  return <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">{t("Portfolio Plan")}</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">{t("Contribution Plan")}</h1><p className="mt-2 text-base font-medium text-[var(--foreground)]">{t("배분을 실행 가능한 금액으로 전환합니다.")}</p><p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--muted)]">{t("Contribution Amount를 설정하고 Group과 Target에 배분한 뒤 계산된 금액을 직접 실행합니다.")}</p></div><div className="flex flex-wrap justify-end gap-2">{activeRevision && <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1.5 text-xs font-medium text-[var(--accent)]">{t("리비전 {number} · 현재 활성", { number: formatNumber(activeRevision.revisionNumber) })}</span>}{repair && <span className="rounded-full bg-amber-100 px-3 py-1.5 text-xs font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-100">{t("Account 복구 모드")}</span>}{dirty && <span className="rounded-full border px-3 py-1.5 text-xs font-medium">{t("저장되지 않은 변경")}</span>}</div></div>;
+  return <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">{t("Contribution Plan")}</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">{t("배분을 실행 가능한 금액으로 전환합니다.")}</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--muted)]">{t("Contribution Amount를 설정하고 Group과 Target에 배분한 뒤 계산된 금액을 직접 실행합니다.")}</p></div><div className="flex flex-wrap justify-end gap-2">{activeRevision && <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1.5 text-xs font-medium text-[var(--accent)]">{t("리비전 {number} · 현재 활성", { number: formatNumber(activeRevision.revisionNumber) })}</span>}{repair && <span className="rounded-full bg-amber-100 px-3 py-1.5 text-xs font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-100">{t("Account 복구 모드")}</span>}{dirty && <span className="rounded-full border px-3 py-1.5 text-xs font-medium">{t("저장되지 않은 변경")}</span>}</div></div>;
 }
 
 function ContributionAmountEditor({ draft, setDraft, error, onChange, groupInputs, targetCount, revisionLabel }: { draft: PortfolioPlanEditorDraft; setDraft: React.Dispatch<React.SetStateAction<PortfolioPlanEditorDraft>>; error?: string; onChange: () => void; groupInputs?: string[]; targetCount?: number; revisionLabel?: string }) {
@@ -363,13 +363,13 @@ function TargetEditor({ group, target, update, remove, activeStocks, activeAccou
   const amount = calculation?.targets.find((item) => item.targetId === target.id)?.amountMinor;
   const groupBps = parsePercentageToBps(group.weightInput);
   const targetBps = parsePercentageToBps(target.weightInput);
-  return <div className="grid min-w-0 gap-3 border-t px-3 py-3 sm:grid-cols-2 lg:grid-cols-[minmax(9rem,1.15fr)_minmax(8.5rem,1fr)_7rem_6rem_7.5rem_2.5rem] lg:items-center lg:py-2.5">
-    <div className="min-w-0"><span className="mb-1 block text-xs font-medium text-[var(--muted)] lg:sr-only">{t("Target")}</span>{target.targetType === "stock" ? <><RegisteredStockPicker stocks={activeStocks} value={target.stockId} onChange={(stockId) => update(group.id, target.id, (current) => ({ ...current, stockId }))} ariaLabel={t("Stock")} required />{validation[`${path}.stock`] && <FieldError message={validation[`${path}.stock`]} />}</> : <div className="flex h-10 items-center rounded-lg bg-[var(--surface-muted)] px-3 text-sm font-medium">{t("Cash")}</div>}</div>
-    <AccountSelect label={t("실행 Account")} accounts={activeAccounts} value={target.accountId} onChange={(accountId) => update(group.id, target.id, (current) => ({ ...current, accountId }))} error={validation[`${path}.account`]} compact />
-    <LabeledInput label={t("Within Group") + " (%)"} value={target.weightInput} inputMode="decimal" onChange={(value) => update(group.id, target.id, (current) => ({ ...current, weightInput: value }))} error={validation[`${path}.weight`]} compact />
-    <TargetMetric label={t("유효 배분")} value={groupBps === null || targetBps === null ? "—" : formatEffectiveAllocation(groupBps, targetBps)} />
-    <TargetMetric label={t("Contribution 금액")} value={amount === undefined ? "—" : formatCurrency(minorUnitsToMajor(amount, currency), currency, localeTag)} prominent />
-    <div className="flex justify-end sm:items-end lg:items-center"><button type="button" aria-label={t("이 Target 삭제")} onClick={() => remove(group.id, target)} className="grid size-10 place-items-center rounded-lg text-red-700 hover:bg-red-50 dark:text-red-300"><Trash2 size={17} aria-hidden="true" /></button></div>
+  return <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.5rem] gap-2 border-t px-3 py-3 lg:grid-cols-[minmax(9rem,1.15fr)_minmax(8.5rem,1fr)_7rem_6rem_7.5rem_2.5rem] lg:items-center lg:gap-3 lg:py-2.5">
+    <div className="col-start-1 row-start-1 min-w-0 lg:col-auto lg:row-auto"><span className="mb-1 block text-xs font-medium text-[var(--muted)] lg:sr-only">{t("Target")}</span>{target.targetType === "stock" ? <><RegisteredStockPicker stocks={activeStocks} value={target.stockId} onChange={(stockId) => update(group.id, target.id, (current) => ({ ...current, stockId }))} ariaLabel={t("Stock")} required />{validation[`${path}.stock`] && <FieldError message={validation[`${path}.stock`]} />}</> : <div className="flex h-10 items-center rounded-lg bg-[var(--surface-muted)] px-3 text-sm font-medium">{t("Cash")}</div>}</div>
+    <div className="col-start-2 row-start-1 min-w-0 lg:col-auto lg:row-auto"><AccountSelect label={t("실행 Account")} accounts={activeAccounts} value={target.accountId} onChange={(accountId) => update(group.id, target.id, (current) => ({ ...current, accountId }))} error={validation[`${path}.account`]} compact /></div>
+    <div className="col-span-2 col-start-1 row-start-2 lg:col-auto lg:row-auto"><PercentageInput label={t("Within Group")} value={target.weightInput} onChange={(value) => update(group.id, target.id, (current) => ({ ...current, weightInput: value }))} error={validation[`${path}.weight`]} compact /></div>
+    <div className="hidden lg:block"><TargetMetric label={t("유효 배분")} value={groupBps === null || targetBps === null ? "—" : formatEffectiveAllocation(groupBps, targetBps)} /></div>
+    <div className="col-span-2 col-start-1 row-start-3 lg:col-auto lg:row-auto"><TargetMetric label={t("Contribution 금액")} value={amount === undefined ? "—" : formatCurrency(minorUnitsToMajor(amount, currency), currency, localeTag)} prominent /></div>
+    <div className="col-start-3 row-start-1 flex justify-end lg:col-auto lg:row-auto lg:items-center"><button type="button" aria-label={t("이 Target 삭제")} onClick={() => remove(group.id, target)} className="grid size-10 place-items-center rounded-lg text-red-700 hover:bg-red-50 dark:text-red-300"><Trash2 size={17} aria-hidden="true" /></button></div>
   </div>;
 }
 
@@ -401,7 +401,7 @@ function ContributionExecutionSummary({ draft, calculation, stocks, accounts, va
   const formattedTotal = calculation ? formatCurrency(minorUnitsToMajor(calculation.contributionAmountMinor, calculation.contributionCurrency), calculation.contributionCurrency, localeTag) : "—";
   return <aside aria-labelledby="this-contribution-title" className="rounded-2xl border bg-[var(--surface)] p-4 sm:p-5">
     <p className="text-[0.65rem] font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">{t("03 · This Contribution")}</p>
-    <h2 id="this-contribution-title" className="mt-1 text-lg font-semibold">{t("This Contribution")}</h2>
+    <h2 id="this-contribution-title" className="mt-1 text-lg font-semibold">{t("수동 실행표")}</h2>
     <p className="mt-1 text-xs leading-5 text-[var(--muted)]">{t("계산된 금액으로 이번 Contribution을 직접 실행합니다.")}</p>
     <div className="mt-4 rounded-xl border bg-[var(--surface-muted)]/60 p-3">
       <span className="text-[0.65rem] font-semibold uppercase tracking-[0.08em] text-[var(--muted)]">{t("Contribution Amount")}</span>
@@ -453,12 +453,18 @@ function ValidationSummary({ messages, compact = false }: { messages: string[]; 
   return <section role="alert" aria-labelledby={titleId} className={`${compact ? "mt-4 p-3 text-xs" : "mt-6 p-4 text-sm"} rounded-xl border border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100`}><h2 id={titleId} className="font-semibold">{t("저장하기 전에 확인해 주세요.")}</h2><ul className="mt-2 list-disc space-y-1 pl-5">{unique.map((message) => <li key={message}>{t(message)}</li>)}</ul></section>;
 }
 
-function LabeledInput({ label, value, onChange, error, inputMode, labelDisplay = "visible", compact = false }: { label: string; value: string; onChange: (value: string) => void; error?: string; inputMode?: "decimal"; labelDisplay?: "visible" | "sr-only"; compact?: boolean }) {
+function LabeledInput({ label, value, onChange, error, inputMode, labelDisplay = "visible", compact = false, plain = false }: { label: string; value: string; onChange: (value: string) => void; error?: string; inputMode?: "decimal"; labelDisplay?: "visible" | "sr-only"; compact?: boolean; plain?: boolean }) {
   const { t } = useI18n();
   const id = useMemo(() => draftId("field"), []);
   const errorId = `${id}-error`;
   const labelClassName = labelDisplay === "sr-only" ? "sr-only" : compact ? "mb-1 block text-xs font-medium text-[var(--muted)] lg:sr-only" : "block text-sm font-medium";
-  return <label htmlFor={id} className="block min-w-0"><span className={labelClassName}>{label}</span><input id={id} value={value} inputMode={inputMode} onChange={(event) => onChange(event.target.value)} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} className={`${labelDisplay === "visible" && !compact ? "mt-1" : ""} h-10 w-full min-w-0 rounded-lg border bg-[var(--surface)] px-3 text-sm font-normal tabular-nums`} />{error && <span id={errorId} className="mt-1 block text-xs font-normal text-red-700 dark:text-red-300">{t(error)}</span>}</label>;
+  return <label htmlFor={id} className="block min-w-0"><span className={labelClassName}>{label}</span><input id={id} value={value} inputMode={inputMode} onChange={(event) => onChange(event.target.value)} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} className={`${labelDisplay === "visible" && !compact ? "mt-1" : ""} ${plain ? "border-transparent bg-transparent px-2 font-semibold hover:border-[var(--border)] focus:bg-[var(--surface-muted)]" : "border bg-[var(--surface)] px-3 font-normal"} h-10 w-full min-w-0 rounded-lg text-sm tabular-nums`} />{error && <span id={errorId} className="mt-1 block text-xs font-normal text-red-700 dark:text-red-300">{t(error)}</span>}</label>;
+}
+function PercentageInput({ label, value, onChange, error, compact = false }: { label: string; value: string; onChange: (value: string) => void; error?: string; compact?: boolean }) {
+  const { t } = useI18n();
+  const id = useMemo(() => draftId("percentage"), []);
+  const errorId = `${id}-error`;
+  return <label htmlFor={id} className="block min-w-0"><span className={compact ? "mb-1 block text-xs font-medium text-[var(--muted)] lg:sr-only" : "mb-1 block text-xs font-medium text-[var(--muted)]"}>{label}</span><span className={`flex h-10 min-w-0 items-center overflow-hidden rounded-lg border bg-[var(--surface)] ${error ? "border-red-600 dark:border-red-400" : ""}`}><input id={id} value={value} inputMode="decimal" onChange={(event) => onChange(event.target.value)} aria-label={`${label} (%)`} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} className="h-full min-w-0 flex-1 border-0 bg-transparent pl-2 pr-1 text-right text-sm tabular-nums outline-none" /><span aria-hidden="true" className="pr-2 text-xs text-[var(--muted)]">%</span></span>{error && <span id={errorId} className="mt-1 block text-xs font-normal text-red-700 dark:text-red-300">{t(error)}</span>}</label>;
 }
 function AccountSelect({ label, accounts, value, onChange, error, compact = false }: { label: string; accounts: readonly InvestmentAccount[]; value: string; onChange: (value: string) => void; error?: string; compact?: boolean }) {
   const { t } = useI18n();
