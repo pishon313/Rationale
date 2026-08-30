@@ -1,5 +1,7 @@
 # Portfolio Shell V1
 
+> Historical six-route shell contract. The accepted replacement and phased reduction plan is [Portfolio Two-Screen V1 Contract](./portfolio-two-screen-v1.md).
+
 ## Scope
 
 Portfolio Shell V1 provides the shared identity, navigation, state, formatting, and responsive layout contract for all portfolio routes. The existing Allocation worksheet remains at `/portfolio` and is rendered unchanged inside the shell.

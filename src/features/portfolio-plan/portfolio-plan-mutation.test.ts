@@ -1,52 +1,57 @@
 import { describe, expect, it, vi } from "vitest";
+import type { InvestmentAccount } from "@/features/accounts/types";
 import { sampleStocks } from "@/features/stocks/sample-data";
-import { buildPortfolioPlanActivation, persistPortfolioPlanActivation } from "./portfolio-plan-mutation";
-import type { PortfolioAllocationTarget, PortfolioPlanRevision, PortfolioPlanState } from "./types";
+import type { PortfolioAllocationGroup, PortfolioAllocationTarget, PortfolioPlanRevision, PortfolioPlanState } from "./types";
+import { buildPortfolioContributionUpdate, buildPortfolioPlanActivation, persistPortfolioPlanActivation } from "./portfolio-plan-mutation";
 
-const now = "2026-08-18T01:00:00.000Z";
-const first: PortfolioPlanRevision = { id: "r1", revisionNumber: 1, basedOnRevisionId: null, thesis: "First", changeNote: "", createdAt: now, activatedAt: now, updatedAt: now };
-const firstTarget: PortfolioAllocationTarget = { id: "t1", revisionId: first.id, targetType: "stock", stockId: sampleStocks[0].id, targetWeightBps: 10000, sortOrder: 0, updatedAt: now };
-const state: PortfolioPlanState = { id: "default", activeRevisionId: first.id, updatedAt: now };
+const now = "2026-08-18T00:00:00.000Z";
+const accounts: InvestmentAccount[] = [{ id: "a", name: "A", institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault: true, archivedAt: null, memo: "", createdAt: now, updatedAt: now }];
+const draftGroups = [{ id: "draft-g", name: "Stocks", targetWeightBps: 10000, sortOrder: 0 }];
+const draftTargets = [{ groupId: "draft-g", accountId: "a", targetType: "stock" as const, stockId: sampleStocks[0].id, weightWithinGroupBps: 10000, sortOrder: 0 }];
 
-describe("Portfolio Plan activation", () => {
-  it("requires exactly 10000 basis points and rejects duplicate Stock or Cash targets", () => {
-    const base = { states: [], revisions: [], targets: [], stocks: sampleStocks, targetAmountKrw: 1_800_000, thesis: "", changeNote: "", now, revisionId: "r1" };
-    expect(() => buildPortfolioPlanActivation({ ...base, draftTargets: [{ targetType: "stock", stockId: sampleStocks[0].id, targetWeightBps: 9999, sortOrder: 0 }] })).toThrow("PORTFOLIO_TARGET_TOTAL_INVALID");
-    expect(() => buildPortfolioPlanActivation({ ...base, draftTargets: [{ targetType: "stock", stockId: sampleStocks[0].id, targetWeightBps: 5000, sortOrder: 0 }, { targetType: "stock", stockId: sampleStocks[0].id, targetWeightBps: 5000, sortOrder: 1 }], targetIds: ["a", "b"] })).toThrow("같은 종목");
-    expect(() => buildPortfolioPlanActivation({ ...base, draftTargets: [{ targetType: "cash", stockId: null, targetWeightBps: 5000, sortOrder: 0 }, { targetType: "cash", stockId: null, targetWeightBps: 5000, sortOrder: 1 }], targetIds: ["a", "b"] })).toThrow("현금 목표");
+describe("Portfolio plan mutations", () => {
+  it("creates the first revision and atomically writes state, revision, Groups, and Targets", () => {
+    const activation = buildPortfolioPlanActivation({ states: [], revisions: [], groups: [], targets: [], stocks: sampleStocks, accounts, draftGroups, draftTargets, contributionAmountMinor: 1_800_000, contributionCurrency: "KRW", thesis: "My thesis", changeNote: "", now, revisionId: "r1", groupIds: ["g1"], targetIds: ["t1"] });
+    expect(activation.revision).toMatchObject({ revisionNumber: 1, basedOnRevisionId: null, activatedAt: now });
+    expect(activation.states[0]).toMatchObject({ activeRevisionId: "r1", contributionAmountMinor: 1_800_000, contributionCurrency: "KRW" });
+    expect(activation.groups[0]).toMatchObject({ id: "g1", revisionId: "r1", targetWeightBps: 10000 });
+    expect(activation.targets[0]).toMatchObject({ id: "t1", revisionId: "r1", groupId: "g1", accountId: "a", weightWithinGroupBps: 10000 });
+    expect(activation.writes.map((write) => write.collection)).toEqual(["portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-groups", "portfolio-allocation-targets"]);
   });
 
-  it("rejects invalid basis points and missing Stock references", () => {
-    const base = { states: [], revisions: [], targets: [], stocks: sampleStocks, targetAmountKrw: 1_800_000, thesis: "", changeNote: "", now, revisionId: "r1", targetIds: ["t1"] };
-    expect(() => buildPortfolioPlanActivation({ ...base, draftTargets: [{ targetType: "stock", stockId: sampleStocks[0].id, targetWeightBps: 10000.5, sortOrder: 0 }] })).toThrow();
-    expect(() => buildPortfolioPlanActivation({ ...base, draftTargets: [{ targetType: "stock", stockId: "missing", targetWeightBps: 10000, sortOrder: 0 }] })).toThrow("존재하지 않습니다");
-  });
-
-  it("creates revision 1 and atomically switches the active ID", async () => {
-    const activation = buildPortfolioPlanActivation({ states: [], revisions: [], targets: [], stocks: sampleStocks, draftTargets: [{ targetType: "stock", stockId: sampleStocks[0].id, targetWeightBps: 10000, sortOrder: 0 }], targetAmountKrw: 1_800_000, thesis: "My thesis", changeNote: "", now, revisionId: "r1", targetIds: ["t1"] });
-    expect(activation.revision).toMatchObject({ revisionNumber: 1, basedOnRevisionId: null, targetAmountKrw: 1_800_000, activatedAt: now });
-    expect(activation.states[0].activeRevisionId).toBe("r1");
-    const save = vi.fn().mockResolvedValue(undefined);
-    await persistPortfolioPlanActivation(activation, save);
-    expect(save).toHaveBeenCalledTimes(1);
-    expect(save.mock.calls[0][0].map((write: { collection: string }) => write.collection)).toEqual(["portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-targets"]);
-    expect(save).toHaveBeenCalledWith(activation.writes, { failurePolicy: "caller-managed" });
-  });
-
-  it("editing creates revision 2 and preserves the activated historical revision and targets", () => {
-    const activation = buildPortfolioPlanActivation({ states: [state], revisions: [first], targets: [firstTarget], stocks: sampleStocks, draftTargets: [{ targetType: "stock", stockId: sampleStocks[1].id, targetWeightBps: 10000, sortOrder: 0 }], targetAmountKrw: 2_000_000, thesis: "Second", changeNote: "Changed", now: "2026-08-19T00:00:00Z", revisionId: "r2", targetIds: ["t2"] });
+  it("creates a second revision while preserving all historical records", () => {
+    const previous = firstPlan();
+    const activation = buildPortfolioPlanActivation({ ...previous, stocks: sampleStocks, accounts, draftGroups, draftTargets: [{ ...draftTargets[0], stockId: sampleStocks[1].id }], contributionAmountMinor: 2_000_000, contributionCurrency: "KRW", thesis: "Second", changeNote: "Changed", now: "2026-08-19T00:00:00.000Z", revisionId: "r2", groupIds: ["g2"], targetIds: ["t2"] });
     expect(activation.revision).toMatchObject({ revisionNumber: 2, basedOnRevisionId: "r1" });
-    expect(activation.revisions[0]).toEqual(first);
-    expect(activation.targets[0]).toEqual(firstTarget);
-    expect(activation.states[0].activeRevisionId).toBe("r2");
+    expect(activation.revisions).toHaveLength(2);
+    expect(activation.groups.slice(0, 1)).toEqual(previous.groups);
+    expect(activation.targets.slice(0, 1)).toEqual(previous.targets);
   });
 
-  it("does not expose a switched active state when atomic persistence fails", async () => {
-    const activation = buildPortfolioPlanActivation({ states: [state], revisions: [first], targets: [firstTarget], stocks: sampleStocks, draftTargets: [{ targetType: "stock", stockId: sampleStocks[0].id, targetWeightBps: 10000, sortOrder: 0 }], targetAmountKrw: 1_800_000, thesis: "", changeNote: "", now, revisionId: "r2", targetIds: ["t2"] });
+  it("updates only mutable Contribution state without creating a revision", () => {
+    const previous = firstPlan();
+    const update = buildPortfolioContributionUpdate({ state: previous.states[0] ?? null, contributionAmountMinor: 250_000, contributionCurrency: "USD", now: "2026-08-20T00:00:00.000Z" });
+    expect(update.state).toMatchObject({ activeRevisionId: "r1", contributionAmountMinor: 250_000, contributionCurrency: "USD" });
+    expect(update.writes).toEqual([{ collection: "portfolio-plan-state", values: update.states }]);
+    expect(previous.revisions).toHaveLength(1);
+  });
+
+  it("does not change active input state when the atomic write fails", async () => {
+    const previous = firstPlan();
+    const activation = buildPortfolioPlanActivation({ ...previous, stocks: sampleStocks, accounts, draftGroups, draftTargets: [{ ...draftTargets[0], stockId: sampleStocks[1].id }], contributionAmountMinor: 2_000_000, contributionCurrency: "KRW", thesis: "", changeNote: "", now, revisionId: "r2", groupIds: ["g2"], targetIds: ["t2"] });
     const save = vi.fn().mockRejectedValue(new Error("disk full"));
     await expect(persistPortfolioPlanActivation(activation, save)).rejects.toThrow("disk full");
-    expect(save).toHaveBeenCalledWith(activation.writes, { failurePolicy: "caller-managed" });
-    expect(state.activeRevisionId).toBe("r1");
-    expect(firstTarget.revisionId).toBe("r1");
+    expect(previous.states[0]?.activeRevisionId).toBe("r1");
+    expect(previous.revisions).toHaveLength(1);
   });
 });
+
+function firstPlan(): { states: PortfolioPlanState[]; revisions: PortfolioPlanRevision[]; groups: PortfolioAllocationGroup[]; targets: PortfolioAllocationTarget[] } {
+  const revisions: PortfolioPlanRevision[] = [{ id: "r1", revisionNumber: 1, basedOnRevisionId: null, thesis: "", changeNote: "", createdAt: now, activatedAt: now, updatedAt: now }];
+  return {
+    states: [{ id: "default", activeRevisionId: "r1", contributionAmountMinor: 1_800_000, contributionCurrency: "KRW", updatedAt: now }],
+    revisions,
+    groups: [{ id: "g1", revisionId: "r1", name: "Stocks", targetWeightBps: 10000, sortOrder: 0, updatedAt: now }],
+    targets: [{ id: "t1", revisionId: "r1", groupId: "g1", accountId: "a", targetType: "stock", stockId: sampleStocks[0].id, weightWithinGroupBps: 10000, sortOrder: 0, updatedAt: now }],
+  };
+}

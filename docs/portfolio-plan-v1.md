@@ -1,5 +1,7 @@
 # Portfolio Plan v1
 
+> Historical prototype contract. The accepted replacement is [Portfolio Two-Screen V1 Contract](./portfolio-two-screen-v1.md).
+
 ## Product intent
 
 Portfolio Plan records the allocation the user intends to hold and compares that intent with the portfolio calculated from current records. It is descriptive: the feature shows target, current allocation, and drift in percentage points, but does not recommend trades or rebalancing. The active plan also stores an optional KRW target operating amount so each target row can show a formula-derived target value.

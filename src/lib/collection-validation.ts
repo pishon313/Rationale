@@ -7,7 +7,7 @@ import type { TradeLedgerResetSnapshotV1 } from "@/features/trades/trade-ledger-
 export type CollectionValidationErrorType = "INVALID_COLLECTION_SHAPE" | "INVALID_RECORD";
 export type CollectionValidationResult = { valid: true } | { valid: false; errorType: CollectionValidationErrorType; index?: number };
 
-const backupCollections = new Set(["accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "dashboard-notes", "earnings-events", "portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-targets"]);
+const backupCollections = new Set(["accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "dashboard-notes", "earnings-events", "portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-groups", "portfolio-allocation-targets"]);
 
 export function validateStoredCollection(collection: string, value: unknown): CollectionValidationResult {
   if (!Array.isArray(value)) return { valid: false, errorType: "INVALID_COLLECTION_SHAPE" };
@@ -29,7 +29,7 @@ export function validateStoredCollection(collection: string, value: unknown): Co
 export function validateStoredRecord(collection: string, value: unknown, index: number): void {
   requireRecordWithId(value);
   if (backupCollections.has(collection)) {
-    validateBackupCollectionRecord(collection, value, index);
+    validateBackupCollectionRecord(collection, value, index, { allowLegacyPortfolio: true });
     return;
   }
   const record = value as Record<string, unknown>;

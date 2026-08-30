@@ -45,5 +45,5 @@ export function DataRecovery() {
 }
 
 function collectionLabel(collection: string) {
-  return ({ accounts: "계좌", stocks: "종목", plans: "매수 계획", trades: "매매", observations: "관찰 기록", reviews: "회고", rules: "투자 원칙", notes: "Note", "portfolio-plan-state": "포트폴리오 계획 상태", "portfolio-plan-revisions": "포트폴리오 계획 리비전", "portfolio-allocation-targets": "포트폴리오 배분 대상", "language-preferences": "언어 설정", "dashboard-notes": "대시보드 메모", "earnings-events": "실적 발표 일정", preferences: "통화 설정", "exchange-rates": "환율", "restore-snapshots": "복원 안전 사본", "trade-ledger-reset-snapshots": "매매 원장 초기화 되돌리기", "import-mapping-profiles": "가져오기 매핑 프로필" } as Record<string, string>)[collection] ?? collection;
+  return ({ accounts: "계좌", stocks: "종목", plans: "매수 계획", trades: "매매", observations: "관찰 기록", reviews: "회고", rules: "투자 원칙", notes: "Note", "portfolio-plan-state": "포트폴리오 계획 상태", "portfolio-plan-revisions": "포트폴리오 계획 리비전", "portfolio-allocation-groups": "포트폴리오 Allocation Group", "portfolio-allocation-targets": "포트폴리오 배분 대상", "language-preferences": "언어 설정", "dashboard-notes": "대시보드 메모", "earnings-events": "실적 발표 일정", preferences: "통화 설정", "exchange-rates": "환율", "restore-snapshots": "복원 안전 사본", "trade-ledger-reset-snapshots": "매매 원장 초기화 되돌리기", "import-mapping-profiles": "가져오기 매핑 프로필" } as Record<string, string>)[collection] ?? collection;
 }

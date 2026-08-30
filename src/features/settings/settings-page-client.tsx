@@ -223,7 +223,7 @@ function RestorePreview({ backup, cancel, confirm }: { backup: ValidatedBackup; 
 }
 
 function restoreLabel(value: string) {
-  return ({ accounts: "계좌", stocks: "종목", plans: "매수 계획", trades: "매매", observations: "관찰 기록", reviews: "회고", notes: "Note", portfolioPlan: "포트폴리오 계획" } as Record<string, string>)[value] ?? value;
+  return ({ accounts: "계좌", stocks: "종목", plans: "매수 계획", trades: "매매", observations: "관찰 기록", reviews: "회고", notes: "Note", portfolioPlan: "포트폴리오 계획", portfolioAllocationGroups: "포트폴리오 Allocation Group" } as Record<string, string>)[value] ?? value;
 }
 
 function formatBackupDate(value: string | number, locale: Locale) {

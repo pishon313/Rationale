@@ -1,16 +1,17 @@
+import type { Currency } from "@/domain/currency";
+
 export const portfolioPlanStateId = "default" as const;
 
-export type PortfolioPlanState = {
+export type LegacyPortfolioPlanStateV6 = {
   id: typeof portfolioPlanStateId;
   activeRevisionId: string | null;
   updatedAt: string;
 };
 
-export type PortfolioPlanRevision = {
+export type LegacyPortfolioPlanRevisionV6 = {
   id: string;
   revisionNumber: number;
   basedOnRevisionId: string | null;
-  /** KRW amount the allocation percentages are applied to. Missing on legacy V1 records. */
   targetAmountKrw?: number | null;
   thesis: string;
   changeNote: string;
@@ -19,10 +20,59 @@ export type PortfolioPlanRevision = {
   updatedAt: string;
 };
 
-type PortfolioAllocationTargetBase = {
+export type LegacyPortfolioAllocationTargetV6 = {
   id: string;
   revisionId: string;
   targetWeightBps: number;
+  sortOrder: number;
+  updatedAt: string;
+} & ({ targetType: "stock"; stockId: string } | { targetType: "cash"; stockId: null });
+
+/** Migration-only storage. It keeps V6 intent intact until account selection can be repaired. */
+export type PortfolioPlanRepairDraft = {
+  version: 1;
+  status: "needsAccountSelection";
+  legacyState: LegacyPortfolioPlanStateV6 | null;
+  legacyRevisions: LegacyPortfolioPlanRevisionV6[];
+  legacyTargets: LegacyPortfolioAllocationTargetV6[];
+  unresolvedTargetIds: string[];
+};
+
+export type PortfolioPlanState = {
+  id: typeof portfolioPlanStateId;
+  activeRevisionId: string | null;
+  contributionAmountMinor: number;
+  contributionCurrency: Currency;
+  updatedAt: string;
+  repairDraft?: PortfolioPlanRepairDraft | null;
+};
+
+export type PortfolioPlanRevision = {
+  id: string;
+  revisionNumber: number;
+  basedOnRevisionId: string | null;
+  thesis: string;
+  changeNote: string;
+  createdAt: string;
+  activatedAt: string | null;
+  updatedAt: string;
+};
+
+export type PortfolioAllocationGroup = {
+  id: string;
+  revisionId: string;
+  name: string;
+  targetWeightBps: number;
+  sortOrder: number;
+  updatedAt: string;
+};
+
+type PortfolioAllocationTargetBase = {
+  id: string;
+  revisionId: string;
+  groupId: string;
+  accountId: string;
+  weightWithinGroupBps: number;
   sortOrder: number;
   updatedAt: string;
 };
@@ -31,6 +81,13 @@ export type PortfolioAllocationTarget =
   | (PortfolioAllocationTargetBase & { targetType: "stock"; stockId: string })
   | (PortfolioAllocationTargetBase & { targetType: "cash"; stockId: null });
 
-export type PortfolioAllocationDraft =
-  | { targetType: "stock"; stockId: string; targetWeightBps: number; sortOrder: number }
-  | { targetType: "cash"; stockId: null; targetWeightBps: number; sortOrder: number };
+export type PortfolioAllocationGroupDraft = {
+  id: string;
+  name: string;
+  targetWeightBps: number;
+  sortOrder: number;
+};
+
+export type PortfolioAllocationTargetDraft =
+  | { groupId: string; accountId: string; targetType: "stock"; stockId: string; weightWithinGroupBps: number; sortOrder: number }
+  | { groupId: string; accountId: string; targetType: "cash"; stockId: null; weightWithinGroupBps: number; sortOrder: number };
