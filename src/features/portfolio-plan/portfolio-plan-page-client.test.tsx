@@ -38,7 +38,7 @@ describe("Contribution Plan page", () => {
     render(<PortfolioPlanPageClient />);
     expect(screen.getByRole("heading", { name: "Contribution Plan" })).toBeInTheDocument();
     expect(screen.getByText("첫 Allocation Group을 추가해 주세요.")).toBeInTheDocument();
-    fireEvent.click(screen.getAllByRole("button", { name: "Group 추가" })[0]!);
+    fireEvent.click(screen.getAllByRole("button", { name: "Allocation Group 추가" })[0]!);
     fireEvent.change(screen.getByLabelText(/^Group 이름/), { target: { value: "Core" } });
     fireEvent.click(screen.getByRole("button", { name: "Stock 추가" }));
     const stockPicker = screen.getByRole("combobox", { name: "Stock" });
@@ -66,7 +66,7 @@ describe("Contribution Plan page", () => {
   it("creates a new immutable revision when Thesis changes and disables invalid saves", async () => {
     seedActive();
     render(<PortfolioPlanPageClient />);
-    fireEvent.click(screen.getByText("Thesis와 리비전 메모"));
+    fireEvent.click(screen.getByText(/Investment Thesis와 Change Note/));
     fireEvent.change(screen.getByLabelText("투자 근거 (선택)"), { target: { value: "Changed thesis" } });
     expect(screen.getByLabelText("변경 이유 (선택)")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "새 리비전 저장" }));
@@ -76,7 +76,7 @@ describe("Contribution Plan page", () => {
     expect(revisionWrite.values[1]).toMatchObject({ revisionNumber: 2, basedOnRevisionId: "r1", thesis: "Changed thesis" });
 
     mocks.save.mockClear();
-    fireEvent.change(screen.getByLabelText("Group 비중 (%)"), { target: { value: "99.999" } });
+    fireEvent.change(screen.getByLabelText("Target Weight (%)"), { target: { value: "99.999" } });
     expect(screen.getByRole("button", { name: "새 리비전 저장" })).toBeDisabled();
     expect(screen.getByRole("alert")).toHaveTextContent("저장하기 전에 확인해 주세요.");
   });
@@ -90,6 +90,17 @@ describe("Contribution Plan page", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("포트폴리오 계획을 저장하지 못했습니다.");
     expect(screen.getByLabelText("Contribution Amount")).toHaveValue("2000000");
     expect(mocks.applied.get("portfolio-plan-state")).not.toHaveBeenCalled();
+  });
+
+  it("presents the three-step editor with an exact manual execution summary", () => {
+    seedActive();
+    render(<PortfolioPlanPageClient />);
+    expect(screen.getByText("01 · Contribution Amount")).toBeInTheDocument();
+    expect(screen.getByText("02 · Target Allocation")).toBeInTheDocument();
+    const summary = screen.getByRole("complementary", { name: "This Contribution" });
+    expect(within(summary).getByText("03 · This Contribution")).toBeInTheDocument();
+    expect(within(summary).getByLabelText("합계")).toHaveTextContent("₩1,000,000");
+    expect(within(summary).getByText("Rationale은 주문을 실행하지 않습니다. 계산된 금액을 사용해 관련 은행 또는 증권 계좌에서 직접 매수하세요.")).toBeInTheDocument();
   });
 
   it("finishes V6 account repair with one four-collection activation", async () => {

@@ -1,7 +1,7 @@
 "use client";
 
-import { ChevronDown, CircleDollarSign, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { ChevronRight, CircleDollarSign, Info, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
 import { calculateContributionPlan, type ContributionPlanCalculation } from "@/domain/portfolio-contribution";
 import { currencies, minorUnitsToMajor, type Currency } from "@/domain/currency";
 import { formatCurrency } from "@/domain/money";
@@ -121,7 +121,7 @@ function PortfolioPlanEditor({ state, activeRevision, revisions, groups, targets
   onSaved: (message: string) => void;
   onChange: () => void;
 }) {
-  const { t, localeTag } = useI18n();
+  const { t, localeTag, formatNumber } = useI18n();
   const { snapshot } = usePortfolioShell();
   const fallbackCurrency = snapshot.status === "ready" ? snapshot.portfolio.baseCurrency : "KRW";
   const savedDraft = useMemo(() => portfolioPlanDraftFromActive({ state, revision: activeRevision, groups, targets, fallbackCurrency }), [activeRevision, fallbackCurrency, groups, state, targets]);
@@ -134,6 +134,14 @@ function PortfolioPlanEditor({ state, activeRevision, revisions, groups, targets
   const calculation = useMemo(() => validation.parsed ? calculationFromDraft(draft, validation.parsed.contributionAmountMinor) : null, [draft, validation.parsed]);
   const activeAccounts = accounts.filter((account) => !account.archivedAt);
   const activeStocks = stocks.filter((stock) => !stock.deletedAt);
+  const targetCount = draft.groups.reduce((count, group) => count + group.targets.length, 0);
+  const revisionLabel = changeKind === "initial"
+    ? t("활성화 Draft")
+    : changeKind === "revision"
+      ? t("새 Revision Draft")
+      : activeRevision
+        ? t("리비전 {number}", { number: formatNumber(activeRevision.revisionNumber) })
+        : t("활성화 Draft");
 
   function updateGroup(groupId: string, update: (group: PortfolioPlanEditorGroup) => PortfolioPlanEditorGroup) {
     setDraft((current) => ({ ...current, groups: current.groups.map((group) => group.id === groupId ? update(group) : group) }));
@@ -201,47 +209,62 @@ function PortfolioPlanEditor({ state, activeRevision, revisions, groups, targets
     } finally { setSaving(false); }
   }
 
+  const saveLabel = saving ? t("저장 중...") : changeKind === "initial" ? t("Plan 활성화") : changeKind === "revision" ? t("새 리비전 저장") : changeKind === "contribution" ? t("Contribution 저장") : t("변경사항 저장");
+
   return <form onSubmit={savePlan} noValidate>
     <PlanHeader activeRevision={activeRevision} dirty={changeKind !== "none"} />
     {saveError && <p role="alert" className="mt-5 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-100">{saveError}</p>}
-    <ContributionAmountEditor draft={draft} setDraft={setDraft} error={validation.fields.contributionAmount} onChange={clearFeedback} />
+    <div className="mt-6 grid min-w-0 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
+      <div className="min-w-0 space-y-4">
+        <ContributionAmountEditor draft={draft} setDraft={setDraft} error={validation.fields.contributionAmount} onChange={clearFeedback} groupInputs={draft.groups.map((group) => group.weightInput)} targetCount={targetCount} revisionLabel={revisionLabel} />
 
-    <section className="mt-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div><h2 className="text-lg font-semibold">{t("Allocation Groups")}</h2><p className="mt-1 text-sm text-[var(--muted)]">{t("Contribution을 나눌 Group과 실행 Target을 설정합니다.")}</p></div>
-        <button type="button" onClick={addGroup} className="inline-flex min-h-10 items-center gap-2 rounded-lg border bg-[var(--surface)] px-3 text-sm font-medium"><Plus size={16} aria-hidden="true" />{t("Group 추가")}</button>
-      </div>
-      <WeightStatus inputs={draft.groups.map((group) => group.weightInput)} label={t("Group 합계")} className="mt-3" />
-      {validation.fields.groups && <FieldError message={validation.fields.groups} />}
-      {!draft.groups.length ? <div className="mt-4 rounded-2xl border border-dashed bg-[var(--surface)] px-6 py-12 text-center"><CircleDollarSign className="mx-auto text-[var(--muted)]" aria-hidden="true" /><h3 className="mt-4 font-medium">{t("첫 Allocation Group을 추가해 주세요.")}</h3><p className="mt-1 text-sm text-[var(--muted)]">{t("Group 안에 등록 종목 또는 Cash Target을 추가할 수 있습니다.")}</p><button type="button" onClick={addGroup} className="mt-5 inline-flex min-h-10 items-center gap-2 rounded-lg bg-[var(--ink)] px-4 text-sm font-medium text-[var(--paper)]"><Plus size={16} />{t("Group 추가")}</button></div>
-        : <div className="mt-4 space-y-4">{draft.groups.slice().sort(byOrder).map((group) => {
-          const groupErrorPath = `groups.${group.id}`;
-          const groupAmount = calculation?.groups.find((item) => item.groupId === group.id)?.amountMinor;
-          return <article key={group.id} className="overflow-visible rounded-2xl border bg-[var(--surface)] shadow-sm">
-            <div className="grid gap-3 p-4 md:grid-cols-[minmax(12rem,1fr)_9rem_10rem_auto] md:items-end">
-              <LabeledInput label={t("Group 이름")} value={group.name} onChange={(value) => updateGroup(group.id, (current) => ({ ...current, name: value }))} error={validation.fields[`${groupErrorPath}.name`]} />
-              <LabeledInput label={t("Group 비중") + " (%)"} value={group.weightInput} inputMode="decimal" onChange={(value) => updateGroup(group.id, (current) => ({ ...current, weightInput: value }))} error={validation.fields[`${groupErrorPath}.weight`]} />
-              <ReadOnlyMetric label={t("Contribution 금액")} value={groupAmount === undefined ? "—" : formatCurrency(minorUnitsToMajor(groupAmount, draft.contributionCurrency), draft.contributionCurrency, localeTag)} />
-              <div className="flex justify-end gap-1"><button type="button" aria-expanded={Boolean(expanded[group.id])} aria-label={t("{name} Group 펼치기", { name: group.name || t("이름 없는") })} onClick={() => setExpanded((current) => ({ ...current, [group.id]: !current[group.id] }))} className="grid size-10 place-items-center rounded-lg border"><ChevronDown size={18} className={`transition-transform ${expanded[group.id] ? "rotate-180" : ""}`} /></button><button type="button" aria-label={t("{name} Group 삭제", { name: group.name || t("이름 없는") })} onClick={() => deleteGroup(group)} className="grid size-10 place-items-center rounded-lg text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/30"><Trash2 size={17} /></button></div>
+        <section aria-labelledby="target-allocation-title" className="overflow-visible rounded-2xl border bg-[var(--surface)]">
+          <header className="flex flex-wrap items-center justify-between gap-4 border-b px-4 py-4 sm:px-5">
+            <div className="min-w-0">
+              <p className="text-[0.65rem] font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">{t("02 · Target Allocation")}</p>
+              <h2 id="target-allocation-title" className="mt-1 text-lg font-semibold">{t("Group과 Target 정의")}</h2>
+              <p className="mt-1 max-w-2xl text-xs leading-5 text-[var(--muted)]">{t("Group Target Weight와 각 Group의 내부 Target Weight 합계는 각각 정확히 100%여야 합니다.")}</p>
             </div>
-            {expanded[group.id] && <div className="border-t bg-[var(--surface-muted)]/45 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3"><WeightStatus inputs={group.targets.map((target) => target.weightInput)} label={t("Group 내부 합계")} /><div className="flex gap-2"><button type="button" onClick={() => addTarget(group.id, "stock")} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border bg-[var(--surface)] px-3 text-xs font-medium"><Plus size={14} />{t("Stock 추가")}</button><button type="button" onClick={() => addTarget(group.id, "cash")} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border bg-[var(--surface)] px-3 text-xs font-medium"><Plus size={14} />{t("Cash 추가")}</button></div></div>
-              {validation.fields[`${groupErrorPath}.targets`] && <FieldError message={validation.fields[`${groupErrorPath}.targets`]} />}
-              {validation.fields[`${groupErrorPath}.targetTotal`] && <FieldError message={validation.fields[`${groupErrorPath}.targetTotal`]} />}
-              <div className="mt-3 space-y-3">{group.targets.slice().sort(byOrder).map((target) => <TargetEditor key={target.id} group={group} target={target} update={updateTarget} remove={deleteTarget} activeStocks={activeStocks} activeAccounts={activeAccounts} validation={validation.fields} calculation={calculation} currency={draft.contributionCurrency} />)}</div>
-            </div>}
-          </article>;
-        })}</div>}
-    </section>
+            <button type="button" onClick={addGroup} className="inline-flex min-h-10 items-center gap-2 rounded-lg border bg-[var(--surface)] px-3 text-sm font-medium"><Plus size={16} aria-hidden="true" />{t("Allocation Group 추가")}</button>
+          </header>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-[var(--surface-muted)]/45 px-4 py-2.5 sm:px-5">
+            <WeightStatus inputs={draft.groups.map((group) => group.weightInput)} label={t("Group 합계")} />
+            <span className="text-xs text-[var(--muted)]">{t("Target 수")}: <b className="font-semibold tabular-nums text-[var(--foreground)]">{targetCount}</b></span>
+          </div>
+          {validation.fields.groups && <div className="px-4 sm:px-5"><FieldError message={validation.fields.groups} /></div>}
+          {!draft.groups.length ? <div className="m-3 rounded-xl border border-dashed px-6 py-12 text-center sm:m-4"><CircleDollarSign className="mx-auto text-[var(--muted)]" aria-hidden="true" /><h3 className="mt-4 font-medium">{t("첫 Allocation Group을 추가해 주세요.")}</h3><p className="mt-1 text-sm text-[var(--muted)]">{t("Group 안에 등록 종목 또는 Cash Target을 추가할 수 있습니다.")}</p><button type="button" onClick={addGroup} className="mt-5 inline-flex min-h-10 items-center gap-2 rounded-lg bg-[var(--ink)] px-4 text-sm font-medium text-[var(--paper)]"><Plus size={16} aria-hidden="true" />{t("Allocation Group 추가")}</button></div>
+            : <div className="space-y-3 bg-[var(--surface-muted)]/45 p-3 sm:p-4">{draft.groups.slice().sort(byOrder).map((group) => {
+              const groupErrorPath = `groups.${group.id}`;
+              const groupAmount = calculation?.groups.find((item) => item.groupId === group.id)?.amountMinor;
+              return <article key={group.id} className="overflow-visible rounded-xl border bg-[var(--surface)]">
+                <div className="grid min-w-0 grid-cols-[2.5rem_minmax(0,1fr)_2.5rem] gap-2 p-3 lg:grid-cols-[2.5rem_minmax(10rem,1fr)_7rem_9rem_2.5rem] lg:items-center">
+                  <button type="button" aria-expanded={Boolean(expanded[group.id])} aria-label={t("{name} Group 펼치기", { name: group.name || t("이름 없는") })} onClick={() => setExpanded((current) => ({ ...current, [group.id]: !current[group.id] }))} className="grid size-10 place-items-center rounded-lg bg-[var(--surface-muted)] text-[var(--muted)]"><ChevronRight size={18} aria-hidden="true" className={`transition-transform ${expanded[group.id] ? "rotate-90" : ""}`} /></button>
+                  <div className="col-start-2 row-start-1 min-w-0 lg:col-auto lg:row-auto"><LabeledInput label={t("Group 이름")} value={group.name} onChange={(value) => updateGroup(group.id, (current) => ({ ...current, name: value }))} error={validation.fields[`${groupErrorPath}.name`]} labelDisplay="sr-only" /></div>
+                  <div className="col-start-2 row-start-2 lg:col-auto lg:row-auto"><LabeledInput label={t("Target Weight") + " (%)"} value={group.weightInput} inputMode="decimal" onChange={(value) => updateGroup(group.id, (current) => ({ ...current, weightInput: value }))} error={validation.fields[`${groupErrorPath}.weight`]} /></div>
+                  <div className="col-start-2 row-start-3 lg:col-auto lg:row-auto"><ReadOnlyMetric label={t("Contribution 금액")} value={groupAmount === undefined ? "—" : formatCurrency(minorUnitsToMajor(groupAmount, draft.contributionCurrency), draft.contributionCurrency, localeTag)} compact /></div>
+                  <button type="button" aria-label={t("{name} Group 삭제", { name: group.name || t("이름 없는") })} onClick={() => deleteGroup(group)} className="col-start-3 row-start-1 grid size-10 place-items-center rounded-lg text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/30 lg:col-auto lg:row-auto"><Trash2 size={17} aria-hidden="true" /></button>
+                </div>
+                {expanded[group.id] && <div className="border-t bg-[var(--surface-muted)]/30">
+                  <div className="hidden min-h-9 grid-cols-[minmax(9rem,1.15fr)_minmax(8.5rem,1fr)_7rem_6rem_7.5rem_2.5rem] items-center gap-3 px-3 text-[0.65rem] font-semibold uppercase tracking-[0.08em] text-[var(--muted)] lg:grid"><span>{t("Target")}</span><span>{t("Account")}</span><span>{t("Within Group")}</span><span className="text-right">{t("유효 배분")}</span><span className="text-right">{t("Contribution 금액")}</span><span /></div>
+                  <div>{group.targets.slice().sort(byOrder).map((target) => <TargetEditor key={target.id} group={group} target={target} update={updateTarget} remove={deleteTarget} activeStocks={activeStocks} activeAccounts={activeAccounts} validation={validation.fields} calculation={calculation} currency={draft.contributionCurrency} />)}</div>
+                  <div className="flex flex-wrap gap-2 border-t px-3 py-3"><button type="button" onClick={() => addTarget(group.id, "stock")} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border bg-[var(--surface)] px-3 text-xs font-medium"><Plus size={14} aria-hidden="true" />{t("Stock 추가")}</button><button type="button" onClick={() => addTarget(group.id, "cash")} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border bg-[var(--surface)] px-3 text-xs font-medium"><Plus size={14} aria-hidden="true" />{t("Cash 추가")}</button></div>
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t bg-[var(--surface-muted)]/55 px-3 py-2.5"><span className="text-xs text-[var(--muted)]">{t("{name} Group Target", { name: group.name || t("이름 없는") })}</span><WeightStatus inputs={group.targets.map((target) => target.weightInput)} label={t("Group 내부 합계")} /></div>
+                  {(validation.fields[`${groupErrorPath}.targets`] || validation.fields[`${groupErrorPath}.targetTotal`]) && <div className="border-t px-3 pb-3">{validation.fields[`${groupErrorPath}.targets`] && <FieldError message={validation.fields[`${groupErrorPath}.targets`]} />}{validation.fields[`${groupErrorPath}.targetTotal`] && <FieldError message={validation.fields[`${groupErrorPath}.targetTotal`]} />}</div>}
+                </div>}
+              </article>;
+            })}</div>}
+        </section>
 
-    <ExecutionTable draft={draft} calculation={calculation} stocks={stocks} accounts={accounts} />
-    <details className="mt-6 rounded-2xl border bg-[var(--surface)] p-4">
-      <summary className="cursor-pointer font-medium">{t("Thesis와 리비전 메모")}</summary>
-      <div className="mt-4 grid gap-4"><label className="text-sm font-medium">{t("투자 근거 (선택)")}<textarea value={draft.thesis} onChange={(event) => { setDraft((current) => ({ ...current, thesis: event.target.value })); clearFeedback(); }} rows={3} className="mt-1 w-full rounded-lg border bg-[var(--surface)] p-3 font-normal" /></label>{activeRevision && changeKind === "revision" && <label className="text-sm font-medium">{t("변경 이유 (선택)")}<textarea value={draft.changeNote} onChange={(event) => setDraft((current) => ({ ...current, changeNote: event.target.value }))} rows={2} className="mt-1 w-full rounded-lg border bg-[var(--surface)] p-3 font-normal" /></label>}</div>
-    </details>
+        <details className="rounded-2xl border bg-[var(--surface)]">
+          <summary className="flex min-h-14 cursor-pointer items-center justify-between gap-3 px-4 font-medium sm:px-5"><span>{t("Investment Thesis와 Change Note")} <span className="font-normal text-[var(--muted)]">· {t("선택 사항")}</span></span><ChevronRight size={17} aria-hidden="true" className="text-[var(--muted)]" /></summary>
+          <div className="grid gap-4 border-t p-4 sm:p-5 lg:grid-cols-2"><label className="text-sm font-medium">{t("투자 근거 (선택)")}<textarea value={draft.thesis} onChange={(event) => { setDraft((current) => ({ ...current, thesis: event.target.value })); clearFeedback(); }} rows={4} className="mt-1 w-full resize-y rounded-lg border bg-[var(--surface)] p-3 font-normal" /></label>{activeRevision && changeKind === "revision" && <label className="text-sm font-medium">{t("변경 이유 (선택)")}<textarea value={draft.changeNote} onChange={(event) => setDraft((current) => ({ ...current, changeNote: event.target.value }))} rows={4} className="mt-1 w-full resize-y rounded-lg border bg-[var(--surface)] p-3 font-normal" /></label>}</div>
+        </details>
+      </div>
 
-    {!validation.valid && <ValidationSummary messages={validation.summary} />}
-    <div className="mt-6 flex flex-wrap items-center justify-end gap-3 border-t pt-5"><button type="button" onClick={reset} disabled={saving || changeKind === "none"} className="inline-flex min-h-10 items-center gap-2 rounded-lg border px-4 text-sm font-medium disabled:opacity-50"><RotateCcw size={16} />{t("저장된 상태로 재설정")}</button><button type="submit" disabled={saving || !validation.valid || changeKind === "none"} className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-[var(--ink)] px-5 text-sm font-semibold text-[var(--paper)] disabled:cursor-not-allowed disabled:opacity-50"><Save size={16} />{saving ? t("저장 중...") : changeKind === "initial" ? t("Plan 활성화") : changeKind === "revision" ? t("새 리비전 저장") : changeKind === "contribution" ? t("Contribution 저장") : t("변경사항 저장")}</button></div>
+      <div className="min-w-0 xl:sticky xl:top-[12rem] xl:max-h-[calc(100dvh-13rem)] xl:overflow-y-auto xl:overscroll-contain">
+        <ContributionExecutionSummary draft={draft} calculation={calculation} stocks={stocks} accounts={accounts} validationMessages={validation.summary} valid={validation.valid} saving={saving} changeKind={changeKind} reset={reset} saveLabel={saveLabel} />
+      </div>
+    </div>
   </form>;
 }
 
@@ -300,12 +323,38 @@ function PortfolioRepairEditor({ state, stocks, accounts, stores, onSaved, onCha
 
 function PlanHeader({ activeRevision, dirty, repair = false }: { activeRevision: PortfolioPlanRevision | LegacyPortfolioPlanRevisionV6 | null; dirty: boolean; repair?: boolean }) {
   const { t, formatNumber } = useI18n();
-  return <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-sm font-medium text-[var(--accent)]">{t("Portfolio Plan")}</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">{t("Contribution Plan")}</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--muted)]">{t("새 자금을 어디에 얼마나 배분할지 정하고, 실행 금액을 minor unit까지 정확히 확인합니다.")}</p></div><div className="flex flex-wrap justify-end gap-2">{activeRevision && <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1.5 text-xs font-medium text-[var(--accent)]">{t("리비전 {number} · 현재 활성", { number: formatNumber(activeRevision.revisionNumber) })}</span>}{repair && <span className="rounded-full bg-amber-100 px-3 py-1.5 text-xs font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-100">{t("Account 복구 모드")}</span>}{dirty && <span className="rounded-full border px-3 py-1.5 text-xs font-medium">{t("저장되지 않은 변경")}</span>}</div></div>;
+  return <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">{t("Portfolio Plan")}</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">{t("Contribution Plan")}</h1><p className="mt-2 text-base font-medium text-[var(--foreground)]">{t("배분을 실행 가능한 금액으로 전환합니다.")}</p><p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--muted)]">{t("Contribution Amount를 설정하고 Group과 Target에 배분한 뒤 계산된 금액을 직접 실행합니다.")}</p></div><div className="flex flex-wrap justify-end gap-2">{activeRevision && <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1.5 text-xs font-medium text-[var(--accent)]">{t("리비전 {number} · 현재 활성", { number: formatNumber(activeRevision.revisionNumber) })}</span>}{repair && <span className="rounded-full bg-amber-100 px-3 py-1.5 text-xs font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-100">{t("Account 복구 모드")}</span>}{dirty && <span className="rounded-full border px-3 py-1.5 text-xs font-medium">{t("저장되지 않은 변경")}</span>}</div></div>;
 }
 
-function ContributionAmountEditor({ draft, setDraft, error, onChange }: { draft: PortfolioPlanEditorDraft; setDraft: React.Dispatch<React.SetStateAction<PortfolioPlanEditorDraft>>; error?: string; onChange: () => void }) {
+function ContributionAmountEditor({ draft, setDraft, error, onChange, groupInputs, targetCount, revisionLabel }: { draft: PortfolioPlanEditorDraft; setDraft: React.Dispatch<React.SetStateAction<PortfolioPlanEditorDraft>>; error?: string; onChange: () => void; groupInputs?: string[]; targetCount?: number; revisionLabel?: string }) {
   const { t } = useI18n();
-  return <section className="mt-6 rounded-2xl border bg-[var(--surface)] p-5"><div className="grid gap-4 md:grid-cols-[minmax(14rem,1fr)_9rem]"><LabeledInput label={t("Contribution Amount")} value={draft.contributionAmountInput} inputMode="decimal" onChange={(value) => { setDraft((current) => ({ ...current, contributionAmountInput: value })); onChange(); }} error={error} /><label className="text-sm font-medium">{t("통화")}<select value={draft.contributionCurrency} onChange={(event) => { const currency = event.target.value as Currency; setDraft((current) => ({ ...current, contributionCurrency: currency })); onChange(); }} className="mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3 font-normal">{currencies.map((currency) => <option key={currency}>{currency}</option>)}</select></label></div><p className="mt-3 text-xs leading-5 text-[var(--muted)]">{t("금액은 통화별 minor unit 정수로 저장됩니다. KRW와 JPY는 정수, 그 외 통화는 소수점 둘째 자리까지 입력할 수 있습니다.")}</p></section>;
+  const amountId = useId();
+  const currencyId = useId();
+  const errorId = `${amountId}-error`;
+  const values = (groupInputs ?? []).map(parsePercentageToBps);
+  const invalidTotal = values.some((value) => value === null);
+  const totalBps = values.reduce<number>((total, value) => total + (value ?? 0), 0);
+  const showSummary = groupInputs !== undefined && targetCount !== undefined && revisionLabel !== undefined;
+  return <section aria-labelledby={`${amountId}-title`} className="rounded-2xl border bg-[var(--surface)]">
+    <div className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[minmax(14rem,1fr)_minmax(18rem,0.9fr)] lg:items-end">
+      <div><p className="text-[0.65rem] font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">{t("01 · Contribution Amount")}</p><h2 id={`${amountId}-title`} className="mt-1 text-lg font-semibold">{t("얼마를 배분하시겠습니까?")}</h2><p className="mt-1 text-xs leading-5 text-[var(--muted)]">{t("Contribution Amount 또는 Currency만 변경하면 새 Revision이 생성되지 않습니다.")}</p></div>
+      <div>
+        <div className="grid grid-cols-[minmax(0,1fr)_6rem] overflow-hidden rounded-xl border bg-[var(--surface)] focus-within:border-[var(--accent)] focus-within:ring-2 focus-within:ring-[var(--accent-soft)]">
+          <label htmlFor={amountId} className="sr-only">{t("Contribution Amount")}</label>
+          <input id={amountId} value={draft.contributionAmountInput} inputMode="decimal" onChange={(event) => { setDraft((current) => ({ ...current, contributionAmountInput: event.target.value })); onChange(); }} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} className="h-12 min-w-0 border-0 bg-transparent px-3 text-lg font-semibold tabular-nums outline-none" />
+          <label htmlFor={currencyId} className="sr-only">{t("통화")}</label>
+          <select id={currencyId} value={draft.contributionCurrency} onChange={(event) => { const currency = event.target.value as Currency; setDraft((current) => ({ ...current, contributionCurrency: currency })); onChange(); }} className="h-12 border-0 border-l bg-[var(--surface-muted)] px-2 text-sm font-semibold outline-none">{currencies.map((currency) => <option key={currency}>{currency}</option>)}</select>
+        </div>
+        {error && <span id={errorId} className="mt-1 block text-xs text-red-700 dark:text-red-300">{t(error)}</span>}
+        <p className="mt-2 text-[0.7rem] leading-5 text-[var(--muted)]">{t("금액은 통화별 minor unit 정수로 저장됩니다. KRW와 JPY는 정수, 그 외 통화는 소수점 둘째 자리까지 입력할 수 있습니다.")}</p>
+      </div>
+    </div>
+    {showSummary && <dl className="grid grid-cols-3 border-t bg-[var(--surface-muted)]/35" aria-live="polite">
+      <SummaryStat label={t("Group 배분")} value={invalidTotal ? "—" : `${formatBpsAny(totalBps)}%`} tone={!invalidTotal && totalBps === 10000 ? "good" : "warning"} />
+      <SummaryStat label={t("Target 수")} value={String(targetCount)} />
+      <SummaryStat label={t("Revision")} value={revisionLabel} />
+    </dl>}
+  </section>;
 }
 
 function TargetEditor({ group, target, update, remove, activeStocks, activeAccounts, validation, calculation, currency }: { group: PortfolioPlanEditorGroup; target: PortfolioPlanEditorTarget; update: (groupId: string, targetId: string, update: (target: PortfolioPlanEditorTarget) => PortfolioPlanEditorTarget) => void; remove: (groupId: string, target: PortfolioPlanEditorTarget) => void; activeStocks: Stock[]; activeAccounts: InvestmentAccount[]; validation: Record<string, string>; calculation: ContributionPlanCalculation | null; currency: Currency }) {
@@ -314,13 +363,65 @@ function TargetEditor({ group, target, update, remove, activeStocks, activeAccou
   const amount = calculation?.targets.find((item) => item.targetId === target.id)?.amountMinor;
   const groupBps = parsePercentageToBps(group.weightInput);
   const targetBps = parsePercentageToBps(target.weightInput);
-  return <div className="rounded-xl border bg-[var(--surface)] p-4"><div className="grid gap-3 lg:grid-cols-[minmax(12rem,1.25fr)_minmax(10rem,1fr)_8rem_8rem_9rem_auto] lg:items-end"><div>{target.targetType === "stock" ? <><RegisteredStockPicker stocks={activeStocks} value={target.stockId} onChange={(stockId) => update(group.id, target.id, (current) => ({ ...current, stockId }))} label={t("Stock")} required />{validation[`${path}.stock`] && <FieldError message={validation[`${path}.stock`]} />}</> : <ReadOnlyMetric label={t("Target")} value={t("Cash")} />}</div><AccountSelect label={t("실행 Account")} accounts={activeAccounts} value={target.accountId} onChange={(accountId) => update(group.id, target.id, (current) => ({ ...current, accountId }))} error={validation[`${path}.account`]} /><LabeledInput label={t("Group 내부 비중") + " (%)"} value={target.weightInput} inputMode="decimal" onChange={(value) => update(group.id, target.id, (current) => ({ ...current, weightInput: value }))} error={validation[`${path}.weight`]} /><ReadOnlyMetric label={t("유효 배분")} value={groupBps === null || targetBps === null ? "—" : formatEffectiveAllocation(groupBps, targetBps)} /><ReadOnlyMetric label={t("Contribution 금액")} value={amount === undefined ? "—" : formatCurrency(minorUnitsToMajor(amount, currency), currency, localeTag)} /><button type="button" aria-label={t("이 Target 삭제")} onClick={() => remove(group.id, target)} className="grid size-10 place-items-center rounded-lg text-red-700 hover:bg-red-50 dark:text-red-300"><Trash2 size={17} /></button></div></div>;
+  return <div className="grid min-w-0 gap-3 border-t px-3 py-3 sm:grid-cols-2 lg:grid-cols-[minmax(9rem,1.15fr)_minmax(8.5rem,1fr)_7rem_6rem_7.5rem_2.5rem] lg:items-center lg:py-2.5">
+    <div className="min-w-0"><span className="mb-1 block text-xs font-medium text-[var(--muted)] lg:sr-only">{t("Target")}</span>{target.targetType === "stock" ? <><RegisteredStockPicker stocks={activeStocks} value={target.stockId} onChange={(stockId) => update(group.id, target.id, (current) => ({ ...current, stockId }))} ariaLabel={t("Stock")} required />{validation[`${path}.stock`] && <FieldError message={validation[`${path}.stock`]} />}</> : <div className="flex h-10 items-center rounded-lg bg-[var(--surface-muted)] px-3 text-sm font-medium">{t("Cash")}</div>}</div>
+    <AccountSelect label={t("실행 Account")} accounts={activeAccounts} value={target.accountId} onChange={(accountId) => update(group.id, target.id, (current) => ({ ...current, accountId }))} error={validation[`${path}.account`]} compact />
+    <LabeledInput label={t("Within Group") + " (%)"} value={target.weightInput} inputMode="decimal" onChange={(value) => update(group.id, target.id, (current) => ({ ...current, weightInput: value }))} error={validation[`${path}.weight`]} compact />
+    <TargetMetric label={t("유효 배분")} value={groupBps === null || targetBps === null ? "—" : formatEffectiveAllocation(groupBps, targetBps)} />
+    <TargetMetric label={t("Contribution 금액")} value={amount === undefined ? "—" : formatCurrency(minorUnitsToMajor(amount, currency), currency, localeTag)} prominent />
+    <div className="flex justify-end sm:items-end lg:items-center"><button type="button" aria-label={t("이 Target 삭제")} onClick={() => remove(group.id, target)} className="grid size-10 place-items-center rounded-lg text-red-700 hover:bg-red-50 dark:text-red-300"><Trash2 size={17} aria-hidden="true" /></button></div>
+  </div>;
 }
 
 function RepairTargetRow({ target, accountId, choose, accounts, stocks, amountMinor, currency }: { target: LegacyPortfolioAllocationTargetV6; accountId: string; choose: (targetId: string, accountId: string) => void; accounts: InvestmentAccount[]; stocks: Stock[]; amountMinor?: number; currency: Currency }) {
   const { t, localeTag } = useI18n();
   const stock = target.targetType === "stock" ? stocks.find((item) => item.id === target.stockId) : null;
   return <div className="grid gap-3 rounded-xl border bg-[var(--surface)] p-4 md:grid-cols-[minmax(12rem,1fr)_minmax(11rem,1fr)_8rem_10rem] md:items-end"><ReadOnlyMetric label={t("Target")} value={target.targetType === "cash" ? t("Cash") : stock ? `${stock.ticker} · ${stock.name}` : t("알 수 없는 종목")} /><AccountSelect label={t("실행 Account")} accounts={accounts} value={accountId} onChange={(value) => choose(target.id, value)} error={!accountId ? t("활성 계좌를 선택해 주세요.") : undefined} /><ReadOnlyMetric label={t("Group 내부 비중")} value={`${formatBpsInput(target.targetWeightBps)}%`} /><ReadOnlyMetric label={t("Contribution 금액")} value={amountMinor === undefined ? "—" : formatCurrency(minorUnitsToMajor(amountMinor, currency), currency, localeTag)} /></div>;
+}
+
+function ContributionExecutionSummary({ draft, calculation, stocks, accounts, validationMessages, valid, saving, changeKind, reset, saveLabel }: {
+  draft: PortfolioPlanEditorDraft;
+  calculation: ContributionPlanCalculation | null;
+  stocks: readonly Stock[];
+  accounts: readonly InvestmentAccount[];
+  validationMessages: string[];
+  valid: boolean;
+  saving: boolean;
+  changeKind: ReturnType<typeof classifyPortfolioPlanChanges>;
+  reset: () => void;
+  saveLabel: string;
+}) {
+  const { t, localeTag } = useI18n();
+  const stockById = new Map(stocks.map((stock) => [stock.id, stock]));
+  const accountById = new Map(accounts.map((account) => [account.id, account]));
+  const groupById = new Map(draft.groups.map((group) => [group.id, group]));
+  const targetById = new Map(draft.groups.flatMap((group) => group.targets).map((target) => [target.id, target]));
+  const amountMinor = parseMajorAmountToMinor(draft.contributionAmountInput, draft.contributionCurrency);
+  const formattedAmount = amountMinor === null ? "—" : formatCurrency(minorUnitsToMajor(amountMinor, draft.contributionCurrency), draft.contributionCurrency, localeTag);
+  const formattedTotal = calculation ? formatCurrency(minorUnitsToMajor(calculation.contributionAmountMinor, calculation.contributionCurrency), calculation.contributionCurrency, localeTag) : "—";
+  return <aside aria-labelledby="this-contribution-title" className="rounded-2xl border bg-[var(--surface)] p-4 sm:p-5">
+    <p className="text-[0.65rem] font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">{t("03 · This Contribution")}</p>
+    <h2 id="this-contribution-title" className="mt-1 text-lg font-semibold">{t("This Contribution")}</h2>
+    <p className="mt-1 text-xs leading-5 text-[var(--muted)]">{t("계산된 금액으로 이번 Contribution을 직접 실행합니다.")}</p>
+    <div className="mt-4 rounded-xl border bg-[var(--surface-muted)]/60 p-3">
+      <span className="text-[0.65rem] font-semibold uppercase tracking-[0.08em] text-[var(--muted)]">{t("Contribution Amount")}</span>
+      <strong className="mt-1 block text-2xl font-semibold tracking-tight tabular-nums">{formattedAmount}</strong>
+    </div>
+    {!calculation ? <p className="mt-4 rounded-lg border border-dashed px-3 py-6 text-center text-xs leading-5 text-[var(--muted)]">{t("유효한 Plan을 입력하면 정확한 실행 금액을 표시합니다.")}</p> : <div className="mt-3 divide-y" aria-live="polite">{calculation.targets.map((row) => {
+      const target = targetById.get(row.targetId);
+      const stock = row.stockId ? stockById.get(row.stockId) : null;
+      const group = groupById.get(row.groupId);
+      const groupBps = parsePercentageToBps(group?.weightInput ?? "");
+      const targetBps = parsePercentageToBps(target?.weightInput ?? "");
+      const allocation = groupBps === null || targetBps === null ? "—" : formatEffectiveAllocation(groupBps, targetBps);
+      const targetName = row.targetType === "cash" ? t("Cash") : stock ? `${stock.ticker} · ${stock.name}` : t("알 수 없는 종목");
+      return <div key={row.targetId} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 py-3 text-sm"><div className="min-w-0"><b className="block truncate font-medium" title={targetName}>{targetName}</b><span className="mt-1 block truncate text-[0.7rem] text-[var(--muted)]" title={`${group?.name || "—"} · ${accountById.get(row.accountId)?.name ?? "—"} · ${allocation}`}>{group?.name || "—"} · {accountById.get(row.accountId)?.name ?? "—"} · {allocation}</span></div><strong className="self-center whitespace-nowrap text-sm font-semibold tabular-nums">{formatCurrency(minorUnitsToMajor(row.amountMinor, draft.contributionCurrency), draft.contributionCurrency, localeTag)}</strong></div>;
+    })}</div>}
+    <div aria-label={t("합계")} className="mt-2 flex items-baseline justify-between gap-4 border-t-2 border-[var(--foreground)] pt-3"><span className="text-sm font-semibold">{t("합계")}</span><strong className="text-base font-semibold tabular-nums">{formattedTotal}</strong></div>
+    {!valid && <ValidationSummary messages={validationMessages} compact />}
+    <div className="mt-4 grid grid-cols-[minmax(0,0.8fr)_minmax(0,1.4fr)] gap-2"><button type="button" onClick={reset} disabled={saving || changeKind === "none"} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-medium disabled:opacity-50"><RotateCcw size={16} aria-hidden="true" />{t("Reset")}</button><button type="submit" disabled={saving || !valid || changeKind === "none"} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-[var(--ink)] px-3 text-sm font-semibold text-[var(--paper)] disabled:cursor-not-allowed disabled:opacity-50"><Save size={16} aria-hidden="true" />{saveLabel}</button></div>
+    <div className="mt-4 flex gap-2 text-[0.7rem] leading-5 text-[var(--muted)]"><Info size={15} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--accent)]" /><p>{t("Rationale은 주문을 실행하지 않습니다. 계산된 금액을 사용해 관련 은행 또는 증권 계좌에서 직접 매수하세요.")}</p></div>
+  </aside>;
 }
 
 function ExecutionTable({ draft, calculation, stocks, accounts }: { draft: PortfolioPlanEditorDraft; calculation: ContributionPlanCalculation | null; stocks: readonly Stock[]; accounts: readonly InvestmentAccount[] }) {
@@ -345,23 +446,27 @@ function WeightStatus({ inputs, label, className = "" }: { inputs: string[]; lab
   return <p className={`${className} text-xs font-medium ${invalid || total !== 10000 ? "text-amber-700 dark:text-amber-300" : "text-emerald-700 dark:text-emerald-300"}`}>{label}: <span className="tabular-nums">{invalid ? "—" : `${formatBpsAny(total)}%`}</span> · {status}</p>;
 }
 
-function ValidationSummary({ messages }: { messages: string[] }) {
+function ValidationSummary({ messages, compact = false }: { messages: string[]; compact?: boolean }) {
   const { t } = useI18n();
   const unique = [...new Set(messages)];
-  return <section role="alert" aria-labelledby="plan-validation-title" className="mt-6 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"><h2 id="plan-validation-title" className="font-semibold">{t("저장하기 전에 확인해 주세요.")}</h2><ul className="mt-2 list-disc space-y-1 pl-5">{unique.map((message) => <li key={message}>{t(message)}</li>)}</ul></section>;
+  const titleId = useId();
+  return <section role="alert" aria-labelledby={titleId} className={`${compact ? "mt-4 p-3 text-xs" : "mt-6 p-4 text-sm"} rounded-xl border border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100`}><h2 id={titleId} className="font-semibold">{t("저장하기 전에 확인해 주세요.")}</h2><ul className="mt-2 list-disc space-y-1 pl-5">{unique.map((message) => <li key={message}>{t(message)}</li>)}</ul></section>;
 }
 
-function LabeledInput({ label, value, onChange, error, inputMode }: { label: string; value: string; onChange: (value: string) => void; error?: string; inputMode?: "decimal" }) {
+function LabeledInput({ label, value, onChange, error, inputMode, labelDisplay = "visible", compact = false }: { label: string; value: string; onChange: (value: string) => void; error?: string; inputMode?: "decimal"; labelDisplay?: "visible" | "sr-only"; compact?: boolean }) {
   const { t } = useI18n();
   const id = useMemo(() => draftId("field"), []);
   const errorId = `${id}-error`;
-  return <label htmlFor={id} className="text-sm font-medium">{label}<input id={id} value={value} inputMode={inputMode} onChange={(event) => onChange(event.target.value)} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} className="mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3 font-normal tabular-nums" />{error && <span id={errorId} className="mt-1 block text-xs font-normal text-red-700 dark:text-red-300">{t(error)}</span>}</label>;
+  const labelClassName = labelDisplay === "sr-only" ? "sr-only" : compact ? "mb-1 block text-xs font-medium text-[var(--muted)] lg:sr-only" : "block text-sm font-medium";
+  return <label htmlFor={id} className="block min-w-0"><span className={labelClassName}>{label}</span><input id={id} value={value} inputMode={inputMode} onChange={(event) => onChange(event.target.value)} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} className={`${labelDisplay === "visible" && !compact ? "mt-1" : ""} h-10 w-full min-w-0 rounded-lg border bg-[var(--surface)] px-3 text-sm font-normal tabular-nums`} />{error && <span id={errorId} className="mt-1 block text-xs font-normal text-red-700 dark:text-red-300">{t(error)}</span>}</label>;
 }
-function AccountSelect({ label, accounts, value, onChange, error }: { label: string; accounts: readonly InvestmentAccount[]; value: string; onChange: (value: string) => void; error?: string }) {
+function AccountSelect({ label, accounts, value, onChange, error, compact = false }: { label: string; accounts: readonly InvestmentAccount[]; value: string; onChange: (value: string) => void; error?: string; compact?: boolean }) {
   const { t } = useI18n();
-  return <label className="text-sm font-medium">{label}<select value={value} onChange={(event) => onChange(event.target.value)} aria-invalid={Boolean(error)} className="mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3 font-normal"><option value="">{t("Account 선택")}</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.baseCurrency}</option>)}</select>{error && <span className="mt-1 block text-xs font-normal text-red-700 dark:text-red-300">{t(error)}</span>}</label>;
+  return <label className="block min-w-0"><span className={compact ? "mb-1 block text-xs font-medium text-[var(--muted)] lg:sr-only" : "block text-sm font-medium"}>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)} aria-invalid={Boolean(error)} className={`${compact ? "" : "mt-1"} h-10 w-full min-w-0 rounded-lg border bg-[var(--surface)] px-3 text-sm font-normal`}><option value="">{t("Account 선택")}</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.baseCurrency}</option>)}</select>{error && <span className="mt-1 block text-xs font-normal text-red-700 dark:text-red-300">{t(error)}</span>}</label>;
 }
-function ReadOnlyMetric({ label, value }: { label: string; value: string }) { return <div><p className="text-xs font-medium text-[var(--muted)]">{label}</p><p className="mt-1 min-h-10 truncate rounded-lg bg-[var(--surface-muted)] px-3 py-2.5 text-sm tabular-nums" title={value}>{value}</p></div>; }
+function ReadOnlyMetric({ label, value, compact = false }: { label: string; value: string; compact?: boolean }) { return <div className="min-w-0"><p className="text-xs font-medium text-[var(--muted)]">{label}</p><p className={`${compact ? "bg-transparent px-0 font-semibold" : "rounded-lg bg-[var(--surface-muted)] px-3"} mt-1 min-h-10 truncate py-2.5 text-sm tabular-nums`} title={value}>{value}</p></div>; }
+function SummaryStat({ label, value, tone }: { label: string; value: string; tone?: "good" | "warning" }) { return <div className="min-w-0 border-r px-3 py-3 last:border-r-0 sm:px-4"><dt className="truncate text-[0.65rem] font-medium uppercase tracking-[0.06em] text-[var(--muted)]">{label}</dt><dd className={`mt-1 truncate text-sm font-semibold tabular-nums ${tone === "good" ? "text-emerald-700 dark:text-emerald-300" : tone === "warning" ? "text-amber-700 dark:text-amber-300" : ""}`} title={value}>{value}</dd></div>; }
+function TargetMetric({ label, value, prominent = false }: { label: string; value: string; prominent?: boolean }) { return <div className="min-w-0"><span className="mb-1 block text-xs font-medium text-[var(--muted)] lg:sr-only">{label}</span><span className={`block truncate text-sm tabular-nums lg:text-right ${prominent ? "font-semibold text-[var(--accent)] lg:text-[var(--foreground)]" : "text-[var(--muted)]"}`} title={value}>{value}</span></div>; }
 function FieldError({ message }: { message: string }) { const { t } = useI18n(); return <p className="mt-2 text-xs text-red-700 dark:text-red-300">{t(message)}</p>; }
 function Cell({ label, value, alignRight = false }: { label: string; value: string; alignRight?: boolean }) { return <div className={alignRight ? "md:text-right" : ""}><span className="mr-2 text-xs font-medium text-[var(--muted)] md:hidden">{label}</span><span className="tabular-nums">{value}</span></div>; }
 function PlanLoading() { const { t } = useI18n(); return <p className="py-20 text-center text-sm text-[var(--muted)]">{t("Contribution Plan을 불러오는 중입니다.")}</p>; }
