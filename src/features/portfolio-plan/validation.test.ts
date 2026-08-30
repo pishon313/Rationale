@@ -73,6 +73,13 @@ describe("Portfolio plan validation", () => {
   it("rejects an unsupported Contribution Currency", () => {
     expect(() => validatePortfolioPlanCollections({ ...valid(), states: [{ ...states[0], contributionCurrency: "BTC" as "KRW" }] })).toThrow("Contribution Currency");
   });
+
+  it("accepts optional stock-detail targets and rejects invalid totals or duplicates", () => {
+    const policy = { version: 1 as const, mode: "balanceAssist" as const, targetWeightsBps: { savings: 3000, stocks: 6000, bonds: 1000 }, toleranceBps: 500, stockTargets: [{ stockId: sampleStocks[0].id, targetWeightBps: 7000 }, { stockId: sampleStocks[1].id, targetWeightBps: 3000 }], stockToleranceBps: 300, updatedAt: now };
+    expect(() => validatePortfolioPlanCollections({ ...valid(), states: [{ ...states[0], balancePolicy: policy }] })).not.toThrow();
+    expect(() => validatePortfolioPlanCollections({ ...valid(), states: [{ ...states[0], balancePolicy: { ...policy, stockTargets: [{ stockId: sampleStocks[0].id, targetWeightBps: 9000 }] } }] })).toThrow("주식 세부 목표 비율 합계");
+    expect(() => validatePortfolioPlanCollections({ ...valid(), states: [{ ...states[0], balancePolicy: { ...policy, stockTargets: [{ stockId: sampleStocks[0].id, targetWeightBps: 5000 }, { stockId: sampleStocks[0].id, targetWeightBps: 5000 }] } }] })).toThrow("주식 세부 목표 종목");
+  });
 });
 
 function account(id: string): InvestmentAccount {

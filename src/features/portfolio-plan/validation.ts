@@ -34,6 +34,19 @@ function validatePortfolioBalancePolicy(value: unknown): asserts value is Portfo
   validateBps(weights.bonds, "Portfolio 채권 목표 비율이 올바르지 않습니다.");
   if (weights.savings + weights.stocks + weights.bonds !== 10000) throw new Error("Portfolio 전체 목표 비율 합계는 100%여야 합니다.");
   validateBps(policy.toleranceBps, "Portfolio 허용 오차가 올바르지 않습니다.");
+  if (policy.stockTargets !== undefined) {
+    if (!Array.isArray(policy.stockTargets) || !policy.stockTargets.length) throw new Error("Portfolio 주식 세부 목표가 올바르지 않습니다.");
+    const stockIds = new Set<string>();
+    let total = 0;
+    for (const target of policy.stockTargets) {
+      if (!target || typeof target !== "object" || !nonEmptyString(target.stockId) || stockIds.has(target.stockId)) throw new Error("Portfolio 주식 세부 목표 종목이 올바르지 않습니다.");
+      validateBps(target.targetWeightBps, "Portfolio 주식 세부 목표 비율이 올바르지 않습니다.");
+      stockIds.add(target.stockId);
+      total += target.targetWeightBps;
+    }
+    if (total !== 10000) throw new Error("Portfolio 주식 세부 목표 비율 합계는 100%여야 합니다.");
+    validateBps(policy.stockToleranceBps, "Portfolio 주식 세부 허용 오차가 올바르지 않습니다.");
+  } else if (policy.stockToleranceBps !== undefined) throw new Error("Portfolio 주식 세부 목표 없이 허용 오차를 저장할 수 없습니다.");
 }
 
 export function validatePortfolioPlanRevisionRecord(value: Record<string, unknown>) {

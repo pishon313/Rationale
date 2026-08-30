@@ -60,4 +60,23 @@ describe("Portfolio Allocation page", () => {
     expect(mocks.save.mock.calls[0]?.[0][0].values[0].balancePolicy).toBeNull();
     expect(screen.getByRole("status")).toHaveTextContent("Plan은 저장된 기본 비율을 사용합니다.");
   });
+
+  it("optionally stores stock targets and their own tolerance", async () => {
+    render(<PortfolioAllocationPageClient />);
+    fireEvent.click(screen.getByRole("button", { name: "주식 세부 비율 설정" }));
+    fireEvent.click(screen.getByRole("button", { name: "종목 추가" }));
+    const weights = screen.getAllByLabelText("종목 목표 비중 (%)");
+    fireEvent.change(weights[0]!, { target: { value: "70" } });
+    fireEvent.change(weights[1]!, { target: { value: "30" } });
+    fireEvent.change(screen.getByLabelText("주식 세부 허용 오차 (%)"), { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Allocation 저장" }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
+    expect(mocks.save.mock.calls[0]?.[0][0].values[0].balancePolicy).toMatchObject({
+      stockTargets: [
+        { stockId: sampleStocks[0]!.id, targetWeightBps: 7000 },
+        { stockId: sampleStocks[1]!.id, targetWeightBps: 3000 },
+      ],
+      stockToleranceBps: 300,
+    });
+  });
 });

@@ -10,6 +10,7 @@ import {
   parsePercentageToBps,
   portfolioPlanDraftFromActive,
   validatePortfolioPlanEditorDraft,
+  withPortfolioStockTargetWeights,
   type PortfolioPlanEditorDraft,
 } from "./portfolio-plan-draft";
 
@@ -103,6 +104,19 @@ describe("Portfolio Plan draft validation and semantic changes", () => {
     expect(classifyPortfolioPlanChanges({ draft: { ...saved, thesis: "Changed" }, saved, hasActiveRevision: true })).toBe("revision");
     const renamed = saved.groups.map((group, index) => index === 1 ? { ...group, name: "  주식   투자  " } : group);
     expect(classifyPortfolioPlanChanges({ draft: { ...saved, groups: renamed }, saved, hasActiveRevision: true })).toBe("none");
+  });
+
+  it("applies optional Allocation stock targets only to the execution draft", () => {
+    const saved = validDraft();
+    const execution = withPortfolioStockTargetWeights(saved, [
+      { stockId: sampleStocks[0]!.id, targetWeightBps: 7000 },
+      { stockId: sampleStocks[1]!.id, targetWeightBps: 3000 },
+    ]);
+    expect(execution.groups[1]?.targets).toEqual([
+      expect.objectContaining({ id: "t1", stockId: sampleStocks[0]!.id, accountId: "a", weightInput: "70" }),
+      expect.objectContaining({ id: `allocation:stock:${sampleStocks[1]!.id}`, stockId: sampleStocks[1]!.id, accountId: "", weightInput: "30" }),
+    ]);
+    expect(saved.groups[1]?.targets).toHaveLength(1);
   });
 });
 

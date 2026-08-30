@@ -167,7 +167,7 @@ function balanceRecord(value: number): Record<PortfolioBalanceCategory, number> 
   return { savings: value, stocks: value, bonds: value };
 }
 
-function isBondAssetType(value: string) {
+export function isBondAssetType(value: string) {
   const normalized = value.trim().toLocaleLowerCase().replace(/[\s_-]+/g, "");
   return ["bond", "bonds", "fixedincome", "treasury", "채권", "국채"].some((label) => normalized.includes(label));
 }

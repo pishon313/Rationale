@@ -108,6 +108,17 @@ describe("Contribution Plan page", () => {
     expect(categoryWeights[2]).toHaveValue("25");
   });
 
+  it("uses optional Allocation stock targets to split the Plan stock amount", () => {
+    seedActive();
+    mocks.collections.set("portfolio-plan-state", [{ ...state, balancePolicy: { version: 1, mode: "fixed", targetWeightsBps: { savings: 0, stocks: 10000, bonds: 0 }, toleranceBps: 500, stockTargets: [{ stockId: sampleStocks[0]!.id, targetWeightBps: 7000 }, { stockId: sampleStocks[1]!.id, targetWeightBps: 3000 }], stockToleranceBps: 300, updatedAt: now } }]);
+    render(<PortfolioPlanPageClient />);
+    const summary = screen.getByRole("complementary", { name: "이번 저축 실행표" });
+    expect(within(summary).getByText("005930 · 삼성전자")).toBeInTheDocument();
+    expect(within(summary).getByText("005380 · 현대차")).toBeInTheDocument();
+    expect(within(summary).getByText("₩700,000")).toBeInTheDocument();
+    expect(within(summary).getByText("₩300,000")).toBeInTheDocument();
+  });
+
   it("creates a new immutable revision when Thesis changes and disables invalid saves", async () => {
     seedActive();
     render(<PortfolioPlanPageClient />);

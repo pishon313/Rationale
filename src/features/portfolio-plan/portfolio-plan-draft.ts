@@ -218,6 +218,33 @@ export function withPortfolioPlanCategoryWeights(draft: PortfolioPlanEditorDraft
   };
 }
 
+/** Applies optional Allocation stock targets to the execution draft without mutating the saved Contribution Plan. */
+export function withPortfolioStockTargetWeights(draft: PortfolioPlanEditorDraft, targets: readonly { stockId: string; targetWeightBps: number }[] | null | undefined) {
+  if (!targets?.length) return draft;
+  const bondStockIds = new Set(draft.groups.find((group) => group.category === "bonds")?.targets.flatMap((target) => target.stockId ? [target.stockId] : []) ?? []);
+  return {
+    ...draft,
+    groups: draft.groups.map((group) => {
+      if (group.category !== "stocks") return group;
+      const currentByStockId = new Map(group.targets.flatMap((target) => target.stockId ? [[target.stockId, target] as const] : []));
+      return {
+        ...group,
+        targets: targets.filter((target) => !bondStockIds.has(target.stockId)).map((target, sortOrder) => {
+          const current = currentByStockId.get(target.stockId);
+          return {
+            id: current?.id ?? `allocation:stock:${target.stockId}`,
+            targetType: "stock" as const,
+            stockId: target.stockId,
+            accountId: current?.accountId ?? "",
+            weightInput: formatBpsInput(target.targetWeightBps),
+            sortOrder,
+          };
+        }),
+      };
+    }),
+  } satisfies PortfolioPlanEditorDraft;
+}
+
 function normalizePortfolioPlanCategories(groups: Array<Omit<PortfolioPlanEditorGroup, "category">>): PortfolioPlanEditorGroup[] {
   const categorized = new Map<PortfolioPlanCategory, Array<Omit<PortfolioPlanEditorGroup, "category">>>();
   for (const group of groups) {

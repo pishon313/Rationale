@@ -31,6 +31,7 @@ import {
   portfolioTargetAllocationCategoryName,
   validatePortfolioPlanEditorDraft,
   withPortfolioPlanCategoryWeights,
+  withPortfolioStockTargetWeights,
   type PortfolioPlanEditorDraft,
   type PortfolioPlanEditorGroup,
   type PortfolioPlanEditorTarget,
@@ -173,7 +174,8 @@ function PortfolioPlanEditor({ state, activeRevision, revisions, groups, targets
   const [executionOverride, setExecutionOverride] = useState<{ key: string; inputs: Record<(typeof portfolioPlanCategories)[number], string> } | null>(null);
   const executionInputs = executionOverride?.key === suggestionKey ? executionOverride.inputs : suggestedExecutionInputs;
   const balanceAssistActive = state?.balancePolicy?.mode === "balanceAssist";
-  const executionDraft = useMemo(() => balanceAssistActive ? withPortfolioPlanCategoryWeights(draft, executionInputs) : draft, [balanceAssistActive, draft, executionInputs]);
+  const categoryExecutionDraft = useMemo(() => balanceAssistActive ? withPortfolioPlanCategoryWeights(draft, executionInputs) : draft, [balanceAssistActive, draft, executionInputs]);
+  const executionDraft = useMemo(() => withPortfolioStockTargetWeights(categoryExecutionDraft, state?.balancePolicy?.stockTargets), [categoryExecutionDraft, state?.balancePolicy?.stockTargets]);
   const executionValidation = useMemo(() => validatePortfolioPlanEditorDraft(executionDraft, stocks, accounts), [accounts, executionDraft, stocks]);
   const calculation = useMemo(() => calculatePortfolioPlanDraft(executionDraft), [executionDraft]);
   const activeAccounts = accounts.filter((account) => !account.archivedAt);
@@ -360,7 +362,7 @@ function AllocationPlanBridge({ policy, snapshot, suggestion }: {
         const current = currentByCategory.get(category);
         return <div key={category} className="rounded-xl border bg-[var(--surface-muted)] p-3"><p className="text-xs font-semibold">{t(portfolioTargetAllocationCategoryName(category))}</p><dl className="mt-2 grid grid-cols-2 gap-2 text-[0.7rem]"><div><dt className="text-[var(--muted)]">{t("목표 비중")}</dt><dd className="mt-1 font-semibold tabular-nums">{formatBpsAny(policy.targetWeightsBps[category])}%</dd></div><div><dt className="text-[var(--muted)]">{t("현재 비중")}</dt><dd className="mt-1 font-semibold tabular-nums">{current === null || current === undefined ? "—" : `${formatNumber(current / 100, { maximumFractionDigits: 2 })}%`}</dd></div></dl></div>;
       })}</div>
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--accent-soft)] px-3 py-2 text-xs leading-5 text-[var(--accent)]"><span>{suggestionLabel}</span><b>{t(policy.mode === "balanceAssist" ? "균형 맞추기" : "고정 비율")}</b></div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--accent-soft)] px-3 py-2 text-xs leading-5 text-[var(--accent)]"><span>{suggestionLabel}</span><div className="flex items-center gap-2"><b>{t(policy.mode === "balanceAssist" ? "균형 맞추기" : "고정 비율")}</b>{policy.stockTargets?.length ? <span>{t("주식 세부 목표 {count}개", { count: policy.stockTargets.length })}</span> : null}</div></div>
     </>}
   </section>;
 }

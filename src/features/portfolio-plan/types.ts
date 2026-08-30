@@ -49,6 +49,9 @@ export type PortfolioBalancePolicy = {
     bonds: number;
   };
   toleranceBps: number;
+  /** Optional target mix inside the Stocks bucket. When present, its weights total 100%. */
+  stockTargets?: Array<{ stockId: string; targetWeightBps: number }>;
+  stockToleranceBps?: number;
   updatedAt: string;
 };
 

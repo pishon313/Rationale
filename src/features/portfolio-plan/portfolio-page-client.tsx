@@ -10,7 +10,7 @@ import { useStockStore } from "@/features/stocks/use-stock-store";
 import { useI18n } from "@/i18n/i18n-provider";
 import { useExchangeRates } from "@/lib/use-exchange-rates";
 import { useLocalCollection } from "@/lib/use-local-collection";
-import { calculatePortfolioPlanDraft, portfolioPlanCategoryName, portfolioPlanCategoryWeights, portfolioPlanDraftFromActive, portfolioTargetAllocationCategoryName, withPortfolioPlanCategoryWeights } from "./portfolio-plan-draft";
+import { calculatePortfolioPlanDraft, portfolioPlanCategoryName, portfolioPlanCategoryWeights, portfolioPlanDraftFromActive, portfolioTargetAllocationCategoryName, withPortfolioPlanCategoryWeights, withPortfolioStockTargetWeights } from "./portfolio-plan-draft";
 import { buildPortfolioPlanRepairActivation, isLegacyPortfolioPlanV6Data, migratePortfolioPlanV6, persistPortfolioPlanRepairActivation, persistPortfolioPlanV6Migration } from "./portfolio-plan-migration";
 import type {
   LegacyPortfolioAllocationTargetV6,
@@ -74,7 +74,8 @@ export function PortfolioPageClient() {
   const bondStockIds = useMemo(() => new Set(draft.groups.find((group) => group.category === "bonds")?.targets.flatMap((target) => target.stockId ? [target.stockId] : []) ?? []), [draft]);
   const balanceSnapshot = useMemo(() => buildPortfolioBalanceSnapshot({ ledger: stockStore.ledger, stocks: stockStore.allStocks, ratesToKrw: exchangeRates.snapshot.ratesToKrw, bondStockIds }), [bondStockIds, exchangeRates.snapshot.ratesToKrw, stockStore.allStocks, stockStore.ledger]);
   const suggestion = useMemo(() => state && baseWeights ? suggestContributionBalance({ snapshot: balanceSnapshot, policy: state.balancePolicy, baseWeightsBps: baseWeights, contributionAmountMinor: state.contributionAmountMinor, contributionCurrency: state.contributionCurrency, ratesToKrw: exchangeRates.snapshot.ratesToKrw }) : null, [balanceSnapshot, baseWeights, exchangeRates.snapshot.ratesToKrw, state]);
-  const executionDraft = useMemo(() => suggestion && state?.balancePolicy?.mode === "balanceAssist" ? withPortfolioPlanCategoryWeights(draft, suggestion.weightsBps) : draft, [draft, state?.balancePolicy?.mode, suggestion]);
+  const categoryExecutionDraft = useMemo(() => suggestion && state?.balancePolicy?.mode === "balanceAssist" ? withPortfolioPlanCategoryWeights(draft, suggestion.weightsBps) : draft, [draft, state?.balancePolicy?.mode, suggestion]);
+  const executionDraft = useMemo(() => withPortfolioStockTargetWeights(categoryExecutionDraft, state?.balancePolicy?.stockTargets), [categoryExecutionDraft, state?.balancePolicy?.stockTargets]);
   const calculation = useMemo(() => activeRevision ? calculatePortfolioPlanDraft(executionDraft) : null, [activeRevision, executionDraft]);
   const holdingCount = stockStore.ledger.positions.filter((position) => position.quantity > 1e-8).length + stockStore.ledger.cashBalances.filter((cash) => Math.abs(cash.balance) > 1e-8).length;
 
