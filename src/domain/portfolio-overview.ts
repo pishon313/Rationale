@@ -82,13 +82,13 @@ export function comparePortfolioPlanByGroup(input: {
   const total = available ? calculatedTotal : null;
   const denominator = total !== null && total > 0 ? total : null;
   const targetStockIds = new Set(targets.filter((target) => target.targetType === "stock").map((target) => target.stockId));
-  const targetCashAccounts = new Set(targets.filter((target) => target.targetType === "cash").map((target) => target.accountId));
+  const targetCashAccounts = new Set(targets.filter((target) => target.targetType === "cash" && target.accountId !== null).map((target) => target.accountId));
 
   const comparisons = groups.map((group): PortfolioGroupComparison => {
     const groupTargets = targets.filter((target) => target.groupId === group.id);
     const targetRows = groupTargets.map((target) => {
       const targetPercentage = group.targetWeightBps / 100 * target.weightWithinGroupBps / 10000;
-      const value = target.targetType === "cash" ? cashValues.get(target.accountId) ?? 0 : stockValues.get(target.stockId) ?? 0;
+      const value = target.targetType === "cash" ? target.accountId ? cashValues.get(target.accountId) ?? 0 : 0 : stockValues.get(target.stockId) ?? 0;
       return comparisonTarget(target, targetPercentage, value, available, denominator, total, "onPlan");
     });
     const currentValue = available ? targetRows.reduce((sum, row) => sum + (row.currentValueKrw ?? 0), 0) : null;

@@ -25,6 +25,16 @@ describe("Portfolio plan validation", () => {
     expect(() => validatePortfolioPlanCollections(valid())).not.toThrow();
   });
 
+  it("accepts a fixed 0% Group without Targets", () => {
+    const unused: PortfolioAllocationGroup = { id: "g3", revisionId: "r1", name: "Bonds", targetWeightBps: 0, sortOrder: 2, updatedAt: now };
+    expect(() => validatePortfolioPlanCollections({ ...valid(), groups: [...groups, unused] })).not.toThrow();
+  });
+
+  it("accepts targets without execution accounts even when no Accounts exist", () => {
+    expect(() => validatePortfolioPlanCollections({ ...valid(), targets: targets.map((target) => ({ ...target, accountId: null })), accounts: [] })).not.toThrow();
+    expect(() => validateNewPortfolioTargetReferences(targets.map((target) => ({ ...target, accountId: null })), sampleStocks, [])).not.toThrow();
+  });
+
   it("rejects invalid Group and per-Group totals", () => {
     expect(() => validatePortfolioPlanCollections({ ...valid(), groups: [{ ...groups[0], targetWeightBps: 5999 }, groups[1]] })).toThrow("Group Target Weight");
     expect(() => validatePortfolioPlanCollections({ ...valid(), targets: [{ ...targets[0], weightWithinGroupBps: 4999 }, ...targets.slice(1)] })).toThrow("Group 내부");

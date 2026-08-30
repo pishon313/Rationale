@@ -20,8 +20,12 @@ export type PortfolioPlanEditorTarget = {
   sortOrder: number;
 };
 
+export const portfolioPlanCategories = ["savings", "stocks", "bonds"] as const;
+export type PortfolioPlanCategory = (typeof portfolioPlanCategories)[number];
+
 export type PortfolioPlanEditorGroup = {
   id: string;
+  category: PortfolioPlanCategory;
   name: string;
   weightInput: string;
   sortOrder: number;
@@ -96,7 +100,20 @@ export function formatEffectiveAllocation(groupBps: number, targetBps: number) {
 }
 
 export function emptyPortfolioPlanDraft(currency: Currency): PortfolioPlanEditorDraft {
-  return { contributionAmountInput: "0", contributionCurrency: currency, groups: [], thesis: "", changeNote: "" };
+  return {
+    contributionAmountInput: "0",
+    contributionCurrency: currency,
+    groups: portfolioPlanCategories.map((category, sortOrder) => ({
+      id: `default:${category}`,
+      category,
+      name: portfolioPlanCategoryName(category),
+      weightInput: formatBpsInput([3000, 6000, 1000][sortOrder] ?? 0),
+      sortOrder,
+      targets: [],
+    })),
+    thesis: "",
+    changeNote: "",
+  };
 }
 
 export function portfolioPlanDraftFromActive(input: {
@@ -107,7 +124,7 @@ export function portfolioPlanDraftFromActive(input: {
   fallbackCurrency: Currency;
 }) {
   if (!input.state || !input.revision) return emptyPortfolioPlanDraft(input.state?.contributionCurrency ?? input.fallbackCurrency);
-  const groups = input.groups.filter((group) => group.revisionId === input.revision?.id).slice().sort(byOrder).map((group) => ({
+  const savedGroups = input.groups.filter((group) => group.revisionId === input.revision?.id).slice().sort(byOrder).map((group) => ({
     id: group.id,
     name: group.name,
     weightInput: formatBpsInput(group.targetWeightBps),
@@ -116,11 +133,12 @@ export function portfolioPlanDraftFromActive(input: {
       id: target.id,
       targetType: target.targetType,
       stockId: target.stockId,
-      accountId: target.accountId,
+      accountId: target.accountId ?? "",
       weightInput: formatBpsInput(target.weightWithinGroupBps),
       sortOrder: target.sortOrder,
     })),
   }));
+  const groups = normalizePortfolioPlanCategories(savedGroups);
   return {
     contributionAmountInput: formatMinorAmountInput(input.state.contributionAmountMinor, input.state.contributionCurrency),
     contributionCurrency: input.state.contributionCurrency,
@@ -128,6 +146,81 @@ export function portfolioPlanDraftFromActive(input: {
     thesis: input.revision.thesis,
     changeNote: "",
   } satisfies PortfolioPlanEditorDraft;
+}
+
+export function portfolioPlanCategoryName(category: PortfolioPlanCategory) {
+  return category === "savings" ? "적금" : category === "stocks" ? "주식 투자" : "채권";
+}
+
+export function portfolioPlanCategoryTargetType(category: PortfolioPlanCategory): PortfolioPlanEditorTarget["targetType"] {
+  return category === "savings" ? "cash" : "stock";
+}
+
+function normalizePortfolioPlanCategories(groups: Array<Omit<PortfolioPlanEditorGroup, "category">>): PortfolioPlanEditorGroup[] {
+  const categorized = new Map<PortfolioPlanCategory, Array<Omit<PortfolioPlanEditorGroup, "category">>>();
+  for (const group of groups) {
+    const category = inferPortfolioPlanCategory(group);
+    categorized.set(category, [...(categorized.get(category) ?? []), group]);
+  }
+  return portfolioPlanCategories.map((category, sortOrder) => {
+    const members = categorized.get(category) ?? [];
+    if (!members.length) return {
+      id: `default:${category}`,
+      category,
+      name: portfolioPlanCategoryName(category),
+      weightInput: "0",
+      sortOrder,
+      targets: [],
+    };
+    const targetWeightBps = members.reduce((sum, group) => sum + (parsePercentageToBps(group.weightInput) ?? 0), 0);
+    return {
+      id: members[0]!.id,
+      category,
+      name: portfolioPlanCategoryName(category),
+      weightInput: formatBpsInput(targetWeightBps),
+      sortOrder,
+      targets: mergeCategoryTargets(members),
+    };
+  });
+}
+
+function inferPortfolioPlanCategory(group: Omit<PortfolioPlanEditorGroup, "category">): PortfolioPlanCategory {
+  const name = normalizeText(group.name).toLocaleLowerCase().replace(/[\s_-]+/g, "");
+  if (["savings", "saving", "deposit", "fixeddeposit", "적금", "저축", "예금"].some((value) => name.includes(value))) return "savings";
+  if (["bonds", "bond", "채권"].some((value) => name.includes(value))) return "bonds";
+  if (["stocks", "stock", "equity", "주식", "주식투자"].some((value) => name.includes(value))) return "stocks";
+  if (group.targets.length > 0 && group.targets.every((target) => target.targetType === "cash")) return "savings";
+  return "stocks";
+}
+
+function mergeCategoryTargets(groups: Array<Omit<PortfolioPlanEditorGroup, "category">>): PortfolioPlanEditorTarget[] {
+  if (groups.length === 1) return groups[0]!.targets.slice().sort(byOrder).map((target, sortOrder) => ({ ...target, sortOrder }));
+  const targets = groups.flatMap((group) => {
+    const groupWeight = parsePercentageToBps(group.weightInput) ?? 0;
+    return group.targets.slice().sort(byOrder).map((target) => ({ target, score: groupWeight * (parsePercentageToBps(target.weightInput) ?? 0) }));
+  });
+  if (!targets.length) return [];
+  let scoreTotal = targets.reduce((sum, item) => sum + item.score, 0);
+  if (scoreTotal === 0) {
+    targets.forEach((item) => { item.score = parsePercentageToBps(item.target.weightInput) ?? 0; });
+    scoreTotal = targets.reduce((sum, item) => sum + item.score, 0);
+  }
+  const weights = proportionalBps(targets.map((item) => item.score), scoreTotal);
+  return targets.map(({ target }, sortOrder) => ({ ...target, weightInput: formatBpsInput(weights[sortOrder] ?? 0), sortOrder }));
+}
+
+function proportionalBps(scores: number[], total: number) {
+  if (total <= 0) return scores.map((_, index) => index === 0 ? 10000 : 0);
+  const rows = scores.map((score, index) => {
+    const numerator = BigInt(score) * 10000n;
+    return { index, weight: numerator / BigInt(total), remainder: numerator % BigInt(total) };
+  });
+  let remaining = 10000n - rows.reduce((sum, row) => sum + row.weight, 0n);
+  const order = rows.slice().sort((left, right) => left.remainder === right.remainder ? left.index - right.index : left.remainder > right.remainder ? -1 : 1);
+  for (let index = 0; remaining > 0n; index += 1, remaining -= 1n) order[index % order.length]!.weight += 1n;
+  const values = new Array<number>(scores.length);
+  rows.forEach((row) => { values[row.index] = Number(row.weight); });
+  return values;
 }
 
 export function portfolioPlanRepairAccountMap(draft: PortfolioPlanRepairDraft) {
@@ -160,16 +253,18 @@ export function validatePortfolioPlanEditorDraft(draft: PortfolioPlanEditorDraft
     const weight = parsePercentageToBps(group.weightInput);
     if (weight === null) addError(fields, summary, `${groupPath}.weight`, "비중은 0%부터 100%까지 소수점 둘째 자리로 입력해 주세요.");
     else groupTotal += weight;
-    if (!group.targets.length) addError(fields, summary, `${groupPath}.targets`, "각 Allocation Group에 하나 이상의 Target을 추가해 주세요.");
+    if (weight !== null && weight > 0 && !group.targets.length) addError(fields, summary, `${groupPath}.targets`, "0%보다 큰 카테고리에는 하나 이상의 세부 항목을 추가해 주세요.");
     if (weight !== null) parsedGroups.push({ id: group.id, name, targetWeightBps: weight, sortOrder: groupIndex });
 
     let targetTotal = 0;
     group.targets.slice().sort(byOrder).forEach((target, targetIndex) => {
       const targetPath = `${groupPath}.targets.${target.id}`;
+      const expectedType = portfolioPlanCategoryTargetType(group.category);
+      if (target.targetType !== expectedType) addError(fields, summary, `${targetPath}.type`, "카테고리에 맞는 세부 항목을 추가해 주세요.");
       const targetWeight = parsePercentageToBps(target.weightInput);
       if (targetWeight === null) addError(fields, summary, `${targetPath}.weight`, "비중은 0%부터 100%까지 소수점 둘째 자리로 입력해 주세요.");
       else targetTotal += targetWeight;
-      if (!target.accountId || !activeAccounts.has(target.accountId)) addError(fields, summary, `${targetPath}.account`, "활성 계좌를 선택해 주세요.");
+      if (target.accountId && !activeAccounts.has(target.accountId)) addError(fields, summary, `${targetPath}.account`, "선택한 계좌를 사용할 수 없습니다.");
       if (target.targetType === "stock") {
         if (!target.stockId || !activeStocks.has(target.stockId)) addError(fields, summary, `${targetPath}.stock`, "등록된 종목을 선택해 주세요.");
         else if (stockIds.has(target.stockId)) addError(fields, summary, `${targetPath}.stock`, "한 리비전에 같은 종목을 두 번 추가할 수 없습니다.");
@@ -178,9 +273,9 @@ export function validatePortfolioPlanEditorDraft(draft: PortfolioPlanEditorDraft
         if (cashAccountIds.has(target.accountId)) addError(fields, summary, `${targetPath}.account`, "한 리비전에 같은 계좌의 Cash Target을 두 번 추가할 수 없습니다.");
         else cashAccountIds.add(target.accountId);
       }
-      if (targetWeight !== null && target.accountId && (target.targetType === "cash" || target.stockId)) parsedTargets.push(target.targetType === "stock"
-        ? { groupId: group.id, accountId: target.accountId, targetType: "stock", stockId: target.stockId as string, weightWithinGroupBps: targetWeight, sortOrder: targetIndex }
-        : { groupId: group.id, accountId: target.accountId, targetType: "cash", stockId: null, weightWithinGroupBps: targetWeight, sortOrder: targetIndex });
+      if (targetWeight !== null && (target.targetType === "cash" || target.stockId)) parsedTargets.push(target.targetType === "stock"
+        ? { groupId: group.id, accountId: target.accountId || null, targetType: "stock", stockId: target.stockId as string, weightWithinGroupBps: targetWeight, sortOrder: targetIndex }
+        : { groupId: group.id, accountId: target.accountId || null, targetType: "cash", stockId: null, weightWithinGroupBps: targetWeight, sortOrder: targetIndex });
     });
     if (group.targets.length && targetTotal !== 10000) addError(fields, summary, `${groupPath}.targetTotal`, "Group 내부 Target 비중 합계는 정확히 100%여야 합니다.");
   });
@@ -214,6 +309,7 @@ function semanticEditor(draft: PortfolioPlanEditorDraft) {
     revision: {
       thesis: draft.thesis.trim(),
       groups: draft.groups.slice().sort(byOrder).map((group) => ({
+        category: group.category,
         name: normalizeText(group.name),
         weight: parsePercentageToBps(group.weightInput) ?? `invalid:${group.weightInput.trim()}`,
         targets: group.targets.slice().sort(byOrder).map((target) => ({ type: target.targetType, stockId: target.stockId, accountId: target.accountId, weight: parsePercentageToBps(target.weightInput) ?? `invalid:${target.weightInput.trim()}` })),

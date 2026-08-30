@@ -36,7 +36,7 @@ export function validatePortfolioAllocationGroupRecord(value: Record<string, unk
 }
 
 export function validatePortfolioAllocationTargetRecord(value: Record<string, unknown>) {
-  if (!nonEmptyString(value.id) || !nonEmptyString(value.revisionId) || !nonEmptyString(value.groupId) || !nonEmptyString(value.accountId)) throw new Error("포트폴리오 배분 대상 연결이 올바르지 않습니다.");
+  if (!nonEmptyString(value.id) || !nonEmptyString(value.revisionId) || !nonEmptyString(value.groupId) || value.accountId !== null && !nonEmptyString(value.accountId)) throw new Error("포트폴리오 배분 대상 연결이 올바르지 않습니다.");
   validateBps(value.weightWithinGroupBps, "포트폴리오 Group 내부 Target Weight가 올바르지 않습니다.");
   validateOrderAndTimestamp(value, "포트폴리오 배분 순서가 올바르지 않습니다.");
   if (value.targetType === "stock") {
@@ -101,7 +101,7 @@ export function validatePortfolioPlanCollections(input: {
     if (!revisions.has(target.revisionId)) throw new Error("배분 대상의 포트폴리오 계획 리비전이 존재하지 않습니다.");
     const group = groups.get(target.groupId);
     if (!group || group.revisionId !== target.revisionId) throw new Error("배분 대상의 Allocation Group이 존재하지 않습니다.");
-    if (!accounts.has(target.accountId)) throw new Error("배분 대상 계좌가 존재하지 않습니다.");
+    if (target.accountId !== null && !accounts.has(target.accountId)) throw new Error("배분 대상 계좌가 존재하지 않습니다.");
     if (target.targetType === "stock" && !stocks.has(target.stockId)) throw new Error("배분 대상 종목이 존재하지 않습니다.");
     targetsByGroup.set(target.groupId, [...(targetsByGroup.get(target.groupId) ?? []), target]);
     targetsByRevision.set(target.revisionId, [...(targetsByRevision.get(target.revisionId) ?? []), target]);
@@ -115,13 +115,14 @@ export function validatePortfolioPlanCollections(input: {
     if (new Set(normalizedNames).size !== normalizedNames.length) throw new Error("한 리비전에 같은 Allocation Group 이름을 두 번 사용할 수 없습니다.");
     for (const group of revisionGroups) {
       const groupTargets = targetsByGroup.get(group.id) ?? [];
-      if (!groupTargets.length) throw new Error("모든 Allocation Group에는 Target이 하나 이상 필요합니다.");
+      if (!groupTargets.length && group.targetWeightBps > 0) throw new Error("0%보다 큰 Allocation Group에는 Target이 하나 이상 필요합니다.");
+      if (!groupTargets.length) continue;
       if (groupTargets.reduce((sum, target) => sum + target.weightWithinGroupBps, 0) !== 10000) throw new Error("Group 내부 Target Weight 합계는 100%여야 합니다.");
     }
     const revisionTargets = targetsByRevision.get(revision.id) ?? [];
     const stockIds = revisionTargets.filter((target): target is Extract<PortfolioAllocationTarget, { targetType: "stock" }> => target.targetType === "stock").map((target) => target.stockId);
     if (new Set(stockIds).size !== stockIds.length) throw new Error("한 리비전에 같은 종목을 두 번 배분할 수 없습니다.");
-    const cashAccounts = revisionTargets.filter((target) => target.targetType === "cash").map((target) => target.accountId);
+    const cashAccounts = revisionTargets.filter((target) => target.targetType === "cash" && target.accountId !== null).map((target) => target.accountId);
     if (new Set(cashAccounts).size !== cashAccounts.length) throw new Error("한 리비전에 같은 계좌의 Cash Target을 두 번 배분할 수 없습니다.");
   }
 }
@@ -130,6 +131,14 @@ export function validateNewPortfolioTargetReferences(targets: readonly Portfolio
   const stockById = new Map(stocks.map((stock) => [stock.id, stock]));
   const accountById = new Map(accounts.map((account) => [account.id, account]));
   for (const target of targets) {
+    if (target.accountId === null) {
+      if (target.targetType === "stock") {
+        const stock = stockById.get(target.stockId);
+        if (!stock) throw new Error("배분 대상 종목이 존재하지 않습니다.");
+        if (stock.deletedAt) throw new Error("삭제된 종목은 새 Contribution Target에 사용할 수 없습니다.");
+      }
+      continue;
+    }
     const account = accountById.get(target.accountId);
     if (!account) throw new Error("배분 대상 계좌가 존재하지 않습니다.");
     if (account.archivedAt) throw new Error("보관된 계좌는 새 Contribution Target에 사용할 수 없습니다.");

@@ -28,6 +28,16 @@ describe("Portfolio contribution allocation", () => {
     expect(result.targets.reduce((sum, target) => sum + target.amountMinor, 0)).toBe(amount);
   });
 
+  it("keeps a fixed 0% category without requiring targets", () => {
+    const fixedGroups: PortfolioAllocationGroup[] = [
+      { id: "unused", revisionId: "r1", name: "Savings", targetWeightBps: 0, sortOrder: 0, updatedAt: now },
+      ...groups.map((group) => ({ ...group, sortOrder: group.sortOrder + 1 })),
+    ];
+    const result = calculateContributionPlan({ contributionAmountMinor: 1_000_000, contributionCurrency: "KRW", groups: fixedGroups, targets, revisionId: "r1" });
+    expect(result.groups[0]).toMatchObject({ groupId: "unused", amountMinor: 0, targets: [] });
+    expect(result.targets.reduce((sum, target) => sum + target.amountMinor, 0)).toBe(1_000_000);
+  });
+
   it("handles zero, one minor unit, and a very large safe integer", () => {
     expect(allocateMinorUnits(0, [{ id: "a", weightBps: 5000, sortOrder: 0 }, { id: "b", weightBps: 5000, sortOrder: 1 }])).toEqual([{ id: "a", amountMinor: 0 }, { id: "b", amountMinor: 0 }]);
     expect(allocateMinorUnits(1, [{ id: "a", weightBps: 5000, sortOrder: 0 }, { id: "b", weightBps: 5000, sortOrder: 1 }])).toEqual([{ id: "a", amountMinor: 1 }, { id: "b", amountMinor: 0 }]);

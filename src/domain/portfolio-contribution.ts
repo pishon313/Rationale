@@ -9,7 +9,7 @@ export type ContributionTargetAmount = {
   groupId: string;
   targetType: "stock" | "cash";
   stockId: string | null;
-  accountId: string;
+  accountId: string | null;
   effectiveTargetWeightBps: number;
   amountMinor: number;
 };
@@ -72,7 +72,8 @@ export function calculateContributionPlan(input: {
   const calculatedGroups = groups.map((group): ContributionGroupAmount => {
     const groupTargets = targets.filter((target) => target.groupId === group.id).slice().sort(byOrder);
     const amountMinor = amountByGroup.get(group.id) ?? 0;
-    const targetAmounts = allocateMinorUnits(amountMinor, groupTargets.map((target) => ({ id: target.id, weightBps: target.weightWithinGroupBps, sortOrder: target.sortOrder })));
+    if (!groupTargets.length && group.targetWeightBps > 0) throw new Error("CONTRIBUTION_TARGETS_EMPTY");
+    const targetAmounts = groupTargets.length ? allocateMinorUnits(amountMinor, groupTargets.map((target) => ({ id: target.id, weightBps: target.weightWithinGroupBps, sortOrder: target.sortOrder }))) : [];
     const amountByTarget = new Map(targetAmounts.map((item) => [item.id, item.amountMinor]));
     return {
       groupId: group.id,

@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   collections: new Map<string, unknown[]>(),
   save: vi.fn(),
   applied: new Map<string, ReturnType<typeof vi.fn>>(),
+  accountItems: [] as InvestmentAccount[],
 }));
 
 vi.mock("@/lib/local-repository", () => ({ saveCollectionsAtomically: mocks.save }));
@@ -16,7 +17,7 @@ vi.mock("@/lib/use-local-collection", () => ({ useLocalCollection: (name: string
   items: mocks.collections.get(name) ?? [], allItems: mocks.collections.get(name) ?? [], ready: true, loadError: "",
   applyCommitted: mocks.applied.get(name) ?? vi.fn(),
 }) }));
-vi.mock("@/features/stocks/use-stock-store", () => ({ useStockStore: () => ({ ready: true, loadError: "", allStocks: sampleStocks, stocks: sampleStocks, accounts, trades: [], ledger: { positions: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalRealizedKrw: 0 } }) }));
+vi.mock("@/features/stocks/use-stock-store", () => ({ useStockStore: () => ({ ready: true, loadError: "", allStocks: sampleStocks, stocks: sampleStocks, accounts: mocks.accountItems, trades: [], ledger: { positions: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalRealizedKrw: 0 } }) }));
 vi.mock("@/features/portfolio-shell/portfolio-shell", () => ({ usePortfolioShell: () => ({ snapshot: { status: "ready", portfolio: { baseCurrency: "KRW" } } }) }));
 
 const now = "2026-08-30T00:00:00.000Z";
@@ -30,33 +31,59 @@ describe("Contribution Plan page", () => {
   beforeEach(() => {
     mocks.save.mockReset().mockResolvedValue(undefined);
     mocks.applied = new Map(["portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-groups", "portfolio-allocation-targets"].map((name) => [name, vi.fn()]));
+    mocks.accountItems = accounts;
     mocks.collections = new Map([["portfolio-plan-state", []], ["portfolio-plan-revisions", []], ["portfolio-allocation-groups", []], ["portfolio-allocation-targets", []]]);
     vi.spyOn(window, "confirm").mockReturnValue(true);
   });
 
-  it("builds and activates the first complete Group/Target plan", async () => {
+  it("builds and activates the first calculator plan without any Account", async () => {
+    mocks.accountItems = [];
     render(<PortfolioPlanPageClient />);
-    expect(screen.getByRole("heading", { name: "배분을 실행 가능한 금액으로 전환합니다." })).toBeInTheDocument();
-    expect(screen.getByText("첫 Allocation Group을 추가해 주세요.")).toBeInTheDocument();
-    fireEvent.click(screen.getAllByRole("button", { name: "Allocation Group 추가" })[0]!);
-    fireEvent.change(screen.getByLabelText(/^Group 이름/), { target: { value: "Core" } });
-    fireEvent.click(screen.getByRole("button", { name: "Stock 추가" }));
-    const stockPicker = screen.getByRole("combobox", { name: "Stock" });
+    expect(screen.getByRole("heading", { name: "월 저축액을 적금·주식·채권으로 나눠보세요." })).toBeInTheDocument();
+    expect(screen.getByText("적금")).toBeInTheDocument();
+    expect(screen.getByText("주식 투자")).toBeInTheDocument();
+    expect(screen.getByText("채권")).toBeInTheDocument();
+    const categoryWeights = screen.getAllByLabelText("전체 저축액 중 비율 (%)");
+    fireEvent.change(categoryWeights[0]!, { target: { value: "0" } });
+    fireEvent.change(categoryWeights[1]!, { target: { value: "100" } });
+    fireEvent.change(categoryWeights[2]!, { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "주식 종목 추가" }));
+    const stockPicker = screen.getByRole("combobox", { name: "주식 종목" });
     fireEvent.focus(stockPicker);
     fireEvent.click(within(screen.getByRole("listbox")).getAllByRole("option")[0]!);
-    fireEvent.change(screen.getByLabelText(/^실행 Account/), { target: { value: "a" } });
     const activate = screen.getByRole("button", { name: "Plan 활성화" });
     expect(activate).toBeEnabled();
     fireEvent.click(activate);
     await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
     expect(mocks.save.mock.calls[0]?.[0].map((write: { collection: string }) => write.collection)).toEqual(["portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-groups", "portfolio-allocation-targets"]);
+    expect(mocks.save.mock.calls[0]?.[0].find((write: { collection: string }) => write.collection === "portfolio-allocation-targets").values[0].accountId).toBeNull();
     expect(await screen.findByRole("status")).toHaveTextContent("Contribution Plan을 저장하고 활성화했습니다.");
+  });
+
+  it("calculates the default 30/60/10 category amounts before targets are complete", () => {
+    render(<PortfolioPlanPageClient />);
+    fireEvent.change(screen.getByLabelText("전체 저축액"), { target: { value: "1000000" } });
+    const savings = screen.getByRole("button", { name: "적금 카테고리 펼치기" }).closest("article")!;
+    const stocks = screen.getByRole("button", { name: "주식 투자 카테고리 펼치기" }).closest("article")!;
+    const bonds = screen.getByRole("button", { name: "채권 카테고리 펼치기" }).closest("article")!;
+    expect(within(savings).getByText("₩300,000")).toBeInTheDocument();
+    expect(within(stocks).getAllByText("₩600,000").length).toBeGreaterThan(0);
+    expect(within(bonds).getByText("₩100,000")).toBeInTheDocument();
+  });
+
+  it("adds multiple savings accounts with independent within-category ratios", () => {
+    render(<PortfolioPlanPageClient />);
+    fireEvent.click(screen.getByRole("button", { name: "적금 카테고리 펼치기" }));
+    fireEvent.click(screen.getByRole("button", { name: "적금 계좌 추가" }));
+    fireEvent.click(screen.getByRole("button", { name: "적금 계좌 추가" }));
+    expect(screen.getAllByLabelText(/^은행 \/ 계좌/)).toHaveLength(2);
+    expect(screen.getAllByLabelText("Within Group (%)")).toHaveLength(2);
   });
 
   it("saves contribution-only edits as one state write", async () => {
     seedActive();
     render(<PortfolioPlanPageClient />);
-    fireEvent.change(screen.getByLabelText("Contribution Amount"), { target: { value: "1000.25" } });
+    fireEvent.change(screen.getByLabelText("전체 저축액"), { target: { value: "1000.25" } });
     fireEvent.change(screen.getByLabelText("통화"), { target: { value: "USD" } });
     fireEvent.click(screen.getByRole("button", { name: "Contribution 저장" }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
@@ -76,7 +103,7 @@ describe("Contribution Plan page", () => {
     expect(revisionWrite.values[1]).toMatchObject({ revisionNumber: 2, basedOnRevisionId: "r1", thesis: "Changed thesis" });
 
     mocks.save.mockClear();
-    fireEvent.change(screen.getByLabelText("Target Weight (%)"), { target: { value: "99.999" } });
+    fireEvent.change(screen.getAllByLabelText("전체 저축액 중 비율 (%)")[1]!, { target: { value: "99.999" } });
     expect(screen.getByRole("button", { name: "새 리비전 저장" })).toBeDisabled();
     expect(screen.getByRole("alert")).toHaveTextContent("저장하기 전에 확인해 주세요.");
   });
@@ -85,38 +112,39 @@ describe("Contribution Plan page", () => {
     seedActive();
     mocks.save.mockRejectedValue(new Error("disk full"));
     render(<PortfolioPlanPageClient />);
-    fireEvent.change(screen.getByLabelText("Contribution Amount"), { target: { value: "2000000" } });
+    fireEvent.change(screen.getByLabelText("전체 저축액"), { target: { value: "2000000" } });
     fireEvent.click(screen.getByRole("button", { name: "Contribution 저장" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("포트폴리오 계획을 저장하지 못했습니다.");
-    expect(screen.getByLabelText("Contribution Amount")).toHaveValue("2000000");
+    expect(screen.getByLabelText("전체 저축액")).toHaveValue("2000000");
     expect(mocks.applied.get("portfolio-plan-state")).not.toHaveBeenCalled();
   });
 
   it("presents the three-step editor with an exact manual execution summary", () => {
     seedActive();
     render(<PortfolioPlanPageClient />);
-    expect(screen.getByText("01 · Contribution Amount")).toBeInTheDocument();
+    expect(screen.getByText("01 · 전체 저축액")).toBeInTheDocument();
     expect(screen.getByText("02 · Target Allocation")).toBeInTheDocument();
-    const summary = screen.getByRole("complementary", { name: "수동 실행표" });
-    expect(within(summary).getByText("03 · This Contribution")).toBeInTheDocument();
-    expect(within(summary).getByRole("heading", { name: "수동 실행표" })).toBeInTheDocument();
+    expect(screen.getAllByText("고정 카테고리")).toHaveLength(3);
+    expect(screen.queryByRole("button", { name: /Group 삭제/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Target 1개 · 100%")).toBeInTheDocument();
+    const summary = screen.getByRole("complementary", { name: "이번 저축 실행표" });
+    expect(within(summary).getByText("03 · 계산 결과")).toBeInTheDocument();
+    expect(within(summary).getByRole("heading", { name: "이번 저축 실행표" })).toBeInTheDocument();
     expect(within(summary).getByLabelText("합계")).toHaveTextContent("₩1,000,000");
+    expect(within(summary).getByText("Allocation 유효 · minor-unit 합계 일치")).toBeInTheDocument();
     expect(within(summary).getByText("Rationale은 주문을 실행하지 않습니다. 계산된 금액을 사용해 관련 은행 또는 증권 계좌에서 직접 매수하세요.")).toBeInTheDocument();
   });
 
-  it("finishes V6 account repair with one four-collection activation", async () => {
+  it("automatically upgrades a previously stored V6 account repair draft", async () => {
     const legacyRevision = { ...revision, targetAmountKrw: 1_000_000 };
     const legacyTarget = { id: "legacy-cash", revisionId: "r1", targetType: "cash" as const, stockId: null, targetWeightBps: 10000, sortOrder: 0, updatedAt: now };
     const repairState: PortfolioPlanState = { id: "default", activeRevisionId: null, contributionAmountMinor: 1_000_000, contributionCurrency: "KRW", updatedAt: now, repairDraft: { version: 1, status: "needsAccountSelection", legacyState: { id: "default", activeRevisionId: "r1", updatedAt: now }, legacyRevisions: [legacyRevision], legacyTargets: [legacyTarget], unresolvedTargetIds: ["legacy-cash"], inferredAccountIdsByTargetId: {} } };
     mocks.collections.set("portfolio-plan-state", [repairState]);
     render(<PortfolioPlanPageClient />);
-    expect(screen.getByText("Account 복구 모드")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText(/^실행 Account/), { target: { value: "b" } });
-    fireEvent.click(screen.getByRole("button", { name: "복구된 Plan 활성화" }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
     expect(mocks.save.mock.calls[0]?.[0]).toEqual(expect.arrayContaining([
       expect.objectContaining({ collection: "portfolio-plan-state", values: [expect.objectContaining({ activeRevisionId: "r1", repairDraft: null })] }),
-      expect.objectContaining({ collection: "portfolio-allocation-targets", values: [expect.objectContaining({ id: "legacy-cash", accountId: "b" })] }),
+      expect.objectContaining({ collection: "portfolio-allocation-targets", values: [expect.objectContaining({ id: "legacy-cash", accountId: null })] }),
     ]));
   });
 });

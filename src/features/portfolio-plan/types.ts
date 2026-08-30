@@ -73,7 +73,8 @@ type PortfolioAllocationTargetBase = {
   id: string;
   revisionId: string;
   groupId: string;
-  accountId: string;
+  /** Optional execution hint. A Plan describes intent and does not require an Account. */
+  accountId: string | null;
   weightWithinGroupBps: number;
   sortOrder: number;
   updatedAt: string;
@@ -91,5 +92,5 @@ export type PortfolioAllocationGroupDraft = {
 };
 
 export type PortfolioAllocationTargetDraft =
-  | { groupId: string; accountId: string; targetType: "stock"; stockId: string; weightWithinGroupBps: number; sortOrder: number }
-  | { groupId: string; accountId: string; targetType: "cash"; stockId: null; weightWithinGroupBps: number; sortOrder: number };
+  | { groupId: string; accountId: string | null; targetType: "stock"; stockId: string; weightWithinGroupBps: number; sortOrder: number }
+  | { groupId: string; accountId: string | null; targetType: "cash"; stockId: null; weightWithinGroupBps: number; sortOrder: number };

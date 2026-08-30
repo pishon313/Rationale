@@ -26,6 +26,8 @@ function PortfolioShellSession({ children, selectedPortfolioId, onRetry }: { chi
   const stocks = useLocalCollection<Stock>("stocks", []);
   const trades = useLocalCollection<Trade>("trades", []);
   const preferences = useLocalCollection<CurrencyPreference>("preferences", [fallbackCurrencyPreference]);
+  const planStates = useLocalCollection<{ id: string; activeRevisionId: string | null }>("portfolio-plan-state", []);
+  const planRevisions = useLocalCollection<{ id: string; revisionNumber: number }>("portfolio-plan-revisions", []);
   const snapshot = useMemo<PortfolioShellSnapshot>(() => {
     const error = [accounts.loadError, stocks.loadError, trades.loadError, preferences.loadError].find(Boolean);
     if (error) return { status: "error", portfolio: null, asOf: null, isEmpty: false, error };
@@ -51,24 +53,28 @@ function PortfolioShellSession({ children, selectedPortfolioId, onRetry }: { chi
     formatPercentage: (ratio, options) => formatNumber(ratio, { ...options, style: "percent", maximumFractionDigits: options?.maximumFractionDigits ?? 2 }),
     formatAsOf: (input, options) => formatDate(input, { dateStyle: "medium", ...options }),
   }), [formatDate, formatNumber, snapshot]);
+  const activePlanRevisionNumber = useMemo(() => {
+    const activeRevisionId = planStates.allItems[0]?.activeRevisionId;
+    return planRevisions.allItems.find((revision) => revision.id === activeRevisionId)?.revisionNumber ?? null;
+  }, [planRevisions.allItems, planStates.allItems]);
 
-  return <PortfolioShellContext.Provider value={value}><PortfolioShellFrame snapshot={snapshot} onRetry={onRetry}>{children}</PortfolioShellFrame></PortfolioShellContext.Provider>;
+  return <PortfolioShellContext.Provider value={value}><PortfolioShellFrame snapshot={snapshot} activePlanRevisionNumber={activePlanRevisionNumber} onRetry={onRetry}>{children}</PortfolioShellFrame></PortfolioShellContext.Provider>;
 }
 
-function PortfolioShellFrame({ snapshot, onRetry, children }: { snapshot: PortfolioShellSnapshot; onRetry: () => void; children: ReactNode }) {
+function PortfolioShellFrame({ snapshot, activePlanRevisionNumber, onRetry, children }: { snapshot: PortfolioShellSnapshot; activePlanRevisionNumber: number | null; onRetry: () => void; children: ReactNode }) {
   const pathname = usePathname();
-  const { t, formatDate } = useI18n();
+  const { t, formatDate, formatNumber } = useI18n();
   const currentRoute = portfolioRouteForPath(pathname);
   const portfolio = snapshot.portfolio;
   return <div className="portfolio-shell-root">
     <header className="portfolio-shell-header">
       <div className="portfolio-shell-toolbar">
-        <Link href="/portfolio" className="portfolio-shell-brand" aria-label="Rationale"><span className="portfolio-shell-brand-mark" aria-hidden="true"><span /></span><span><b>Rationale</b><small>{t("포트폴리오")}</small></span></Link>
-        <label className="portfolio-shell-switcher"><span>{t("포트폴리오 선택")}</span><select aria-label={t("포트폴리오 선택")} value={portfolio?.id ?? ""} disabled={!portfolio} onChange={() => undefined}><option value={portfolio?.id ?? ""}>{portfolio?.name ?? t("포트폴리오")}</option></select></label>
+        <Link href="/portfolio" className="portfolio-shell-brand" aria-label={portfolio?.name ?? t("포트폴리오")}><span className="portfolio-shell-brand-mark" aria-hidden="true"><span /></span><span><b>{portfolio?.name ?? t("포트폴리오")}</b><small>{t("단일 포트폴리오 · V1")}</small></span></Link>
+        <label className="sr-only"><span>{t("포트폴리오 선택")}</span><select aria-label={t("포트폴리오 선택")} value={portfolio?.id ?? ""} disabled={!portfolio} onChange={() => undefined}><option value={portfolio?.id ?? ""}>{portfolio?.name ?? t("포트폴리오")}</option></select></label>
         <dl className="portfolio-shell-metadata">
-          <div><dt>{t("유형")}</dt><dd>{portfolio ? t("개인 포트폴리오") : "—"}</dd></div>
           <div><dt>{t("기준 통화")}</dt><dd>{portfolio?.baseCurrency ?? "—"}</dd></div>
-          <div><dt>{t("최근 기록")}</dt><dd>{snapshot.asOf ? formatDate(snapshot.asOf, { dateStyle: "medium" }) : t("기록 없음")}</dd></div>
+          <div><dt>{t("기준일")}</dt><dd>{snapshot.asOf ? formatDate(snapshot.asOf, { dateStyle: "medium" }) : t("기록 없음")}</dd></div>
+          <div><dt>{t("활성 Plan")}</dt><dd>{activePlanRevisionNumber === null ? t("활성 Plan 없음") : t("리비전 {number}", { number: formatNumber(activePlanRevisionNumber) })}</dd></div>
         </dl>
       </div>
       <nav className="portfolio-shell-nav" aria-label={t("포트폴리오 메뉴")}>

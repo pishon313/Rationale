@@ -46,7 +46,7 @@ test("포트폴리오 셸이 Overview와 Plan 두 경로를 공유한다", async
 
   await nav.getByRole("link", { name: "계획" }).click();
   await expect(page).toHaveURL(/\/portfolio\/plan$/);
-  await expect(page.getByRole("heading", { name: "배분을 실행 가능한 금액으로 전환합니다." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "월 저축액을 적금·주식·채권으로 나눠보세요." })).toBeVisible();
   await expect(nav.getByRole("link", { name: "계획" })).toHaveAttribute("aria-current", "page");
 
   await nav.getByRole("link", { name: "개요" }).click();
@@ -60,8 +60,9 @@ test("포트폴리오 셸은 320px에서 두 탭과 핵심 메타데이터를 �
   const nav = page.getByRole("navigation", { name: "포트폴리오 메뉴" });
   await expect(nav.getByRole("link")).toHaveCount(2);
   await expect(nav.getByRole("link", { name: "계획" })).toHaveAttribute("aria-current", "page");
-  await expect(page.getByLabel("포트폴리오 선택")).toBeVisible();
+  await expect(page.getByLabel("포트폴리오 선택")).toHaveValue("default");
   await expect(page.getByText("기준 통화", { exact: true })).toBeVisible();
+  await expect(page.getByText("활성 Plan", { exact: true })).toBeVisible();
   const widths = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }));
   expect(widths.content).toBeLessThanOrEqual(widths.viewport);
 });

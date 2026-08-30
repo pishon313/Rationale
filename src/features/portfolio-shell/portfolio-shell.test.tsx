@@ -37,6 +37,8 @@ function reset() {
     ["stocks", [stock]],
     ["trades", [trade]],
     ["preferences", [{ id: "currency", displayCurrency: "USD", updatedAt: "2026-08-19T00:00:00.000Z" }]],
+    ["portfolio-plan-state", [{ id: "default", activeRevisionId: "revision-4" }]],
+    ["portfolio-plan-revisions", [{ id: "revision-4", revisionNumber: 4 }]],
   ]);
 }
 
@@ -76,8 +78,9 @@ describe("PortfolioShell", () => {
   it("publishes portfolio identity, as-of, and locale-aware shared formatters", () => {
     render(<PortfolioShell><ContractProbe /></PortfolioShell>);
     expect(screen.getByLabelText("포트폴리오 선택")).toHaveValue("default");
-    expect(screen.getByText("개인 포트폴리오")).toBeInTheDocument();
+    expect(screen.getByText("단일 포트폴리오 · V1")).toBeInTheDocument();
     expect(screen.getByText("USD")).toBeInTheDocument();
+    expect(screen.getByText("리비전 4")).toBeInTheDocument();
     expect(screen.getByTestId("contract-probe")).toHaveTextContent("default|USD|2026-08-22T00:00:00.000Z|$1,250.00|12.5%|Aug 22, 2026");
   });
 
@@ -117,7 +120,7 @@ describe("PortfolioShell", () => {
 
 describe("portfolio shell localization and metadata", () => {
   it("translates dynamic navigation and shell state keys in every supported non-Korean locale", () => {
-    const keys = [...portfolioRoutes.map((route) => route.label), "내 포트폴리오", "포트폴리오 선택", "포트폴리오 메뉴", "포트폴리오 정보를 불러오는 중입니다.", "{name} 화면은 다음 단계에서 구현됩니다."];
+    const keys = [...portfolioRoutes.map((route) => route.label), "내 포트폴리오", "단일 포트폴리오 · V1", "포트폴리오 선택", "기준일", "활성 Plan", "활성 Plan 없음", "포트폴리오 메뉴", "포트폴리오 정보를 불러오는 중입니다.", "{name} 화면은 다음 단계에서 구현됩니다."];
     for (const locale of locales.filter((item) => item !== "ko")) {
       for (const key of keys) expect(translate(locale, key), `${locale}:${key}`).not.toBe(key);
     }

@@ -41,36 +41,12 @@ export function migratePortfolioPlanV6(input: {
   const accountIds = new Set(input.accounts.map((account) => account.id));
   const singleAccountId = input.accounts.length === 1 ? input.accounts[0]?.id ?? null : null;
   const accountByTargetId = new Map<string, string>();
-  const unresolvedTargetIds: string[] = [];
 
   for (const target of input.targets) {
     const inferred = target.targetType === "stock"
       ? inferStockAccount(target.stockId, input.trades, accountIds, singleAccountId)
       : singleAccountId;
     if (inferred) accountByTargetId.set(target.id, inferred);
-    else unresolvedTargetIds.push(target.id);
-  }
-
-  if (unresolvedTargetIds.length) {
-    const updatedAt = legacyState?.updatedAt ?? latestTimestamp(input.revisions.map((revision) => revision.updatedAt));
-    const states: PortfolioPlanState[] = [{
-      id: portfolioPlanStateId,
-      activeRevisionId: null,
-      contributionAmountMinor,
-      contributionCurrency: "KRW",
-      updatedAt,
-      repairDraft: {
-        version: 1,
-        status: "needsAccountSelection",
-        legacyState,
-        legacyRevisions: clone(input.revisions),
-        legacyTargets: clone(input.targets),
-        unresolvedTargetIds,
-        inferredAccountIdsByTargetId: Object.fromEntries(accountByTargetId),
-      },
-    }];
-    validatePortfolioPlanCollections({ states, revisions: [], groups: [], targets: [], stocks: input.stocks, accounts: input.accounts });
-    return { states, revisions: [], groups: [], targets: [], needsAccountSelection: true };
   }
 
   const revisions = input.revisions.map((revision): PortfolioPlanRevision => ({
@@ -95,7 +71,7 @@ export function migratePortfolioPlanV6(input: {
     id: target.id,
     revisionId: target.revisionId,
     groupId: legacyGroupId(target.revisionId),
-    accountId: requiredAccountId(accountByTargetId, target.id),
+    accountId: accountByTargetId.get(target.id) ?? null,
     targetType: target.targetType,
     stockId: target.stockId,
     weightWithinGroupBps: target.targetWeightBps,
@@ -149,7 +125,7 @@ export type PortfolioPlanRepairActivation = {
   writes: CollectionWrite[];
 };
 
-/** Converts the complete preserved V6 history after the user resolves every missing account. */
+/** Converts an older repair draft. Missing execution accounts remain intentionally unassigned. */
 export function buildPortfolioPlanRepairActivation(input: {
   state: PortfolioPlanState;
   accountIdsByTargetId: Readonly<Record<string, string>>;
@@ -161,6 +137,7 @@ export function buildPortfolioPlanRepairActivation(input: {
 }): PortfolioPlanRepairActivation {
   const repair = requiredRepairDraft(input.state.repairDraft);
   const accountIds = new Map(Object.entries({ ...(repair.inferredAccountIdsByTargetId ?? {}), ...input.accountIdsByTargetId }));
+  const existingAccountIds = new Set(input.accounts.map((account) => account.id));
   const revisions = repair.legacyRevisions.map((revision): PortfolioPlanRevision => ({
     id: revision.id,
     revisionNumber: revision.revisionNumber,
@@ -183,7 +160,7 @@ export function buildPortfolioPlanRepairActivation(input: {
     id: target.id,
     revisionId: target.revisionId,
     groupId: legacyGroupId(target.revisionId),
-    accountId: requiredAccountId(accountIds, target.id),
+    accountId: existingAccountIds.has(accountIds.get(target.id) ?? "") ? accountIds.get(target.id)! : null,
     targetType: target.targetType,
     stockId: target.stockId,
     weightWithinGroupBps: target.targetWeightBps,
@@ -226,21 +203,7 @@ function validLegacyContribution(value: number | null | undefined) {
   return Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : 0;
 }
 
-function requiredAccountId(values: ReadonlyMap<string, string>, targetId: string) {
-  const value = values.get(targetId);
-  if (!value) throw new Error("V6_PORTFOLIO_TARGET_ACCOUNT_UNRESOLVED");
-  return value;
-}
-
 function requiredRepairDraft(value: PortfolioPlanRepairDraft | null | undefined) {
   if (!value || value.status !== "needsAccountSelection") throw new Error("PORTFOLIO_REPAIR_DRAFT_MISSING");
   return value;
-}
-
-function latestTimestamp(values: readonly string[]) {
-  return values.slice().sort().at(-1) ?? new Date(0).toISOString();
-}
-
-function clone<T>(value: readonly T[]): T[] {
-  return JSON.parse(JSON.stringify(value)) as T[];
 }

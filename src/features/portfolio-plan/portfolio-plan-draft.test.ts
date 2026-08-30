@@ -3,10 +3,12 @@ import type { InvestmentAccount } from "@/features/accounts/types";
 import { sampleStocks } from "@/features/stocks/sample-data";
 import {
   classifyPortfolioPlanChanges,
+  emptyPortfolioPlanDraft,
   formatEffectiveAllocation,
   formatMinorAmountInput,
   parseMajorAmountToMinor,
   parsePercentageToBps,
+  portfolioPlanDraftFromActive,
   validatePortfolioPlanEditorDraft,
   type PortfolioPlanEditorDraft,
 } from "./portfolio-plan-draft";
@@ -42,24 +44,56 @@ describe("Portfolio Plan draft amount and percentage parsing", () => {
 });
 
 describe("Portfolio Plan draft validation and semantic changes", () => {
+  it("starts with fixed Savings, Stocks, and Bonds categories", () => {
+    const draft = emptyPortfolioPlanDraft("KRW");
+    expect(draft.groups.map((group) => [group.category, group.name, group.weightInput])).toEqual([
+      ["savings", "적금", "30"],
+      ["stocks", "주식 투자", "60"],
+      ["bonds", "채권", "10"],
+    ]);
+  });
+
+  it("maps a legacy free-form stock Group into the fixed categories without dropping its target", () => {
+    const revision = { id: "r1", revisionNumber: 1, basedOnRevisionId: null, thesis: "", changeNote: "", createdAt: now, activatedAt: now, updatedAt: now };
+    const draft = portfolioPlanDraftFromActive({
+      state: { id: "default", activeRevisionId: "r1", contributionAmountMinor: 1_000_000, contributionCurrency: "KRW", updatedAt: now },
+      revision,
+      groups: [{ id: "core", revisionId: "r1", name: "Core", targetWeightBps: 10000, sortOrder: 0, updatedAt: now }],
+      targets: [{ id: "target", revisionId: "r1", groupId: "core", accountId: "a", targetType: "stock", stockId: sampleStocks[0]!.id, weightWithinGroupBps: 10000, sortOrder: 0, updatedAt: now }],
+      fallbackCurrency: "KRW",
+    });
+    expect(draft.groups.map((group) => [group.category, group.weightInput, group.targets.length])).toEqual([
+      ["savings", "0", 0],
+      ["stocks", "100", 1],
+      ["bonds", "0", 0],
+    ]);
+  });
+
   it("accepts zero contribution and valid nested 100% totals", () => {
     const result = validatePortfolioPlanEditorDraft(validDraft(), sampleStocks, accounts);
     expect(result.valid).toBe(true);
-    expect(result.parsed).toMatchObject({ contributionAmountMinor: 0, groups: [{ targetWeightBps: 10000 }], targets: [{ accountId: "a", weightWithinGroupBps: 10000 }] });
+    expect(result.parsed).toMatchObject({ contributionAmountMinor: 0, groups: [{ targetWeightBps: 0 }, { targetWeightBps: 10000 }, { targetWeightBps: 0 }], targets: [{ accountId: "a", weightWithinGroupBps: 10000 }] });
   });
 
-  it("reports nested totals, duplicate stocks, missing accounts, and archived references", () => {
+  it("reports nested totals and duplicate stocks while allowing an unassigned account", () => {
     const draft = validDraft();
-    draft.groups[0]!.weightInput = "90";
-    draft.groups[0]!.targets[0]!.weightInput = "50";
-    draft.groups[0]!.targets.push({ ...draft.groups[0]!.targets[0]!, id: "t2", accountId: "", weightInput: "50", sortOrder: 1 });
+    draft.groups[1]!.weightInput = "90";
+    draft.groups[1]!.targets[0]!.weightInput = "50";
+    draft.groups[1]!.targets.push({ ...draft.groups[1]!.targets[0]!, id: "t2", accountId: "", weightInput: "50", sortOrder: 1 });
     const result = validatePortfolioPlanEditorDraft(draft, sampleStocks, accounts);
     expect(result.valid).toBe(false);
     expect(result.summary).toEqual(expect.arrayContaining([
       "Allocation Group 비중 합계는 정확히 100%여야 합니다.",
-      "활성 계좌를 선택해 주세요.",
       "한 리비전에 같은 종목을 두 번 추가할 수 없습니다.",
     ]));
+  });
+
+  it("parses an omitted execution account as null", () => {
+    const draft = validDraft();
+    draft.groups[1]!.targets[0]!.accountId = "";
+    const result = validatePortfolioPlanEditorDraft(draft, sampleStocks, []);
+    expect(result.valid).toBe(true);
+    expect(result.parsed?.targets[0]?.accountId).toBeNull();
   });
 
   it("classifies contribution-only edits without revision churn", () => {
@@ -67,7 +101,8 @@ describe("Portfolio Plan draft validation and semantic changes", () => {
     const contribution = { ...saved, contributionAmountInput: "1000.25", contributionCurrency: "USD" as const };
     expect(classifyPortfolioPlanChanges({ draft: contribution, saved, hasActiveRevision: true })).toBe("contribution");
     expect(classifyPortfolioPlanChanges({ draft: { ...saved, thesis: "Changed" }, saved, hasActiveRevision: true })).toBe("revision");
-    expect(classifyPortfolioPlanChanges({ draft: { ...saved, groups: [{ ...saved.groups[0]!, name: "  Core   " }] }, saved: { ...saved, groups: [{ ...saved.groups[0]!, name: "Core" }] }, hasActiveRevision: true })).toBe("none");
+    const renamed = saved.groups.map((group, index) => index === 1 ? { ...group, name: "  주식   투자  " } : group);
+    expect(classifyPortfolioPlanChanges({ draft: { ...saved, groups: renamed }, saved, hasActiveRevision: true })).toBe("none");
   });
 });
 
@@ -77,6 +112,10 @@ function validDraft(): PortfolioPlanEditorDraft {
     contributionCurrency: "KRW",
     thesis: "Stay intentional",
     changeNote: "",
-    groups: [{ id: "g1", name: "Core", weightInput: "100", sortOrder: 0, targets: [{ id: "t1", targetType: "stock", stockId: sampleStocks[0]!.id, accountId: "a", weightInput: "100", sortOrder: 0 }] }],
+    groups: [
+      { id: "savings", category: "savings", name: "적금", weightInput: "0", sortOrder: 0, targets: [] },
+      { id: "stocks", category: "stocks", name: "주식 투자", weightInput: "100", sortOrder: 1, targets: [{ id: "t1", targetType: "stock", stockId: sampleStocks[0]!.id, accountId: "a", weightInput: "100", sortOrder: 0 }] },
+      { id: "bonds", category: "bonds", name: "채권", weightInput: "0", sortOrder: 2, targets: [] },
+    ],
   };
 }

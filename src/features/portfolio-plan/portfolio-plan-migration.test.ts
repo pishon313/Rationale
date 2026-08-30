@@ -28,32 +28,31 @@ describe("Portfolio V6 migration", () => {
     expect(migratePortfolioPlanV6(input)).toEqual(result);
   });
 
-  it("preserves an ambiguous V6 plan as an inactive account-selection repair draft", () => {
+  it("migrates an ambiguous V6 plan without requiring an execution account", () => {
     const cash: LegacyPortfolioAllocationTargetV6 = { id: "cash", revisionId: "r1", targetType: "cash", stockId: null, targetWeightBps: 10000, sortOrder: 0, updatedAt: now };
     const input = { states: [{ ...states[0], activeRevisionId: "r1" }], revisions: [revisions[0]], targets: [cash], stocks: sampleStocks, accounts: [account("a"), account("b")], trades: [] };
     const result = migratePortfolioPlanV6(input);
-    expect(result).toMatchObject({ needsAccountSelection: true, revisions: [], groups: [], targets: [] });
-    expect(result.states[0]).toMatchObject({ activeRevisionId: null, contributionAmountMinor: 1_000_000, repairDraft: { status: "needsAccountSelection", unresolvedTargetIds: ["cash"], legacyTargets: [cash] } });
+    expect(result).toMatchObject({ needsAccountSelection: false, revisions: [{ id: "r1" }], groups: [{ id: legacyGroupId("r1") }], targets: [{ id: "cash", accountId: null }] });
+    expect(result.states[0]).toMatchObject({ activeRevisionId: "r1", contributionAmountMinor: 1_000_000, repairDraft: null });
   });
 
-  it("persists deterministic mappings inside a partially ambiguous repair draft", () => {
+  it("keeps deterministic mappings and leaves only ambiguous accounts unassigned", () => {
     const mixed: LegacyPortfolioAllocationTargetV6[] = [
       { id: "stock", revisionId: "r1", targetType: "stock", stockId: sampleStocks[0].id, targetWeightBps: 5000, sortOrder: 0, updatedAt: now },
       { id: "cash", revisionId: "r1", targetType: "cash", stockId: null, targetWeightBps: 5000, sortOrder: 1, updatedAt: now },
     ];
     const trades = [{ id: "trade", stockId: sampleStocks[0].id, accountId: "a", deletedAt: null }] as never[];
     const result = migratePortfolioPlanV6({ states: [{ ...states[0], activeRevisionId: "r1" }], revisions: [revisions[0]], targets: mixed, stocks: sampleStocks, accounts: [account("a"), account("b")], trades });
-    expect(result.states[0]?.repairDraft).toMatchObject({ unresolvedTargetIds: ["cash"], inferredAccountIdsByTargetId: { stock: "a" } });
+    expect(result.targets.map((target) => [target.id, target.accountId])).toEqual([["stock", "a"], ["cash", null]]);
   });
 
-  it("repairs every preserved historical revision and clears the draft only in the atomic candidate", async () => {
+  it("upgrades an already-persisted repair draft without requiring account mappings", async () => {
     const cashTargets: LegacyPortfolioAllocationTargetV6[] = revisions.map((revision, index) => ({ id: `cash-${index}`, revisionId: revision.id, targetType: "cash", stockId: null, targetWeightBps: 10000, sortOrder: 0, updatedAt: now }));
-    const migration = migratePortfolioPlanV6({ states, revisions, targets: cashTargets, stocks: sampleStocks, accounts: [account("a"), account("b")], trades: [] });
-    const repairState = migration.states[0]!;
-    const activation = buildPortfolioPlanRepairActivation({ state: repairState, accountIdsByTargetId: { "cash-0": "a", "cash-1": "b" }, stocks: sampleStocks, accounts: [account("a"), account("b")], contributionAmountMinor: 1_200_000, contributionCurrency: "KRW", now });
+    const repairState = { id: "default", activeRevisionId: null, contributionAmountMinor: 1_200_000, contributionCurrency: "KRW", updatedAt: now, repairDraft: { version: 1, status: "needsAccountSelection", legacyState: states[0]!, legacyRevisions: revisions, legacyTargets: cashTargets, unresolvedTargetIds: cashTargets.map((target) => target.id), inferredAccountIdsByTargetId: {} } } as const;
+    const activation = buildPortfolioPlanRepairActivation({ state: repairState, accountIdsByTargetId: {}, stocks: sampleStocks, accounts: [], contributionAmountMinor: 1_200_000, contributionCurrency: "KRW", now });
     expect(activation.revisions).toHaveLength(2);
     expect(activation.groups).toHaveLength(2);
-    expect(activation.targets.map((target) => target.accountId)).toEqual(["a", "b"]);
+    expect(activation.targets.map((target) => target.accountId)).toEqual([null, null]);
     expect(activation.states[0]).toMatchObject({ activeRevisionId: "r2", repairDraft: null });
     expect(repairState.repairDraft).not.toBeNull();
 
