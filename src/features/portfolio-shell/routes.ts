@@ -1,4 +1,4 @@
-import { ClipboardList, LayoutGrid, type LucideIcon } from "lucide-react";
+import { ClipboardList, LayoutGrid, PieChart, type LucideIcon } from "lucide-react";
 
 export type PortfolioRouteId = "overview" | "plan" | "allocation" | "holdings" | "activity" | "rationale" | "reports";
 
@@ -12,6 +12,7 @@ export type PortfolioRoute = {
 
 export const portfolioRoutes: readonly PortfolioRoute[] = [
   { id: "overview", href: "/portfolio", label: "개요", icon: LayoutGrid, implemented: true },
+  { id: "allocation", href: "/portfolio/allocation", label: "배분", icon: PieChart, implemented: true },
   { id: "plan", href: "/portfolio/plan", label: "계획", icon: ClipboardList, implemented: true },
 ] as const;
 

@@ -95,16 +95,17 @@ describe("Contribution Plan page", () => {
     expect(mocks.save.mock.calls[0]?.[0]).toEqual([expect.objectContaining({ collection: "portfolio-plan-state", values: [expect.objectContaining({ contributionAmountMinor: 100_025, contributionCurrency: "USD", activeRevisionId: "r1" })] })]);
   });
 
-  it("stores Balance Assist as state-only policy without creating a Plan revision", async () => {
+  it("reads the saved Allocation policy and applies it to the Plan calculation", () => {
     seedActive();
+    mocks.collections.set("portfolio-plan-state", [{ ...state, balancePolicy: { version: 1, mode: "balanceAssist", targetWeightsBps: { savings: 3000, stocks: 6000, bonds: 1000 }, toleranceBps: 500, updatedAt: now } }]);
+    mocks.ledger = { ...mocks.ledger, positions: [{ key: "p", stockId: sampleStocks[0]!.id, stockName: "삼성전자", accountId: "a", accountName: "Account A", currency: "KRW", quantity: 1_000, averagePrice: 0, investedAmount: 0, investedAmountKrw: 0, realizedProfit: 0, realizedProfitKrw: 0 }] };
     render(<PortfolioPlanPageClient />);
-    fireEvent.click(screen.getByRole("button", { name: "균형 맞추기" }));
-    fireEvent.change(screen.getByLabelText("현금성 자산 전체 목표 (%)"), { target: { value: "30" } });
-    fireEvent.change(screen.getByLabelText("주식 투자 전체 목표 (%)"), { target: { value: "60" } });
-    fireEvent.change(screen.getByLabelText("채권 전체 목표 (%)"), { target: { value: "10" } });
-    fireEvent.click(screen.getByRole("button", { name: "전체 목표 등록" }));
-    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
-    expect(mocks.save.mock.calls[0]?.[0]).toEqual([{ collection: "portfolio-plan-state", values: [expect.objectContaining({ activeRevisionId: "r1", balancePolicy: expect.objectContaining({ mode: "balanceAssist", targetWeightsBps: { savings: 3000, stocks: 6000, bonds: 1000 }, toleranceBps: 500 }) })] }]);
+    expect(screen.getByRole("link", { name: "Allocation에서 수정" })).toHaveAttribute("href", "/portfolio/allocation");
+    expect(screen.queryByRole("button", { name: "전체 목표 저장" })).not.toBeInTheDocument();
+    const categoryWeights = screen.getAllByLabelText("전체 저축액 중 비율 (%)");
+    expect(categoryWeights[0]).toHaveValue("75");
+    expect(categoryWeights[1]).toHaveValue("0");
+    expect(categoryWeights[2]).toHaveValue("25");
   });
 
   it("creates a new immutable revision when Thesis changes and disables invalid saves", async () => {

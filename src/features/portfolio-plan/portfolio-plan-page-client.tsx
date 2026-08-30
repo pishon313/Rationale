@@ -1,6 +1,7 @@
 "use client";
 
-import { ChevronDown, ChevronRight, Info, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
+import { ArrowRight, ChevronDown, ChevronRight, Info, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { currencies, minorUnitsToMajor, type Currency, type RatesToKrw } from "@/domain/currency";
 import { buildPortfolioBalanceSnapshot, suggestContributionBalance, type PortfolioContributionBalanceSuggestion } from "@/domain/portfolio-balance";
@@ -43,9 +44,7 @@ import {
 } from "./portfolio-plan-migration";
 import {
   buildPortfolioContributionUpdate,
-  buildPortfolioBalancePolicyUpdate,
   buildPortfolioPlanActivation,
-  persistPortfolioBalancePolicyUpdate,
   persistPortfolioContributionUpdate,
   persistPortfolioPlanActivation,
 } from "./portfolio-plan-mutation";
@@ -55,7 +54,6 @@ import type {
   LegacyPortfolioPlanStateV6,
   PortfolioAllocationGroup,
   PortfolioAllocationTarget,
-  PortfolioBalancePolicy,
   PortfolioPlanRevision,
   PortfolioPlanState,
 } from "./types";
@@ -162,24 +160,19 @@ function PortfolioPlanEditor({ state, activeRevision, revisions, groups, targets
   const [draft, setDraft] = useState<PortfolioPlanEditorDraft>(savedDraft);
   const [expanded, setExpanded] = useState<Record<string, boolean>>(() => initialGroupExpansion(savedDraft));
   const [saving, setSaving] = useState(false);
-  const [savingPolicy, setSavingPolicy] = useState(false);
-  const [policyTouched, setPolicyTouched] = useState(false);
   const [saveError, setSaveError] = useState("");
-  const [policyDraft, setPolicyDraft] = useState<BalancePolicyDraft>(() => balancePolicyDraftFromState(state?.balancePolicy, savedDraft));
   const validation = useMemo(() => validatePortfolioPlanEditorDraft(draft, stocks, accounts), [accounts, draft, stocks]);
   const changeKind = useMemo(() => classifyPortfolioPlanChanges({ draft, saved: savedDraft, hasActiveRevision: Boolean(activeRevision) }), [activeRevision, draft, savedDraft]);
-  const parsedPolicy = useMemo(() => parseBalancePolicyDraft(policyDraft), [policyDraft]);
-  const policyDirty = useMemo(() => state?.balancePolicy ? !sameBalancePolicy(parsedPolicy, state.balancePolicy) : policyTouched, [parsedPolicy, policyTouched, state?.balancePolicy]);
   const baseWeights = useMemo(() => portfolioPlanCategoryWeights(draft), [draft]);
   const bondStockIds = useMemo(() => new Set(savedDraft.groups.find((group) => group.category === "bonds")?.targets.flatMap((target) => target.stockId ? [target.stockId] : []) ?? []), [savedDraft]);
   const balanceSnapshot = useMemo(() => buildPortfolioBalanceSnapshot({ ledger, stocks, ratesToKrw, bondStockIds }), [bondStockIds, ledger, ratesToKrw, stocks]);
   const contributionAmountMinor = parseMajorAmountToMinor(draft.contributionAmountInput, draft.contributionCurrency);
-  const balanceSuggestion = useMemo(() => baseWeights && contributionAmountMinor !== null ? suggestContributionBalance({ snapshot: balanceSnapshot, policy: parsedPolicy, baseWeightsBps: baseWeights, contributionAmountMinor, contributionCurrency: draft.contributionCurrency, ratesToKrw }) : null, [balanceSnapshot, baseWeights, contributionAmountMinor, draft.contributionCurrency, parsedPolicy, ratesToKrw]);
+  const balanceSuggestion = useMemo(() => baseWeights && contributionAmountMinor !== null ? suggestContributionBalance({ snapshot: balanceSnapshot, policy: state?.balancePolicy, baseWeightsBps: baseWeights, contributionAmountMinor, contributionCurrency: draft.contributionCurrency, ratesToKrw }) : null, [balanceSnapshot, baseWeights, contributionAmountMinor, draft.contributionCurrency, ratesToKrw, state?.balancePolicy]);
   const suggestionKey = balanceSuggestion ? `${balanceSuggestion.source}:${portfolioPlanCategories.map((category) => balanceSuggestion.weightsBps[category]).join(":")}:${draft.contributionAmountInput}:${draft.contributionCurrency}` : "none";
   const suggestedExecutionInputs = useMemo(() => suggestionInputs(balanceSuggestion, draft), [balanceSuggestion, draft]);
   const [executionOverride, setExecutionOverride] = useState<{ key: string; inputs: Record<(typeof portfolioPlanCategories)[number], string> } | null>(null);
   const executionInputs = executionOverride?.key === suggestionKey ? executionOverride.inputs : suggestedExecutionInputs;
-  const balanceAssistActive = parsedPolicy?.mode === "balanceAssist";
+  const balanceAssistActive = state?.balancePolicy?.mode === "balanceAssist";
   const executionDraft = useMemo(() => balanceAssistActive ? withPortfolioPlanCategoryWeights(draft, executionInputs) : draft, [balanceAssistActive, draft, executionInputs]);
   const executionValidation = useMemo(() => validatePortfolioPlanEditorDraft(executionDraft, stocks, accounts), [accounts, executionDraft, stocks]);
   const calculation = useMemo(() => calculatePortfolioPlanDraft(executionDraft), [executionDraft]);
@@ -227,32 +220,6 @@ function PortfolioPlanEditor({ state, activeRevision, revisions, groups, targets
     });
   }
 
-  async function saveBalancePolicy() {
-    if (savingPolicy || !parsedPolicy) return;
-    setSavingPolicy(true); setSaveError(""); onChange();
-    try {
-      const update = buildPortfolioBalancePolicyUpdate({ state, policy: parsedPolicy, fallbackCurrency });
-      await persistPortfolioBalancePolicyUpdate(update);
-      stores.stateStore.applyCommitted(update.states);
-      onSaved(t("전체 목표 비율을 저장했습니다."));
-    } catch {
-      setSaveError(t("전체 목표 비율을 저장하지 못했습니다. 다시 시도해 주세요."));
-    } finally { setSavingPolicy(false); }
-  }
-
-  async function disableBalancePolicy() {
-    if (savingPolicy || !state?.balancePolicy) return;
-    setSavingPolicy(true); setSaveError(""); onChange();
-    try {
-      const update = buildPortfolioBalancePolicyUpdate({ state, policy: null, fallbackCurrency });
-      await persistPortfolioBalancePolicyUpdate(update);
-      stores.stateStore.applyCommitted(update.states);
-      onSaved(t("전체 목표 비율을 사용하지 않습니다."));
-    } catch {
-      setSaveError(t("전체 목표 비율을 저장하지 못했습니다. 다시 시도해 주세요."));
-    } finally { setSavingPolicy(false); }
-  }
-
   async function savePlan(event: FormEvent) {
     event.preventDefault();
     if (saving || !validation.parsed || changeKind === "none") return;
@@ -284,24 +251,13 @@ function PortfolioPlanEditor({ state, activeRevision, revisions, groups, targets
   const saveLabel = saving ? t("저장 중...") : changeKind === "initial" ? t("Plan 활성화") : changeKind === "revision" ? t("새 리비전 저장") : changeKind === "contribution" ? t("Contribution 저장") : t("변경사항 저장");
 
   return <form onSubmit={savePlan} noValidate className="portfolio-plan-form">
-    <PlanHeader dirty={changeKind !== "none" || policyDirty} balanceAssist={balanceAssistActive} />
+    <PlanHeader dirty={changeKind !== "none"} balanceAssist={balanceAssistActive} />
     {saveError && <p role="alert" className="mt-5 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-100">{saveError}</p>}
     <div className="portfolio-plan-layout">
       <div className="portfolio-plan-editor">
         <ContributionAmountEditor draft={draft} setDraft={setDraft} error={validation.fields.contributionAmount} onChange={clearFeedback} groupInputs={executionDraft.groups.map((group) => group.weightInput)} targetCount={targetCount} revisionLabel={revisionLabel} />
 
-        <BalancePolicyEditor
-          draft={policyDraft}
-          setDraft={setPolicyDraft}
-          stored={state?.balancePolicy ?? null}
-          saving={savingPolicy}
-          dirty={policyDirty}
-          snapshot={balanceSnapshot}
-          suggestion={balanceSuggestion}
-          save={saveBalancePolicy}
-          disable={disableBalancePolicy}
-          onChange={() => { setPolicyTouched(true); clearFeedback(); }}
-        />
+        <AllocationPlanBridge policy={state?.balancePolicy ?? null} snapshot={balanceSnapshot} suggestion={balanceSuggestion} />
 
         <section aria-labelledby="target-allocation-title" className="portfolio-plan-card portfolio-plan-allocation-card">
           <header className="portfolio-plan-allocation-header">
@@ -383,53 +339,29 @@ function ContributionAmountEditor({ draft, setDraft, error, onChange, groupInput
   </section>;
 }
 
-type BalancePolicyDraft = {
-  mode: PortfolioBalancePolicy["mode"];
-  targetInputs: Record<(typeof portfolioPlanCategories)[number], string>;
-  toleranceInput: string;
-};
-
-function BalancePolicyEditor({ draft, setDraft, stored, saving, dirty, snapshot, suggestion, save, disable, onChange }: {
-  draft: BalancePolicyDraft;
-  setDraft: React.Dispatch<React.SetStateAction<BalancePolicyDraft>>;
-  stored: PortfolioBalancePolicy | null;
-  saving: boolean;
-  dirty: boolean;
+function AllocationPlanBridge({ policy, snapshot, suggestion }: {
+  policy: PortfolioPlanState["balancePolicy"];
   snapshot: ReturnType<typeof buildPortfolioBalanceSnapshot>;
   suggestion: PortfolioContributionBalanceSuggestion | null;
-  save: () => void;
-  disable: () => void;
-  onChange: () => void;
 }) {
   const { t, formatNumber } = useI18n();
-  const total = portfolioPlanCategories.reduce((sum, category) => sum + (parsePercentageToBps(draft.targetInputs[category]) ?? 0), 0);
-  const invalid = portfolioPlanCategories.some((category) => parsePercentageToBps(draft.targetInputs[category]) === null) || parsePercentageToBps(draft.toleranceInput) === null || total !== 10000;
   const currentByCategory = new Map(snapshot.categories.map((row) => [row.category, row.currentWeightBps]));
-  const suggestionLabel = !suggestion ? t("유효한 기본 Plan을 먼저 입력해 주세요.")
-    : suggestion.source === "balanced" ? t("현재 자산의 차이를 줄이도록 이번 저축 비율을 제안했습니다.")
-      : suggestion.source === "withinTolerance" ? t("허용 오차 안에 있어 저장된 기본 Plan 비율을 그대로 사용합니다.")
-        : suggestion.source === "unavailable" ? t("현재 자산 평가를 사용할 수 없어 저장된 기본 Plan 비율을 그대로 사용합니다.")
-          : t("저장된 기본 Plan 비율을 사용합니다.");
-  function change(update: (current: BalancePolicyDraft) => BalancePolicyDraft) { setDraft(update); onChange(); }
-  return <section aria-labelledby="balance-policy-title" className="portfolio-plan-card p-4 sm:p-5">
+  const suggestionLabel = suggestion?.source === "balanced" ? t("현재 자산의 차이를 줄이도록 이번 저축 비율을 제안했습니다.")
+    : suggestion?.source === "withinTolerance" ? t("허용 오차 안에 있어 저장된 기본 Plan 비율을 그대로 사용합니다.")
+      : suggestion?.source === "unavailable" ? t("현재 자산 평가를 사용할 수 없어 저장된 기본 Plan 비율을 그대로 사용합니다.")
+        : t("저장된 기본 Plan 비율을 사용합니다.");
+  return <section aria-labelledby="allocation-connection-title" className="portfolio-plan-card p-4 sm:p-5">
     <div className="flex flex-wrap items-start justify-between gap-4">
-      <div className="min-w-0"><p className="text-[0.65rem] font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">{t("선택 기능 · 전체 자산 목표")}</p><h2 id="balance-policy-title" className="mt-1 text-lg font-semibold">{t("전체 포트폴리오 균형 맞추기")}</h2><p className="mt-1 max-w-2xl text-xs leading-5 text-[var(--muted)]">{t("실제 보유 자산이 목표에서 벗어나면 매도 없이 새 저축액을 부족한 쪽에 우선 배분합니다.")}</p></div>
-      <div className="inline-flex rounded-lg border bg-[var(--surface-muted)] p-1" aria-label={t("저축 계산 방식")}>
-        <button type="button" aria-pressed={draft.mode === "fixed"} onClick={() => change((current) => ({ ...current, mode: "fixed" }))} className={`min-h-9 rounded-md px-3 text-xs font-semibold ${draft.mode === "fixed" ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)]"}`}>{t("고정 비율")}</button>
-        <button type="button" aria-pressed={draft.mode === "balanceAssist"} onClick={() => change((current) => ({ ...current, mode: "balanceAssist" }))} className={`min-h-9 rounded-md px-3 text-xs font-semibold ${draft.mode === "balanceAssist" ? "bg-[var(--accent)] text-white shadow-sm" : "text-[var(--muted)]"}`}>{t("균형 맞추기")}</button>
-      </div>
+      <div className="min-w-0"><p className="text-[0.65rem] font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">{t("Allocation 연결")}</p><h2 id="allocation-connection-title" className="mt-1 text-lg font-semibold">{t("전체 자산 목표를 이번 저축 계산에 반영")}</h2><p className="mt-1 max-w-2xl text-xs leading-5 text-[var(--muted)]">{t("Allocation에서 저장한 목표를 기준으로 이번 저축 비율을 계산합니다.")}</p></div>
+      <Link href="/portfolio/allocation" className="inline-flex min-h-10 items-center gap-2 rounded-lg border px-4 text-xs font-semibold">{t(policy ? "Allocation에서 수정" : "Allocation 설정")}<ArrowRight size={15} aria-hidden="true" /></Link>
     </div>
-    <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      {portfolioPlanCategories.map((category) => <div key={category} className="rounded-xl border bg-[var(--surface-muted)] p-3"><PercentageInput label={t("{name} 전체 목표", { name: t(portfolioTargetAllocationCategoryName(category)) })} value={draft.targetInputs[category]} onChange={(value) => change((current) => ({ ...current, targetInputs: { ...current.targetInputs, [category]: value } }))} /><p className="mt-2 text-[0.7rem] text-[var(--muted)]">{t("현재 비중")}: {currentByCategory.get(category) === null || currentByCategory.get(category) === undefined ? "—" : `${formatNumber((currentByCategory.get(category) ?? 0) / 100, { maximumFractionDigits: 2 })}%`}</p></div>)}
-      <div className="rounded-xl border bg-[var(--surface-muted)] p-3"><PercentageInput label={t("허용 오차")} value={draft.toleranceInput} onChange={(value) => change((current) => ({ ...current, toleranceInput: value }))} /><p className="mt-2 text-[0.7rem] text-[var(--muted)]">{t("이 범위 안이면 기본 Plan 유지")}</p></div>
-    </div>
-    <div className={`mt-3 rounded-lg px-3 py-2 text-xs leading-5 ${invalid ? "bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-100" : "bg-[var(--accent-soft)] text-[var(--accent)]"}`}>
-      {invalid ? t("전체 목표 비율 합계는 정확히 100%여야 합니다.") : suggestionLabel}
-    </div>
-    <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-      <p className="text-[0.7rem] leading-5 text-[var(--muted)]">{stored ? t("전체 목표는 Overview에도 표시됩니다. 기본 Contribution Plan은 별도로 유지됩니다.") : t("등록하지 않으면 기존 고정 Contribution Plan만 사용합니다.")}</p>
-      <div className="flex gap-2">{stored && <button type="button" disabled={saving} onClick={disable} className="min-h-10 rounded-lg border px-3 text-xs font-semibold disabled:opacity-50">{t("전체 목표 사용 안 함")}</button>}<button type="button" disabled={saving || invalid || Boolean(stored) && !dirty} onClick={save} className="min-h-10 rounded-lg bg-[var(--foreground)] px-4 text-xs font-semibold text-[var(--background)] disabled:opacity-40">{saving ? t("저장 중...") : stored ? t("전체 목표 저장") : t("전체 목표 등록")}</button></div>
-    </div>
+    {!policy ? <p className="mt-4 rounded-lg bg-[var(--surface-muted)] px-3 py-3 text-xs leading-5 text-[var(--muted)]">{t("Allocation이 설정되지 않아 저장된 Contribution Plan 비율을 사용합니다.")}</p> : <>
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">{portfolioPlanCategories.map((category) => {
+        const current = currentByCategory.get(category);
+        return <div key={category} className="rounded-xl border bg-[var(--surface-muted)] p-3"><p className="text-xs font-semibold">{t(portfolioTargetAllocationCategoryName(category))}</p><dl className="mt-2 grid grid-cols-2 gap-2 text-[0.7rem]"><div><dt className="text-[var(--muted)]">{t("목표 비중")}</dt><dd className="mt-1 font-semibold tabular-nums">{formatBpsAny(policy.targetWeightsBps[category])}%</dd></div><div><dt className="text-[var(--muted)]">{t("현재 비중")}</dt><dd className="mt-1 font-semibold tabular-nums">{current === null || current === undefined ? "—" : `${formatNumber(current / 100, { maximumFractionDigits: 2 })}%`}</dd></div></dl></div>;
+      })}</div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--accent-soft)] px-3 py-2 text-xs leading-5 text-[var(--accent)]"><span>{suggestionLabel}</span><b>{t(policy.mode === "balanceAssist" ? "균형 맞추기" : "고정 비율")}</b></div>
+    </>}
   </section>;
 }
 
@@ -538,27 +470,6 @@ function PlanLoadError({ message }: { message: string }) { const { t } = useI18n
 
 function initialGroupExpansion(draft: PortfolioPlanEditorDraft) {
   return Object.fromEntries(draft.groups.map((group) => [group.id, group.category === "stocks"]));
-}
-function balancePolicyDraftFromState(policy: PortfolioBalancePolicy | null | undefined, draft: PortfolioPlanEditorDraft): BalancePolicyDraft {
-  const base = portfolioPlanCategoryWeights(draft) ?? { savings: 3000, stocks: 6000, bonds: 1000 };
-  const weights = policy?.targetWeightsBps ?? base;
-  return {
-    mode: policy?.mode ?? "fixed",
-    targetInputs: Object.fromEntries(portfolioPlanCategories.map((category) => [category, formatBpsInput(weights[category])])) as BalancePolicyDraft["targetInputs"],
-    toleranceInput: formatBpsInput(policy?.toleranceBps ?? 500),
-  };
-}
-function parseBalancePolicyDraft(draft: BalancePolicyDraft): PortfolioBalancePolicy | null {
-  const weights = Object.fromEntries(portfolioPlanCategories.map((category) => [category, parsePercentageToBps(draft.targetInputs[category])])) as Record<(typeof portfolioPlanCategories)[number], number | null>;
-  const toleranceBps = parsePercentageToBps(draft.toleranceInput);
-  if (toleranceBps === null || portfolioPlanCategories.some((category) => weights[category] === null)) return null;
-  const targetWeightsBps = weights as PortfolioBalancePolicy["targetWeightsBps"];
-  if (portfolioPlanCategories.reduce((sum, category) => sum + targetWeightsBps[category], 0) !== 10000) return null;
-  return { version: 1, mode: draft.mode, targetWeightsBps, toleranceBps, updatedAt: new Date().toISOString() };
-}
-function sameBalancePolicy(left: PortfolioBalancePolicy | null, right: PortfolioBalancePolicy | null) {
-  if (!left || !right) return left === right;
-  return left.mode === right.mode && left.toleranceBps === right.toleranceBps && portfolioPlanCategories.every((category) => left.targetWeightsBps[category] === right.targetWeightsBps[category]);
 }
 function suggestionInputs(suggestion: PortfolioContributionBalanceSuggestion | null, draft: PortfolioPlanEditorDraft) {
   const fallback = portfolioPlanCategoryWeights(draft) ?? { savings: 3000, stocks: 6000, bonds: 1000 };

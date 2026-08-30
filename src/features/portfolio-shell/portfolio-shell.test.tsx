@@ -55,14 +55,15 @@ function SessionProbe() {
 describe("PortfolioShell", () => {
   beforeEach(reset);
 
-  it("renders only Overview and Plan and marks the root Overview active", () => {
+  it("renders Overview, Allocation, and Plan and marks the root Overview active", () => {
     render(<PortfolioShell><div>overview child</div></PortfolioShell>);
     const nav = screen.getByRole("navigation", { name: "포트폴리오 메뉴" });
-    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["개요", "계획"]);
+    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["개요", "배분", "계획"]);
     expect(within(nav).getByRole("link", { name: "개요" })).toHaveAttribute("aria-current", "page");
     expect(within(nav).getByRole("link", { name: "계획" })).not.toHaveAttribute("aria-current");
     expect(within(nav).getByRole("link", { name: "개요" })).toHaveAttribute("href", "/portfolio");
     expect(within(nav).getByRole("link", { name: "계획" })).toHaveAttribute("href", "/portfolio/plan");
+    expect(within(nav).getByRole("link", { name: "배분" })).toHaveAttribute("href", "/portfolio/allocation");
     expect(portfolioRouteForPath("/portfolio/")?.id).toBe("overview");
   });
 
@@ -126,7 +127,7 @@ describe("portfolio shell localization and metadata", () => {
     }
   });
 
-  it("keeps Overview at the root and exposes Plan as the only second tab", () => {
-    expect(portfolioRoutes).toMatchObject([{ id: "overview", href: "/portfolio", implemented: true }, { id: "plan", href: "/portfolio/plan", implemented: true }]);
+  it("keeps Overview at the root and exposes separate Allocation and Plan tabs", () => {
+    expect(portfolioRoutes).toMatchObject([{ id: "overview", href: "/portfolio", implemented: true }, { id: "allocation", href: "/portfolio/allocation", implemented: true }, { id: "plan", href: "/portfolio/plan", implemented: true }]);
   });
 });
