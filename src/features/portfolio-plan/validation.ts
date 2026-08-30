@@ -8,6 +8,7 @@ import {
   type LegacyPortfolioPlanStateV6,
   type PortfolioAllocationGroup,
   type PortfolioAllocationTarget,
+  type PortfolioBalancePolicy,
   type PortfolioPlanRepairDraft,
   type PortfolioPlanRevision,
   type PortfolioPlanState,
@@ -19,6 +20,20 @@ export function validatePortfolioPlanStateRecord(value: Record<string, unknown>)
   if (!currencies.includes(value.contributionCurrency as typeof currencies[number])) throw new Error("포트폴리오 Contribution Currency가 올바르지 않습니다.");
   if (!timestamp(value.updatedAt)) throw new Error("포트폴리오 계획 상태가 올바르지 않습니다.");
   if (value.repairDraft !== undefined && value.repairDraft !== null) validatePortfolioPlanRepairDraft(value.repairDraft);
+  if (value.balancePolicy !== undefined && value.balancePolicy !== null) validatePortfolioBalancePolicy(value.balancePolicy);
+}
+
+function validatePortfolioBalancePolicy(value: unknown): asserts value is PortfolioBalancePolicy {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Portfolio 전체 목표 비율이 올바르지 않습니다.");
+  const policy = value as Partial<PortfolioBalancePolicy>;
+  if (policy.version !== 1 || policy.mode !== "fixed" && policy.mode !== "balanceAssist" || !timestamp(policy.updatedAt)) throw new Error("Portfolio 전체 목표 비율이 올바르지 않습니다.");
+  const weights = policy.targetWeightsBps;
+  if (!weights || typeof weights !== "object" || Array.isArray(weights)) throw new Error("Portfolio 전체 목표 비율이 올바르지 않습니다.");
+  validateBps(weights.savings, "Portfolio 적금 목표 비율이 올바르지 않습니다.");
+  validateBps(weights.stocks, "Portfolio 주식 목표 비율이 올바르지 않습니다.");
+  validateBps(weights.bonds, "Portfolio 채권 목표 비율이 올바르지 않습니다.");
+  if (weights.savings + weights.stocks + weights.bonds !== 10000) throw new Error("Portfolio 전체 목표 비율 합계는 100%여야 합니다.");
+  validateBps(policy.toleranceBps, "Portfolio 허용 오차가 올바르지 않습니다.");
 }
 
 export function validatePortfolioPlanRevisionRecord(value: Record<string, unknown>) {

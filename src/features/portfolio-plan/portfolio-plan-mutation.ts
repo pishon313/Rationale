@@ -9,6 +9,7 @@ import {
   type PortfolioAllocationGroupDraft,
   type PortfolioAllocationTarget,
   type PortfolioAllocationTargetDraft,
+  type PortfolioBalancePolicy,
   type PortfolioPlanRevision,
   type PortfolioPlanState,
 } from "./types";
@@ -92,6 +93,7 @@ export function buildPortfolioPlanActivation(input: {
     contributionCurrency: input.contributionCurrency,
     updatedAt: now,
     repairDraft: null,
+    balancePolicy: input.states[0]?.balancePolicy ?? null,
   }];
   const revisions = [...input.revisions, revision];
   const groups = [...input.groups, ...createdGroups];
@@ -122,10 +124,36 @@ export function buildPortfolioContributionUpdate(input: {
     contributionCurrency: input.contributionCurrency,
     updatedAt: input.now ?? new Date().toISOString(),
     repairDraft: input.state?.repairDraft ?? null,
+    balancePolicy: input.state?.balancePolicy ?? null,
   };
   validatePortfolioPlanStateRecord(state as unknown as Record<string, unknown>);
   const states = [state];
   if (!validateStoredCollection("portfolio-plan-state", states).valid) throw new Error("PORTFOLIO_CONTRIBUTION_CANDIDATE_INVALID");
+  return { state, states, writes: [{ collection: "portfolio-plan-state", values: states }] };
+}
+
+export type PortfolioBalancePolicyUpdate = { state: PortfolioPlanState; states: PortfolioPlanState[]; writes: CollectionWrite[] };
+
+export function buildPortfolioBalancePolicyUpdate(input: {
+  state: PortfolioPlanState | null;
+  policy: PortfolioBalancePolicy | null;
+  fallbackCurrency: Currency;
+  now?: string;
+}): PortfolioBalancePolicyUpdate {
+  const now = input.now ?? new Date().toISOString();
+  const policy = input.policy ? { ...input.policy, updatedAt: now } : null;
+  const state: PortfolioPlanState = {
+    id: portfolioPlanStateId,
+    activeRevisionId: input.state?.activeRevisionId ?? null,
+    contributionAmountMinor: input.state?.contributionAmountMinor ?? 0,
+    contributionCurrency: input.state?.contributionCurrency ?? input.fallbackCurrency,
+    updatedAt: now,
+    repairDraft: input.state?.repairDraft ?? null,
+    balancePolicy: policy,
+  };
+  validatePortfolioPlanStateRecord(state as unknown as Record<string, unknown>);
+  const states = [state];
+  if (!validateStoredCollection("portfolio-plan-state", states).valid) throw new Error("PORTFOLIO_BALANCE_POLICY_CANDIDATE_INVALID");
   return { state, states, writes: [{ collection: "portfolio-plan-state", values: states }] };
 }
 
@@ -134,6 +162,10 @@ export async function persistPortfolioPlanActivation(activation: PortfolioPlanAc
 }
 
 export async function persistPortfolioContributionUpdate(update: PortfolioContributionUpdate, save = saveCollectionsAtomically) {
+  await save(update.writes, { failurePolicy: "caller-managed" });
+}
+
+export async function persistPortfolioBalancePolicyUpdate(update: PortfolioBalancePolicyUpdate, save = saveCollectionsAtomically) {
   await save(update.writes, { failurePolicy: "caller-managed" });
 }
 

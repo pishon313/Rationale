@@ -1,4 +1,5 @@
 import { currencyMinorUnitDigits, type Currency } from "@/domain/currency";
+import { allocateMinorUnits, type ContributionPlanCalculation } from "@/domain/portfolio-contribution";
 import type { InvestmentAccount } from "@/features/accounts/types";
 import type { Stock } from "@/features/stocks/types";
 import type {
@@ -99,6 +100,49 @@ export function formatEffectiveAllocation(groupBps: number, targetBps: number) {
   return fraction ? `${whole}.${fraction}%` : `${whole}%`;
 }
 
+export function calculatePortfolioPlanDraft(draft: PortfolioPlanEditorDraft): ContributionPlanCalculation | null {
+  const amountMinor = parseMajorAmountToMinor(draft.contributionAmountInput, draft.contributionCurrency);
+  if (amountMinor === null) return null;
+  const groups = draft.groups.slice().sort(byOrder).map((group, sortOrder) => ({ group, sortOrder, weightBps: parsePercentageToBps(group.weightInput) }));
+  if (groups.some((group) => group.weightBps === null)) return null;
+  const groupAmounts = previewMinorUnitAmounts(amountMinor, groups.map((item) => ({ id: item.group.id, weightBps: item.weightBps!, sortOrder: item.sortOrder })));
+  const amountByGroup = new Map(groupAmounts.map((item) => [item.id, item.amountMinor]));
+  const calculatedGroups = groups.map(({ group, weightBps }) => {
+    const amount = amountByGroup.get(group.id) ?? 0;
+    const targets = group.targets.slice().sort(byOrder).map((target, targetSortOrder) => ({ target, sortOrder: targetSortOrder, weightBps: parsePercentageToBps(target.weightInput) }));
+    const targetAmounts = targets.some((target) => target.weightBps === null) ? [] : previewMinorUnitAmounts(amount, targets.map((item) => ({ id: item.target.id, weightBps: item.weightBps!, sortOrder: item.sortOrder })));
+    const amountByTarget = new Map(targetAmounts.map((item) => [item.id, item.amountMinor]));
+    return {
+      groupId: group.id,
+      name: group.name,
+      targetWeightBps: weightBps!,
+      amountMinor: amount,
+      targets: targetAmounts.length ? targets.map(({ target, weightBps: targetWeight }) => ({
+        targetId: target.id,
+        groupId: group.id,
+        targetType: target.targetType,
+        stockId: target.stockId,
+        accountId: target.accountId || null,
+        effectiveTargetWeightBps: weightBps! * targetWeight! / 10000,
+        amountMinor: amountByTarget.get(target.id) ?? 0,
+      })) : [],
+    };
+  });
+  return {
+    contributionAmountMinor: amountMinor,
+    contributionCurrency: draft.contributionCurrency,
+    groups: calculatedGroups,
+    targets: calculatedGroups.flatMap((group) => group.targets),
+  };
+}
+
+function previewMinorUnitAmounts(amountMinor: number, weights: Array<{ id: string; weightBps: number; sortOrder: number }>) {
+  if (!weights.length) return [];
+  const total = weights.reduce((sum, item) => sum + item.weightBps, 0);
+  if (total === 10000) return allocateMinorUnits(amountMinor, weights);
+  return weights.map((item) => ({ id: item.id, amountMinor: Number(BigInt(amountMinor) * BigInt(item.weightBps) / 10000n) }));
+}
+
 export function emptyPortfolioPlanDraft(currency: Currency): PortfolioPlanEditorDraft {
   return {
     contributionAmountInput: "0",
@@ -152,8 +196,26 @@ export function portfolioPlanCategoryName(category: PortfolioPlanCategory) {
   return category === "savings" ? "적금" : category === "stocks" ? "주식 투자" : "채권";
 }
 
+export function portfolioTargetAllocationCategoryName(category: PortfolioPlanCategory) {
+  return category === "savings" ? "현금성 자산" : portfolioPlanCategoryName(category);
+}
+
 export function portfolioPlanCategoryTargetType(category: PortfolioPlanCategory): PortfolioPlanEditorTarget["targetType"] {
   return category === "savings" ? "cash" : "stock";
+}
+
+export function portfolioPlanCategoryWeights(draft: PortfolioPlanEditorDraft) {
+  const weights = Object.fromEntries(draft.groups.map((group) => [group.category, parsePercentageToBps(group.weightInput)])) as Record<PortfolioPlanCategory, number | null>;
+  if (portfolioPlanCategories.some((category) => weights[category] === null)) return null;
+  const parsed = weights as Record<PortfolioPlanCategory, number>;
+  return portfolioPlanCategories.reduce((sum, category) => sum + parsed[category], 0) === 10000 ? parsed : null;
+}
+
+export function withPortfolioPlanCategoryWeights(draft: PortfolioPlanEditorDraft, weights: Record<PortfolioPlanCategory, string | number>) {
+  return {
+    ...draft,
+    groups: draft.groups.map((group) => ({ ...group, weightInput: typeof weights[group.category] === "number" ? formatBpsInput(weights[group.category] as number) : weights[group.category] as string })),
+  };
 }
 
 function normalizePortfolioPlanCategories(groups: Array<Omit<PortfolioPlanEditorGroup, "category">>): PortfolioPlanEditorGroup[] {

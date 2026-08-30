@@ -40,6 +40,18 @@ export type PortfolioPlanRepairDraft = {
   inferredAccountIdsByTargetId?: Record<string, string>;
 };
 
+export type PortfolioBalancePolicy = {
+  version: 1;
+  mode: "fixed" | "balanceAssist";
+  targetWeightsBps: {
+    savings: number;
+    stocks: number;
+    bonds: number;
+  };
+  toleranceBps: number;
+  updatedAt: string;
+};
+
 export type PortfolioPlanState = {
   id: typeof portfolioPlanStateId;
   activeRevisionId: string | null;
@@ -47,6 +59,7 @@ export type PortfolioPlanState = {
   contributionCurrency: Currency;
   updatedAt: string;
   repairDraft?: PortfolioPlanRepairDraft | null;
+  balancePolicy?: PortfolioBalancePolicy | null;
 };
 
 export type PortfolioPlanRevision = {

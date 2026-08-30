@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fallbackRatesToKrw } from "@/domain/currency";
 import type { TradingLedger } from "@/domain/trading-ledger";
@@ -35,21 +35,44 @@ function reset(active = false) {
   ]);
 }
 
-describe("PortfolioPageClient foundation adapter", () => {
+describe("Portfolio Overview", () => {
   beforeEach(() => reset());
 
-  it("keeps the route available without building the final Plan UI", () => {
+  it("keeps current assets and the next contribution usable without a Plan or Account", () => {
     render(<PortfolioPageClient />);
-    expect(screen.getByRole("heading", { name: "포트폴리오" })).toBeInTheDocument();
-    expect(screen.getByText("활성 포트폴리오 계획이 없습니다.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "현재 자산과 다음 저축 계획을 한눈에 보세요." })).toBeInTheDocument();
+    expect(screen.getByText("아직 평가할 자산이 없습니다.")).toBeInTheDocument();
+    expect(screen.getByText("아직 Contribution Plan이 없습니다.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Plan 만들기" })).toHaveAttribute("href", "/portfolio/plan");
   });
 
-  it("renders the active grouped foundation and mutable Contribution Amount", () => {
+  it("renders current assets separately from the normalized next contribution", () => {
     reset(true);
+    mocks.ledger = { ...mocks.ledger, positions: [{ key: "p", stockId: sampleStocks[0]!.id, stockName: "Samsung", accountId: "a", accountName: "A", currency: "KRW", quantity: 2, averagePrice: 0, investedAmount: 0, investedAmountKrw: 0, realizedProfit: 0, realizedProfitKrw: 0 }] };
     render(<PortfolioPageClient />);
-    expect(screen.getByText("Stocks")).toBeInTheDocument();
-    expect(screen.getByText("₩1,800,000")).toBeInTheDocument();
+    const currentAllocation = screen.getByRole("region", { name: "현재 자산 배분" });
+    const nextContribution = screen.getByRole("region", { name: "다음 저축 계획" });
+    expect(within(currentAllocation).getByRole("heading", { name: "현재 자산 배분" })).toBeInTheDocument();
+    expect(within(currentAllocation).getByText("현금성 자산")).toBeInTheDocument();
+    expect(within(currentAllocation).queryByText("적금")).not.toBeInTheDocument();
+    expect(within(nextContribution).getByRole("heading", { name: "다음 저축 계획" })).toBeInTheDocument();
+    expect(within(nextContribution).getByText("적금")).toBeInTheDocument();
+    expect(screen.getAllByText("주식 투자").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("₩1,800,000").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("₩200").length).toBeGreaterThan(0);
     expect(screen.getByText("리비전 1 · 현재 활성")).toBeInTheDocument();
+  });
+
+  it("shows whole-portfolio drift and an editable-in-Plan new-cash balance suggestion", () => {
+    reset(true);
+    mocks.collections.set("portfolio-plan-state", [{ ...state, balancePolicy: { version: 1, mode: "balanceAssist", targetWeightsBps: { savings: 3000, stocks: 6000, bonds: 1000 }, toleranceBps: 100, updatedAt: now } }]);
+    mocks.ledger = { ...mocks.ledger, positions: [{ key: "p", stockId: sampleStocks[0]!.id, stockName: "Samsung", accountId: "a", accountName: "A", currency: "KRW", quantity: 80_000, averagePrice: 0, investedAmount: 0, investedAmountKrw: 0, realizedProfit: 0, realizedProfitKrw: 0 }] };
+    render(<PortfolioPageClient />);
+    expect(screen.getByText("균형 맞추기 제안")).toBeInTheDocument();
+    expect(screen.getAllByText("목표 비중")).toHaveLength(3);
+    expect(screen.getByText("₩1,350,000")).toBeInTheDocument();
+    expect(screen.getByText("₩450,000")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Plan에서 금액과 비율 수정" })).toHaveAttribute("href", "/portfolio/plan");
   });
 
   it("atomically upgrades locally stored V6 Portfolio records before rendering", async () => {

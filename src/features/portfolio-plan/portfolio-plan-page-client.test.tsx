@@ -1,5 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fallbackRatesToKrw } from "@/domain/currency";
+import type { TradingLedger } from "@/domain/trading-ledger";
 import type { InvestmentAccount } from "@/features/accounts/types";
 import { sampleStocks } from "@/features/stocks/sample-data";
 import type { PortfolioAllocationGroup, PortfolioAllocationTarget, PortfolioPlanRevision, PortfolioPlanState } from "./types";
@@ -10,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   applied: new Map<string, ReturnType<typeof vi.fn>>(),
   accountItems: [] as InvestmentAccount[],
+  ledger: { positions: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalRealizedKrw: 0 } as TradingLedger,
 }));
 
 vi.mock("@/lib/local-repository", () => ({ saveCollectionsAtomically: mocks.save }));
@@ -17,8 +20,9 @@ vi.mock("@/lib/use-local-collection", () => ({ useLocalCollection: (name: string
   items: mocks.collections.get(name) ?? [], allItems: mocks.collections.get(name) ?? [], ready: true, loadError: "",
   applyCommitted: mocks.applied.get(name) ?? vi.fn(),
 }) }));
-vi.mock("@/features/stocks/use-stock-store", () => ({ useStockStore: () => ({ ready: true, loadError: "", allStocks: sampleStocks, stocks: sampleStocks, accounts: mocks.accountItems, trades: [], ledger: { positions: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalRealizedKrw: 0 } }) }));
+vi.mock("@/features/stocks/use-stock-store", () => ({ useStockStore: () => ({ ready: true, loadError: "", allStocks: sampleStocks, stocks: sampleStocks, accounts: mocks.accountItems, trades: [], ledger: mocks.ledger }) }));
 vi.mock("@/features/portfolio-shell/portfolio-shell", () => ({ usePortfolioShell: () => ({ snapshot: { status: "ready", portfolio: { baseCurrency: "KRW" } } }) }));
+vi.mock("@/lib/use-exchange-rates", () => ({ useExchangeRates: () => ({ ready: true, snapshot: { ratesToKrw: fallbackRatesToKrw } }) }));
 
 const now = "2026-08-30T00:00:00.000Z";
 const accounts: InvestmentAccount[] = ["a", "b"].map((id, index) => ({ id, name: `Account ${id.toUpperCase()}`, institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault: index === 0, archivedAt: null, memo: "", createdAt: now, updatedAt: now }));
@@ -32,6 +36,7 @@ describe("Contribution Plan page", () => {
     mocks.save.mockReset().mockResolvedValue(undefined);
     mocks.applied = new Map(["portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-groups", "portfolio-allocation-targets"].map((name) => [name, vi.fn()]));
     mocks.accountItems = accounts;
+    mocks.ledger = { positions: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalRealizedKrw: 0 };
     mocks.collections = new Map([["portfolio-plan-state", []], ["portfolio-plan-revisions", []], ["portfolio-allocation-groups", []], ["portfolio-allocation-targets", []]]);
     vi.spyOn(window, "confirm").mockReturnValue(true);
   });
@@ -88,6 +93,18 @@ describe("Contribution Plan page", () => {
     fireEvent.click(screen.getByRole("button", { name: "Contribution 저장" }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
     expect(mocks.save.mock.calls[0]?.[0]).toEqual([expect.objectContaining({ collection: "portfolio-plan-state", values: [expect.objectContaining({ contributionAmountMinor: 100_025, contributionCurrency: "USD", activeRevisionId: "r1" })] })]);
+  });
+
+  it("stores Balance Assist as state-only policy without creating a Plan revision", async () => {
+    seedActive();
+    render(<PortfolioPlanPageClient />);
+    fireEvent.click(screen.getByRole("button", { name: "균형 맞추기" }));
+    fireEvent.change(screen.getByLabelText("현금성 자산 전체 목표 (%)"), { target: { value: "30" } });
+    fireEvent.change(screen.getByLabelText("주식 투자 전체 목표 (%)"), { target: { value: "60" } });
+    fireEvent.change(screen.getByLabelText("채권 전체 목표 (%)"), { target: { value: "10" } });
+    fireEvent.click(screen.getByRole("button", { name: "전체 목표 등록" }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
+    expect(mocks.save.mock.calls[0]?.[0]).toEqual([{ collection: "portfolio-plan-state", values: [expect.objectContaining({ activeRevisionId: "r1", balancePolicy: expect.objectContaining({ mode: "balanceAssist", targetWeightsBps: { savings: 3000, stocks: 6000, bonds: 1000 }, toleranceBps: 500 }) })] }]);
   });
 
   it("creates a new immutable revision when Thesis changes and disables invalid saves", async () => {
