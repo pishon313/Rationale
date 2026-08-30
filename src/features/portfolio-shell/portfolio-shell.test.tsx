@@ -53,22 +53,23 @@ function SessionProbe() {
 describe("PortfolioShell", () => {
   beforeEach(reset);
 
-  it("renders all route contracts and marks only exact Allocation as active", () => {
-    render(<PortfolioShell><div>allocation child</div></PortfolioShell>);
+  it("renders only Overview and Plan and marks the root Overview active", () => {
+    render(<PortfolioShell><div>overview child</div></PortfolioShell>);
     const nav = screen.getByRole("navigation", { name: "포트폴리오 메뉴" });
-    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["개요", "배분", "보유 자산", "활동", "투자 근거", "보고서"]);
-    expect(within(nav).getByRole("link", { name: "배분" })).toHaveAttribute("aria-current", "page");
-    expect(within(nav).getByRole("link", { name: "개요" })).not.toHaveAttribute("aria-current");
-    expect(within(nav).getByRole("link", { name: "배분" })).toHaveAttribute("href", "/portfolio");
-    expect(portfolioRouteForPath("/portfolio/")?.id).toBe("allocation");
+    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["개요", "계획"]);
+    expect(within(nav).getByRole("link", { name: "개요" })).toHaveAttribute("aria-current", "page");
+    expect(within(nav).getByRole("link", { name: "계획" })).not.toHaveAttribute("aria-current");
+    expect(within(nav).getByRole("link", { name: "개요" })).toHaveAttribute("href", "/portfolio");
+    expect(within(nav).getByRole("link", { name: "계획" })).toHaveAttribute("href", "/portfolio/plan");
+    expect(portfolioRouteForPath("/portfolio/")?.id).toBe("overview");
   });
 
   it("marks a nested route active without remounting the shared session", () => {
     const view = render(<PortfolioShell><SessionProbe /></PortfolioShell>);
     fireEvent.change(screen.getByLabelText("Session probe"), { target: { value: "still here" } });
-    mocks.pathname = "/portfolio/holdings/detail";
+    mocks.pathname = "/portfolio/plan/detail";
     view.rerender(<PortfolioShell><SessionProbe /></PortfolioShell>);
-    expect(screen.getByRole("link", { name: "보유 자산" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "계획" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByLabelText("Session probe")).toHaveValue("still here");
   });
 
@@ -100,16 +101,16 @@ describe("PortfolioShell", () => {
     expect(screen.queryByText("hidden child")).not.toBeInTheDocument();
   });
 
-  it("keeps the empty notice additive so Allocation content remains available", () => {
+  it("keeps the empty notice additive so route content remains available", () => {
     mocks.collections = new Map([
       ["accounts", [{ ...account, archivedAt: "2026-08-23T00:00:00.000Z" }]],
       ["stocks", [{ ...stock, deletedAt: "2026-08-23T00:00:00.000Z" }]],
       ["trades", [{ ...trade, deletedAt: "2026-08-23T00:00:00.000Z" }]],
       ["preferences", []],
     ]);
-    render(<PortfolioShell><div>allocation child</div></PortfolioShell>);
+    render(<PortfolioShell><div>overview child</div></PortfolioShell>);
     expect(screen.getByRole("status")).toHaveTextContent("아직 포트폴리오 기록이 없습니다.");
-    expect(screen.getByText("allocation child")).toBeInTheDocument();
+    expect(screen.getByText("overview child")).toBeInTheDocument();
     expect(screen.getByText("KRW")).toBeInTheDocument();
   });
 });
@@ -122,8 +123,7 @@ describe("portfolio shell localization and metadata", () => {
     }
   });
 
-  it("keeps Allocation at the existing root and leaves future routes unimplemented", () => {
-    expect(portfolioRoutes.find((route) => route.id === "allocation")).toMatchObject({ href: "/portfolio", implemented: true });
-    expect(portfolioRoutes.filter((route) => route.id !== "allocation").every((route) => !route.implemented)).toBe(true);
+  it("keeps Overview at the root and exposes Plan as the only second tab", () => {
+    expect(portfolioRoutes).toMatchObject([{ id: "overview", href: "/portfolio", implemented: true }, { id: "plan", href: "/portfolio/plan", implemented: true }]);
   });
 });

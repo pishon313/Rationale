@@ -2,6 +2,7 @@ import type { MessageCatalog } from "../types";
 
 const entries = [
   ["개요", "概要", "Overview", "Vue d’ensemble", "Panoramica", "Resumen"],
+  ["계획", "プラン", "Plan", "Plan", "Piano", "Plan"],
   ["배분", "配分", "Allocation", "Allocation", "Allocazione", "Asignación"],
   ["보유 자산", "保有資産", "Holdings", "Positions", "Posizioni", "Posiciones"],
   ["활동", "アクティビティ", "Activity", "Activité", "Attività", "Actividad"],

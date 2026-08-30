@@ -36,6 +36,8 @@ export type PortfolioPlanRepairDraft = {
   legacyRevisions: LegacyPortfolioPlanRevisionV6[];
   legacyTargets: LegacyPortfolioAllocationTargetV6[];
   unresolvedTargetIds: string[];
+  /** Deterministic V6 mappings found during migration. Older V7 backups may omit it. */
+  inferredAccountIdsByTargetId?: Record<string, string>;
 };
 
 export type PortfolioPlanState = {

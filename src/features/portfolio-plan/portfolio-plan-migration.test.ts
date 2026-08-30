@@ -2,8 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { InvestmentAccount } from "@/features/accounts/types";
 import { sampleStocks } from "@/features/stocks/sample-data";
 import type { LegacyPortfolioAllocationTargetV6, LegacyPortfolioPlanRevisionV6, LegacyPortfolioPlanStateV6 } from "./types";
-import { legacyGroupId, migratePortfolioPlanV6 } from "./portfolio-plan-migration";
-import { persistPortfolioPlanV6Migration } from "./portfolio-plan-migration";
+import { buildPortfolioPlanRepairActivation, legacyGroupId, migratePortfolioPlanV6, persistPortfolioPlanRepairActivation, persistPortfolioPlanV6Migration } from "./portfolio-plan-migration";
 import { vi } from "vitest";
 
 const now = "2026-08-18T00:00:00.000Z";
@@ -35,6 +34,32 @@ describe("Portfolio V6 migration", () => {
     const result = migratePortfolioPlanV6(input);
     expect(result).toMatchObject({ needsAccountSelection: true, revisions: [], groups: [], targets: [] });
     expect(result.states[0]).toMatchObject({ activeRevisionId: null, contributionAmountMinor: 1_000_000, repairDraft: { status: "needsAccountSelection", unresolvedTargetIds: ["cash"], legacyTargets: [cash] } });
+  });
+
+  it("persists deterministic mappings inside a partially ambiguous repair draft", () => {
+    const mixed: LegacyPortfolioAllocationTargetV6[] = [
+      { id: "stock", revisionId: "r1", targetType: "stock", stockId: sampleStocks[0].id, targetWeightBps: 5000, sortOrder: 0, updatedAt: now },
+      { id: "cash", revisionId: "r1", targetType: "cash", stockId: null, targetWeightBps: 5000, sortOrder: 1, updatedAt: now },
+    ];
+    const trades = [{ id: "trade", stockId: sampleStocks[0].id, accountId: "a", deletedAt: null }] as never[];
+    const result = migratePortfolioPlanV6({ states: [{ ...states[0], activeRevisionId: "r1" }], revisions: [revisions[0]], targets: mixed, stocks: sampleStocks, accounts: [account("a"), account("b")], trades });
+    expect(result.states[0]?.repairDraft).toMatchObject({ unresolvedTargetIds: ["cash"], inferredAccountIdsByTargetId: { stock: "a" } });
+  });
+
+  it("repairs every preserved historical revision and clears the draft only in the atomic candidate", async () => {
+    const cashTargets: LegacyPortfolioAllocationTargetV6[] = revisions.map((revision, index) => ({ id: `cash-${index}`, revisionId: revision.id, targetType: "cash", stockId: null, targetWeightBps: 10000, sortOrder: 0, updatedAt: now }));
+    const migration = migratePortfolioPlanV6({ states, revisions, targets: cashTargets, stocks: sampleStocks, accounts: [account("a"), account("b")], trades: [] });
+    const repairState = migration.states[0]!;
+    const activation = buildPortfolioPlanRepairActivation({ state: repairState, accountIdsByTargetId: { "cash-0": "a", "cash-1": "b" }, stocks: sampleStocks, accounts: [account("a"), account("b")], contributionAmountMinor: 1_200_000, contributionCurrency: "KRW", now });
+    expect(activation.revisions).toHaveLength(2);
+    expect(activation.groups).toHaveLength(2);
+    expect(activation.targets.map((target) => target.accountId)).toEqual(["a", "b"]);
+    expect(activation.states[0]).toMatchObject({ activeRevisionId: "r2", repairDraft: null });
+    expect(repairState.repairDraft).not.toBeNull();
+
+    const save = vi.fn().mockRejectedValue(new Error("disk full"));
+    await expect(persistPortfolioPlanRepairActivation(activation, save)).rejects.toThrow("disk full");
+    expect(repairState.repairDraft).not.toBeNull();
   });
 
   it("persists a migration as one four-collection atomic write", async () => {

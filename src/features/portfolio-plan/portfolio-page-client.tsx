@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { comparePortfolioPlanByGroup } from "@/domain/portfolio-overview";
 import { minorUnitsToMajor } from "@/domain/currency";
@@ -77,7 +78,7 @@ export function PortfolioPageClient() {
       <div><p className="text-sm text-[var(--muted)]">{t("의도한 배분과 실제 보유를 비교")}</p><h1 className="mt-1 text-2xl font-semibold">{t("포트폴리오")}</h1></div>
       {activeRevision && <div className="rounded-full bg-[var(--accent-soft)] px-3 py-1.5 text-xs text-[var(--accent)]">{t("리비전 {number} · 현재 활성", { number: formatNumber(activeRevision.revisionNumber) })}</div>}
     </div>
-    {state?.repairDraft && <section className="mt-6 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"><b>{t("계정 선택이 필요한 이전 포트폴리오 계획이 있습니다.")}</b><p className="mt-1">{t("새 계획을 활성화하기 전에 각 대상의 실행 계정을 선택해야 합니다.")}</p></section>}
+    {state?.repairDraft && <section className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"><div><b>{t("계정 선택이 필요한 이전 포트폴리오 계획이 있습니다.")}</b><p className="mt-1">{t("새 계획을 활성화하기 전에 각 대상의 실행 계정을 선택해야 합니다.")}</p></div><Link href="/portfolio/plan" className="inline-flex min-h-10 items-center rounded-lg bg-amber-950 px-4 font-semibold text-amber-50 dark:bg-amber-100 dark:text-amber-950">{t("Plan에서 Account 연결")}</Link></section>}
     <section className="mt-6 grid gap-3 sm:grid-cols-2">
       <Metric label={t("Contribution Amount")} value={state ? formatCurrency(minorUnitsToMajor(state.contributionAmountMinor, state.contributionCurrency), state.contributionCurrency, localeTag) : "—"} />
       <Metric label={t("현재 포트폴리오")} value={comparison.totalCurrentValueKrw === null ? "—" : formatCurrency(comparison.totalCurrentValueKrw, "KRW", localeTag)} />

@@ -32,6 +32,7 @@ export function useStockStore() {
     ledger,
     accountHoldingsByStockId,
     ready: stockStore.ready && tradeStore.ready && accountStore.ready,
+    loadError: stockStore.loadError || tradeStore.loadError || accountStore.loadError,
     addStock: stockStore.add,
     updateStock: stockStore.update,
     replaceStocksAsync: stockStore.replaceAsync,

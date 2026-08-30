@@ -85,6 +85,9 @@ export function validatePortfolioPlanCollections(input: {
     });
     const legacyTargetIds = new Set(repairDraft.legacyTargets.map((target) => target.id));
     if (repairDraft.unresolvedTargetIds.some((id) => !legacyTargetIds.has(id))) throw new Error("Portfolio repair draft의 미지정 Target이 존재하지 않습니다.");
+    const inferredMappings = Object.entries(repairDraft.inferredAccountIdsByTargetId ?? {});
+    if (inferredMappings.some(([targetId, accountId]) => !legacyTargetIds.has(targetId) || !nonEmptyString(accountId))) throw new Error("Portfolio repair draft의 Account mapping이 올바르지 않습니다.");
+    if (inferredMappings.some(([targetId]) => repairDraft.unresolvedTargetIds.includes(targetId))) throw new Error("Portfolio repair draft의 resolved/unresolved mapping이 충돌합니다.");
   }
 
   const groupsByRevision = new Map<string, PortfolioAllocationGroup[]>();
@@ -206,6 +209,7 @@ function validatePortfolioPlanRepairDraft(value: unknown): asserts value is Port
   draft.legacyRevisions.forEach((item) => validateLegacyPortfolioPlanRevisionV6Record(item as unknown as Record<string, unknown>));
   draft.legacyTargets.forEach((item) => validateLegacyPortfolioAllocationTargetV6Record(item as unknown as Record<string, unknown>));
   if (!draft.unresolvedTargetIds.length || draft.unresolvedTargetIds.some((id) => !nonEmptyString(id)) || new Set(draft.unresolvedTargetIds).size !== draft.unresolvedTargetIds.length) throw new Error("Portfolio repair draft의 미지정 Target이 올바르지 않습니다.");
+  if (draft.inferredAccountIdsByTargetId !== undefined && (!draft.inferredAccountIdsByTargetId || typeof draft.inferredAccountIdsByTargetId !== "object" || Array.isArray(draft.inferredAccountIdsByTargetId) || Object.entries(draft.inferredAccountIdsByTargetId).some(([targetId, accountId]) => !nonEmptyString(targetId) || !nonEmptyString(accountId)))) throw new Error("Portfolio repair draft의 Account mapping이 올바르지 않습니다.");
 }
 
 function validateBps(value: unknown, message: string) {

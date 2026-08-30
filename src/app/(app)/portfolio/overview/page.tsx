@@ -1,5 +1,5 @@
-import { PortfolioRoutePlaceholder } from "@/features/portfolio-shell/portfolio-route-placeholder";
+import { redirect } from "next/navigation";
 
 export default function PortfolioOverviewPage() {
-  return <PortfolioRoutePlaceholder routeId="overview" />;
+  redirect("/portfolio");
 }

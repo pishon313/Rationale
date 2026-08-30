@@ -2,6 +2,7 @@ import type { InvestmentAccount } from "@/features/accounts/types";
 import type { Stock } from "@/features/stocks/types";
 import type { Trade } from "@/features/trades/types";
 import { saveCollectionsAtomically, type CollectionWrite } from "@/lib/local-repository";
+import { validateStoredCollection } from "@/lib/collection-validation";
 import {
   portfolioPlanStateId,
   type LegacyPortfolioAllocationTargetV6,
@@ -10,9 +11,10 @@ import {
   type PortfolioAllocationGroup,
   type PortfolioAllocationTarget,
   type PortfolioPlanRevision,
+  type PortfolioPlanRepairDraft,
   type PortfolioPlanState,
 } from "./types";
-import { validateLegacyPortfolioPlanV6Collections, validatePortfolioPlanCollections } from "./validation";
+import { validateLegacyPortfolioPlanV6Collections, validateNewPortfolioTargetReferences, validatePortfolioPlanCollections } from "./validation";
 
 export type PortfolioPlanV6Migration = {
   states: PortfolioPlanState[];
@@ -64,6 +66,7 @@ export function migratePortfolioPlanV6(input: {
         legacyRevisions: clone(input.revisions),
         legacyTargets: clone(input.targets),
         unresolvedTargetIds,
+        inferredAccountIdsByTargetId: Object.fromEntries(accountByTargetId),
       },
     }];
     validatePortfolioPlanCollections({ states, revisions: [], groups: [], targets: [], stocks: input.stocks, accounts: input.accounts });
@@ -138,6 +141,76 @@ export async function persistPortfolioPlanV6Migration(migration: PortfolioPlanV6
   await save(portfolioPlanV6MigrationWrites(migration), { failurePolicy: "caller-managed" });
 }
 
+export type PortfolioPlanRepairActivation = {
+  states: PortfolioPlanState[];
+  revisions: PortfolioPlanRevision[];
+  groups: PortfolioAllocationGroup[];
+  targets: PortfolioAllocationTarget[];
+  writes: CollectionWrite[];
+};
+
+/** Converts the complete preserved V6 history after the user resolves every missing account. */
+export function buildPortfolioPlanRepairActivation(input: {
+  state: PortfolioPlanState;
+  accountIdsByTargetId: Readonly<Record<string, string>>;
+  stocks: readonly Stock[];
+  accounts: readonly InvestmentAccount[];
+  contributionAmountMinor: number;
+  contributionCurrency: PortfolioPlanState["contributionCurrency"];
+  now?: string;
+}): PortfolioPlanRepairActivation {
+  const repair = requiredRepairDraft(input.state.repairDraft);
+  const accountIds = new Map(Object.entries({ ...(repair.inferredAccountIdsByTargetId ?? {}), ...input.accountIdsByTargetId }));
+  const revisions = repair.legacyRevisions.map((revision): PortfolioPlanRevision => ({
+    id: revision.id,
+    revisionNumber: revision.revisionNumber,
+    basedOnRevisionId: revision.basedOnRevisionId,
+    thesis: revision.thesis,
+    changeNote: revision.changeNote,
+    createdAt: revision.createdAt,
+    activatedAt: revision.activatedAt,
+    updatedAt: revision.updatedAt,
+  }));
+  const groups = revisions.map((revision): PortfolioAllocationGroup => ({
+    id: legacyGroupId(revision.id),
+    revisionId: revision.id,
+    name: "Legacy Allocation",
+    targetWeightBps: 10000,
+    sortOrder: 0,
+    updatedAt: revision.updatedAt,
+  }));
+  const targets = repair.legacyTargets.map((target): PortfolioAllocationTarget => ({
+    id: target.id,
+    revisionId: target.revisionId,
+    groupId: legacyGroupId(target.revisionId),
+    accountId: requiredAccountId(accountIds, target.id),
+    targetType: target.targetType,
+    stockId: target.stockId,
+    weightWithinGroupBps: target.targetWeightBps,
+    sortOrder: target.sortOrder,
+    updatedAt: target.updatedAt,
+  } as PortfolioAllocationTarget));
+  const activeRevisionId = repair.legacyState?.activeRevisionId ?? null;
+  if (!activeRevisionId) throw new Error("V6_PORTFOLIO_ACTIVE_REVISION_MISSING");
+  validateNewPortfolioTargetReferences(targets.filter((target) => target.revisionId === activeRevisionId), input.stocks, input.accounts);
+  const states: PortfolioPlanState[] = [{
+    id: portfolioPlanStateId,
+    activeRevisionId,
+    contributionAmountMinor: input.contributionAmountMinor,
+    contributionCurrency: input.contributionCurrency,
+    updatedAt: input.now ?? new Date().toISOString(),
+    repairDraft: null,
+  }];
+  validatePortfolioPlanCollections({ states, revisions, groups, targets, stocks: input.stocks, accounts: input.accounts });
+  const writes = portfolioPlanV6MigrationWrites({ states, revisions, groups, targets, needsAccountSelection: false });
+  for (const { collection, values } of writes) if (!validateStoredCollection(collection, values).valid) throw new Error("PORTFOLIO_REPAIR_CANDIDATE_INVALID");
+  return { states, revisions, groups, targets, writes };
+}
+
+export async function persistPortfolioPlanRepairActivation(activation: PortfolioPlanRepairActivation, save = saveCollectionsAtomically) {
+  await save(activation.writes, { failurePolicy: "caller-managed" });
+}
+
 function inferStockAccount(stockId: string, trades: readonly Trade[], accountIds: ReadonlySet<string>, fallback: string | null) {
   const candidates = referencedAccounts(trades.filter((trade) => trade.stockId === stockId), accountIds);
   if (candidates.length === 1) return candidates[0];
@@ -156,6 +229,11 @@ function validLegacyContribution(value: number | null | undefined) {
 function requiredAccountId(values: ReadonlyMap<string, string>, targetId: string) {
   const value = values.get(targetId);
   if (!value) throw new Error("V6_PORTFOLIO_TARGET_ACCOUNT_UNRESOLVED");
+  return value;
+}
+
+function requiredRepairDraft(value: PortfolioPlanRepairDraft | null | undefined) {
+  if (!value || value.status !== "needsAccountSelection") throw new Error("PORTFOLIO_REPAIR_DRAFT_MISSING");
   return value;
 }
 
