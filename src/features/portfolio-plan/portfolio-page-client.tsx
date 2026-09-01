@@ -6,12 +6,12 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNod
 import { minorUnitsToMajor } from "@/domain/currency";
 import { buildPortfolioBalanceSnapshot, portfolioBalanceCategories, suggestContributionBalance, type PortfolioBalanceUnavailableReason } from "@/domain/portfolio-balance";
 import { formatCurrency } from "@/domain/money";
-import { buildPortfolioStockAllocationSnapshot } from "@/domain/portfolio-stock-allocation";
+import { buildPortfolioStockAllocationSnapshot, invalidPortfolioStockTargetIds, suggestStockContributionBalance } from "@/domain/portfolio-stock-allocation";
 import { useStockStore } from "@/features/stocks/use-stock-store";
 import { useI18n } from "@/i18n/i18n-provider";
 import { useExchangeRates } from "@/lib/use-exchange-rates";
 import { useLocalCollection } from "@/lib/use-local-collection";
-import { calculatePortfolioPlanDraft, portfolioPlanCategoryName, portfolioPlanCategoryWeights, portfolioPlanDraftFromActive, portfolioTargetAllocationCategoryName, withPortfolioPlanCategoryWeights, withPortfolioStockTargetWeights } from "./portfolio-plan-draft";
+import { calculatePortfolioPlanDraft, parsePercentageToBps, portfolioPlanCategoryName, portfolioPlanCategoryWeights, portfolioPlanDraftFromActive, portfolioTargetAllocationCategoryName, withPortfolioPlanCategoryWeights, withPortfolioStockTargetWeights } from "./portfolio-plan-draft";
 import { buildPortfolioPlanRepairActivation, isLegacyPortfolioPlanV6Data, migratePortfolioPlanV6, persistPortfolioPlanRepairActivation, persistPortfolioPlanV6Migration } from "./portfolio-plan-migration";
 import type {
   LegacyPortfolioAllocationTargetV6,
@@ -22,6 +22,7 @@ import type {
   PortfolioPlanRevision,
   PortfolioPlanState,
 } from "./types";
+import { PortfolioExchangeRateStatus } from "./portfolio-exchange-rate-status";
 
 export function PortfolioPageClient() {
   const { t, localeTag, formatNumber } = useI18n();
@@ -40,6 +41,7 @@ export function PortfolioPageClient() {
   const revisions = legacy ? [] : revisionStore.allItems as PortfolioPlanRevision[];
   const targets = useMemo(() => legacy ? [] : targetStore.allItems as PortfolioAllocationTarget[], [legacy, targetStore.allItems]);
   const state = states[0] ?? null;
+  const balancePolicy = state?.balancePolicy ?? null;
   const repairState = state?.repairDraft ? state : null;
   const activeRevision = revisions.find((revision) => revision.id === state?.activeRevisionId) ?? null;
 
@@ -77,7 +79,20 @@ export function PortfolioPageClient() {
   const stockSnapshot = useMemo(() => buildPortfolioStockAllocationSnapshot({ ledger: stockStore.ledger, stocks: stockStore.allStocks, ratesToKrw: exchangeRates.snapshot.ratesToKrw, bondStockIds }), [bondStockIds, exchangeRates.snapshot.ratesToKrw, stockStore.allStocks, stockStore.ledger]);
   const suggestion = useMemo(() => state && baseWeights ? suggestContributionBalance({ snapshot: balanceSnapshot, policy: state.balancePolicy, baseWeightsBps: baseWeights, contributionAmountMinor: state.contributionAmountMinor, contributionCurrency: state.contributionCurrency, ratesToKrw: exchangeRates.snapshot.ratesToKrw }) : null, [balanceSnapshot, baseWeights, exchangeRates.snapshot.ratesToKrw, state]);
   const categoryExecutionDraft = useMemo(() => suggestion && state?.balancePolicy?.mode === "balanceAssist" ? withPortfolioPlanCategoryWeights(draft, suggestion.weightsBps) : draft, [draft, state?.balancePolicy?.mode, suggestion]);
-  const executionDraft = useMemo(() => withPortfolioStockTargetWeights(categoryExecutionDraft, state?.balancePolicy?.stockTargets), [categoryExecutionDraft, state?.balancePolicy?.stockTargets]);
+  const invalidStockTargetIds = useMemo(() => invalidPortfolioStockTargetIds(state?.balancePolicy?.stockTargets, stockStore.allStocks), [state?.balancePolicy?.stockTargets, stockStore.allStocks]);
+  const stockDetailTargets = useMemo(() => invalidStockTargetIds.length ? [] : state?.balancePolicy?.stockTargets ?? [], [invalidStockTargetIds.length, state?.balancePolicy?.stockTargets]);
+  const stockContributionValueKrw = useMemo(() => {
+    if (!state) return null;
+    const stockWeightBps = parsePercentageToBps(categoryExecutionDraft.groups.find((group) => group.category === "stocks")?.weightInput ?? "");
+    const rate = exchangeRates.snapshot.ratesToKrw[state.contributionCurrency];
+    if (stockWeightBps === null || !Number.isFinite(rate) || rate <= 0) return null;
+    return minorUnitsToMajor(state.contributionAmountMinor, state.contributionCurrency) * stockWeightBps / 10000 * rate;
+  }, [categoryExecutionDraft.groups, exchangeRates.snapshot.ratesToKrw, state]);
+  const stockSuggestion = useMemo(() => balancePolicy?.mode === "balanceAssist" && stockDetailTargets.length && balancePolicy.stockToleranceBps !== undefined && stockContributionValueKrw !== null
+    ? suggestStockContributionBalance({ snapshot: stockSnapshot, targets: stockDetailTargets, toleranceBps: balancePolicy.stockToleranceBps, contributionValueKrw: stockContributionValueKrw })
+    : null, [balancePolicy, stockContributionValueKrw, stockDetailTargets, stockSnapshot]);
+  const executionStockTargets = useMemo(() => stockSuggestion?.targets.map((target) => ({ stockId: target.stockId, targetWeightBps: target.suggestedWeightBps })) ?? stockDetailTargets, [stockDetailTargets, stockSuggestion]);
+  const executionDraft = useMemo(() => withPortfolioStockTargetWeights(categoryExecutionDraft, executionStockTargets), [categoryExecutionDraft, executionStockTargets]);
   const calculation = useMemo(() => activeRevision ? calculatePortfolioPlanDraft(executionDraft) : null, [activeRevision, executionDraft]);
 
   if (!ready || (legacy || repairState) && !migrationError) return <p className="py-20 text-center text-sm text-[var(--muted)]">{t("포트폴리오 계획을 불러오는 중입니다.")}</p>;
@@ -102,7 +117,6 @@ export function PortfolioPageClient() {
   const currentWeights = Object.fromEntries(allocationRows.map((row) => [row.category, row.current ?? 0])) as Record<(typeof portfolioBalanceCategories)[number], number>;
   const stockById = new Map(stockStore.allStocks.map((stock) => [stock.id, stock]));
   const stockCurrentById = new Map(stockSnapshot.rows.map((row) => [row.stockId, row.currentWeightBps]));
-  const stockDetailTargets = state?.balancePolicy?.stockTargets ?? [];
   const executionAmountByStockId = new Map<string, number>();
   for (const target of calculation?.targets ?? []) if (target.stockId) executionAmountByStockId.set(target.stockId, (executionAmountByStockId.get(target.stockId) ?? 0) + target.amountMinor);
   return <div className="portfolio-overview">
@@ -111,12 +125,16 @@ export function PortfolioPageClient() {
       <div className="portfolio-plan-heading-badges">{state?.balancePolicy && <span className="portfolio-plan-mode-badge"><Scale size={14} aria-hidden="true" />{t(state.balancePolicy.mode === "balanceAssist" ? "균형 맞추기" : "전체 목표 등록됨")}</span>}{activeRevision && <span className="portfolio-plan-dirty-badge">{t("리비전 {number} · 현재 활성", { number: formatNumber(activeRevision.revisionNumber) })}</span>}</div>
     </header>
 
+    <PortfolioExchangeRateStatus snapshot={exchangeRates.snapshot} refreshing={exchangeRates.refreshing} onlineError={exchangeRates.onlineError} onRefresh={() => void exchangeRates.refresh()} />
+
     <section aria-label={t("포트폴리오 요약")} className="portfolio-overview-kpis">
       <OverviewMetric label={t("현재 포트폴리오")} value={portfolioValue} help={balanceSnapshot.available ? t("현금과 보유 포지션의 평가 금액") : t("현재 평가 불가")} />
       <OverviewMetric label={t("다음 전체 저축액")} value={contributionValue} help={activeRevision ? t("저장된 Contribution Plan 기준") : t("Plan을 만들면 계산됩니다.")} />
       <OverviewMetric label={t("Allocation 상태")} value={allocationStatus} help={allocationStatusHelp} tone={outsideAllocation ? "warning" : state?.balancePolicy && comparableAllocationRows.length ? "positive" : "neutral"} />
       <OverviewMetric label={t("가장 부족한 자산군")} value={priorityValue} help={priorityHelp} tone={priorityRow && priorityRow.drift < 0 ? "warning" : "neutral"} />
     </section>
+
+    {invalidStockTargetIds.length > 0 && <section role="alert" className="portfolio-overview-neutral-note"><Info size={16} aria-hidden="true" /><p>{t("사용할 수 없는 주식 세부 목표가 {count}개 있습니다. Allocation에서 종목을 교체하거나 삭제해 주세요.", { count: invalidStockTargetIds.length })} <Link href="/portfolio/allocation">{t("Allocation에서 수정")}</Link></p></section>}
 
     <div className="portfolio-overview-grid">
       <section aria-labelledby="current-allocation-title" className="portfolio-overview-card">
@@ -125,13 +143,13 @@ export function PortfolioPageClient() {
           {balanceSnapshot.totalValueKrw === 0 && <p className="portfolio-overview-neutral-note"><Info size={15} aria-hidden="true" />{t("현재 자산은 없지만 저장된 Allocation 목표는 확인할 수 있습니다.")}</p>}
           <div className="portfolio-overview-allocation-dashboard">
             <OverviewDonut weights={currentWeights} empty={!comparableAllocationRows.length} value={portfolioValue} />
-            <div className="portfolio-overview-allocation-table">
-              <div className="portfolio-overview-allocation-head"><span>{t("자산군")}</span><span>{t("현재와 허용 범위")}</span><span>{t("현재 / 목표")}</span><span>{t("차이")}</span></div>
-              {allocationRows.map((row) => <article key={row.category} style={{ "--portfolio-group-accent": overviewAccent(row.category) } as CSSProperties}>
-                <div className="portfolio-overview-asset-name"><i aria-hidden="true" /><span><b>{t(portfolioTargetAllocationCategoryName(row.category))}</b><small>{currentByCategory.get(row.category)?.currentValueKrw === null || currentByCategory.get(row.category)?.currentValueKrw === undefined ? "—" : formatCurrency(currentByCategory.get(row.category)!.currentValueKrw!, "KRW", localeTag)}</small></span></div>
+            <div className="portfolio-overview-allocation-table" role="table" aria-label={t("자산 배분 목표 표")}>
+              <div className="portfolio-overview-allocation-head" role="row"><span role="columnheader">{t("자산군")}</span><span role="columnheader">{t("현재와 허용 범위")}</span><span role="columnheader">{t("현재 / 목표")}</span><span role="columnheader">{t("차이")}</span></div>
+              {allocationRows.map((row) => <article key={row.category} role="row" style={{ "--portfolio-group-accent": overviewAccent(row.category) } as CSSProperties}>
+                <div className="portfolio-overview-asset-name" role="cell"><i aria-hidden="true" /><span><b>{t(portfolioTargetAllocationCategoryName(row.category))}</b><small>{currentByCategory.get(row.category)?.currentValueKrw === null || currentByCategory.get(row.category)?.currentValueKrw === undefined ? "—" : formatCurrency(currentByCategory.get(row.category)!.currentValueKrw!, "KRW", localeTag)}</small></span></div>
                 <OverviewRangeBar currentBps={row.current} targetBps={row.target} toleranceBps={state?.balancePolicy?.toleranceBps ?? null} />
-                <strong>{row.current === null ? "—" : `${formatBps(row.current, formatNumber)}%`}<small>/ {row.target === null ? "—" : `${formatBps(row.target, formatNumber)}%`}</small></strong>
-                <span className={row.outside ? "is-drift" : ""}>{row.drift === null ? "—" : signedBps(row.drift, formatNumber)}</span>
+                <strong role="cell">{row.current === null ? "—" : `${formatBps(row.current, formatNumber)}%`}<small>/ {row.target === null ? "—" : `${formatBps(row.target, formatNumber)}%`}</small></strong>
+                <span role="cell" className={row.outside ? "is-drift" : ""}>{row.drift === null ? "—" : signedBps(row.drift, formatNumber)}</span>
               </article>)}
             </div>
           </div>
@@ -155,22 +173,22 @@ export function PortfolioPageClient() {
 
     {stockDetailTargets.length > 0 && <section className="portfolio-overview-card portfolio-overview-stock-plan" aria-labelledby="stock-plan-title">
       <div className="portfolio-overview-card-header"><div><p>{t("OPTIONAL STOCK DETAIL")}</p><h2 id="stock-plan-title">{t("종목별 다음 투자 계획")}</h2><span>{t("Allocation의 주식 세부 목표와 현재 보유 비중을 비교합니다.")}</span></div><div className="portfolio-overview-card-actions"><Link href="/portfolio/allocation">{t("비율 수정")}</Link><Link href="/portfolio/plan">{t("Plan 확인")}<ArrowRight size={14} aria-hidden="true" /></Link></div></div>
-      <div className="portfolio-overview-stock-table">
-        <div className="portfolio-overview-stock-head"><span>{t("종목")}</span><span>{t("현재와 허용 범위")}</span><span>{t("현재 / 목표")}</span><span>{t("다음 투자 금액")}</span></div>
+      <div className="portfolio-overview-stock-table" role="table" aria-label={t("주식 세부 목표 표")}>
+        <div className="portfolio-overview-stock-head" role="row"><span role="columnheader">{t("종목")}</span><span role="columnheader">{t("현재와 허용 범위")}</span><span role="columnheader">{t("현재 / 목표")}</span><span role="columnheader">{t("다음 투자 금액")}</span></div>
         {stockDetailTargets.map((target) => {
           const stock = stockById.get(target.stockId);
           const current = stockCurrentById.get(target.stockId) ?? (stockSnapshot.available ? 0 : null);
           const drift = current === null ? null : current - target.targetWeightBps;
           const amountMinor = executionAmountByStockId.get(target.stockId);
-          return <article key={target.stockId}>
-            <div><i aria-hidden="true" /><span><b>{stock?.ticker ?? target.stockId}</b><small>{stock?.name ?? t("알 수 없는 종목")}</small></span></div>
+          return <article key={target.stockId} role="row">
+            <div role="cell"><i aria-hidden="true" /><span><b>{stock?.ticker ?? target.stockId}</b><small>{stock?.name ?? t("알 수 없는 종목")}</small></span></div>
             <OverviewRangeBar currentBps={current} targetBps={target.targetWeightBps} toleranceBps={state?.balancePolicy?.stockToleranceBps ?? null} />
-            <strong>{current === null ? "—" : `${formatBps(current, formatNumber)}%`}<small>/ {formatBps(target.targetWeightBps, formatNumber)}%</small></strong>
-            <span className={drift !== null && Math.abs(drift) > (state?.balancePolicy?.stockToleranceBps ?? 10000) ? "is-drift" : ""}>{amountMinor === undefined || !calculation ? "—" : formatCurrency(minorUnitsToMajor(amountMinor, calculation.contributionCurrency), calculation.contributionCurrency, localeTag)}</span>
+            <strong role="cell">{current === null ? "—" : `${formatBps(current, formatNumber)}%`}<small>/ {formatBps(target.targetWeightBps, formatNumber)}%</small></strong>
+            <span role="cell" className={drift !== null && Math.abs(drift) > (state?.balancePolicy?.stockToleranceBps ?? 10000) ? "is-drift" : ""}>{amountMinor === undefined || !calculation ? "—" : formatCurrency(minorUnitsToMajor(amountMinor, calculation.contributionCurrency), calculation.contributionCurrency, localeTag)}</span>
           </article>;
         })}
       </div>
-      <footer><Info size={15} aria-hidden="true" /><p>{t("주식 세부 허용 오차 {value}% · 설정하지 않으면 이 영역은 표시되지 않습니다.", { value: formatBps(state?.balancePolicy?.stockToleranceBps ?? 0, formatNumber) })}</p></footer>
+      <footer><Info size={15} aria-hidden="true" /><p>{stockSuggestion?.source === "balanced" ? t("부족한 종목을 우선한 이번 저축 제안입니다.") : t("주식 세부 허용 오차 {value}% · 설정하지 않으면 이 영역은 표시되지 않습니다.", { value: formatBps(state?.balancePolicy?.stockToleranceBps ?? 0, formatNumber) })}</p></footer>
     </section>}
 
     {!activeRevision && !state?.balancePolicy && <section className="portfolio-overview-start"><div><b>{t("처음 시작하시나요?")}</b><p>{t("Plan으로 월 저축액을 만들고, 필요할 때 Allocation에서 전체 자산 목표를 추가하세요.")}</p></div><div><Link href="/portfolio/plan">{t("Plan 만들기")}</Link><Link href="/portfolio/allocation">{t("Allocation 설정")}</Link></div></section>}
@@ -188,20 +206,27 @@ function OverviewEmpty({ icon, title, description, action }: { icon: ReactNode; 
 }
 
 function OverviewDonut({ weights, empty, value }: { weights: Record<(typeof portfolioBalanceCategories)[number], number>; empty: boolean; value: string }) {
-  const { t } = useI18n();
+  const { t, formatNumber } = useI18n();
   const savings = weights.savings / 100;
   const stocks = weights.stocks / 100;
   const background = empty ? "var(--color-surface-muted)" : `conic-gradient(${overviewAccent("savings")} 0 ${savings}%, ${overviewAccent("stocks")} ${savings}% ${savings + stocks}%, ${overviewAccent("bonds")} ${savings + stocks}% 100%)`;
-  return <div className="portfolio-overview-donut-wrap"><div className="portfolio-overview-donut" style={{ background }}><div><b>{empty ? "—" : value}</b><span>{t("현재 평가 금액")}</span></div></div><p>{t("현금성 자산 · 주식 · 채권")}</p></div>;
+  const label = empty ? `${t("현재 자산 배분")}: —` : `${t("현재 자산 배분")}: ${portfolioBalanceCategories.map((category) => `${t(portfolioTargetAllocationCategoryName(category))} ${formatBps(weights[category], formatNumber)}%`).join(", ")}`;
+  return <div className="portfolio-overview-donut-wrap"><div className="portfolio-overview-donut" style={{ background }} role="img" aria-label={label}><div aria-hidden="true"><b>{empty ? "—" : value}</b><span>{t("현재 평가 금액")}</span></div></div><p>{t("현금성 자산 · 주식 · 채권")}</p></div>;
 }
 
 function OverviewRangeBar({ currentBps, targetBps, toleranceBps }: { currentBps: number | null; targetBps: number | null; toleranceBps: number | null }) {
+  const { t, formatNumber } = useI18n();
   const target = targetBps ?? 0;
   const tolerance = toleranceBps ?? 0;
   const start = clampBps(target - tolerance);
   const end = clampBps(target + tolerance);
   const style = { "--overview-current": `${clampBps(currentBps ?? 0) / 100}%`, "--overview-target": `${clampBps(target) / 100}%`, "--overview-range-start": `${start / 100}%`, "--overview-range-width": `${(end - start) / 100}%` } as CSSProperties;
-  return <div className="portfolio-overview-range" style={style} aria-hidden="true"><i className="range" /><i className="current" /><i className="target" /></div>;
+  const label = t("현재 {current}%, 목표 {target}%, 허용 오차 {tolerance}%", {
+    current: currentBps === null ? "—" : formatBps(currentBps, formatNumber),
+    target: targetBps === null ? "—" : formatBps(targetBps, formatNumber),
+    tolerance: toleranceBps === null ? "—" : formatBps(toleranceBps, formatNumber),
+  });
+  return <div className="portfolio-overview-range" style={style} role="cell" aria-label={label}><i className="range" aria-hidden="true" /><i className="current" aria-hidden="true" /><i className="target" aria-hidden="true" /></div>;
 }
 
 function OverviewUnavailable({ reason }: { reason: PortfolioBalanceUnavailableReason }) {

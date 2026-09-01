@@ -4,7 +4,7 @@ import type { Currency } from "@/domain/currency";
 import { conditionTypes, planStatuses, scenarioTypes, type BuyPlan } from "@/features/plans/types";
 import { reviewEvaluations, type Review } from "@/features/reviews/types";
 import { ruleTypes, severities, type InvestmentRule } from "@/features/rules/types";
-import { currencies, investmentTypes, marketDataProviders, markets, priceStatuses, quoteFreshnessValues, quotePreferences, remoteMarketDataProviders, stockStatuses, stockViews, type Stock } from "@/features/stocks/types";
+import { currencies, investmentTypes, marketDataProviders, markets, priceStatuses, quoteFreshnessValues, quotePreferences, remoteMarketDataProviders, securityAssetClasses, stockStatuses, stockViews, type Stock } from "@/features/stocks/types";
 import { marketSectors } from "@/features/stocks/market-sectors";
 import { tradeJournalStatuses, tradeOriginKinds, tradeTypes, type Trade } from "@/features/trades/types";
 import { validateTradeFeeMetadata } from "@/features/trades/trade-fee";
@@ -254,6 +254,7 @@ function validateStockRecord(stock: Record<string, unknown>, index: number) {
   requireEnum(stock.status, stockStatuses, label, "상태");
   requireEnum(stock.investmentType, investmentTypes, label, "투자 유형");
   requireEnum(stock.currentView, stockViews, label, "현재 판단");
+  if (stock.assetClass !== undefined) requireEnum(stock.assetClass, securityAssetClasses, label, "Allocation 자산군");
   if (stock.marketSector !== undefined && stock.marketSector !== null) requireEnum(stock.marketSector, marketSectors, label, "시장 섹터");
   if (stock.countryCode !== undefined && stock.countryCode !== null && (typeof stock.countryCode !== "string" || !/^[A-Z]{2}$/.test(stock.countryCode))) throw new Error(`${label}의 국가 코드가 올바르지 않습니다.`);
   if (stock.providerRefs !== undefined) { if (!Array.isArray(stock.providerRefs)) throw new Error(`${label}의 provider 연결이 올바르지 않습니다.`); for (const ref of stock.providerRefs) { if (!isRecord(ref) || !remoteMarketDataProviders.includes(ref.provider as typeof remoteMarketDataProviders[number]) || typeof ref.symbol !== "string" || !ref.symbol.trim()) throw new Error(`${label}의 provider 연결이 올바르지 않습니다.`); } }

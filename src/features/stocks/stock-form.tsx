@@ -16,7 +16,8 @@ import { analyzeStockCurrencyCorrection, StockCurrencyCorrectionError } from "./
 import { marketSectorLabel, marketSectors } from "./market-sectors";
 import { canonicalPortfolioCategoryName, collectPortfolioCategories } from "./portfolio-categories";
 import { createStockFromInstrumentSearchResult, supportedInstrumentCurrency } from "./stock-from-instrument";
-import { currencies, investmentTypes, markets, stockStatuses, stockViews, type MarketDataProvider, type Stock } from "./types";
+import { inferSecurityAssetClass } from "./asset-class";
+import { currencies, investmentTypes, markets, securityAssetClasses, stockStatuses, stockViews, type MarketDataProvider, type Stock } from "./types";
 
 type Props = {
   stock?: Stock;
@@ -73,6 +74,7 @@ export function StockForm({ stock, holdings = [], trades = [], categoryStocks = 
       providerSymbol: stock.providerRefs?.[0]?.symbol ?? "",
       provider: stock.providerRefs?.[0]?.provider ?? "manual",
       assetType: stock.assetType,
+      assetClass: stock.assetClass ?? inferSecurityAssetClass(stock.assetType),
       marketSector: stock.marketSector ?? "",
       sector: stock.sector,
       status: stock.status,
@@ -98,6 +100,7 @@ export function StockForm({ stock, holdings = [], trades = [], categoryStocks = 
       providerSymbol: "",
       provider: "manual",
       assetType: "주식",
+      assetClass: "equity",
       marketSector: "",
       sector: "",
       status: "관찰",
@@ -188,6 +191,7 @@ export function StockForm({ stock, holdings = [], trades = [], categoryStocks = 
     setValue("provider", result.provider);
     setValue("providerSymbol", result.providerSymbol);
     setValue("assetType", result.assetType || "주식");
+    setValue("assetClass", inferSecurityAssetClass(result.assetType || "주식"));
     setValue("currentPrice", result.previousClose ?? 0);
     setSaveError("");
     setEntryMode("manual");
@@ -262,6 +266,7 @@ export function StockForm({ stock, holdings = [], trades = [], categoryStocks = 
         market: keepStoredIdentity ? stock.market : parsed.market,
         currency: keepStoredIdentity ? stock.currency : parsed.currency,
         assetType: parsed.assetType,
+        assetClass: parsed.assetClass,
         ...(marketSector === undefined ? {} : { marketSector }),
         sector: portfolioCategory,
         status: parsed.status,
@@ -402,6 +407,7 @@ export function StockForm({ stock, holdings = [], trades = [], categoryStocks = 
         </>}
 
         <Field label={t("자산 유형")} error={errorText(errors.assetType?.message, "자산 유형을 입력해 주세요.")}><input className={fieldClass} {...register("assetType")} /></Field>
+        <Field label={t("Allocation 자산군")}><select aria-label={t("Allocation 자산군")} className={fieldClass} {...register("assetClass")}>{securityAssetClasses.map((value) => <option key={value} value={value}>{t(value === "equity" ? "주식성 자산" : "채권성 자산")}</option>)}</select><span className="mt-1.5 block text-xs font-normal leading-5 text-[var(--muted)]">{t("Portfolio Allocation에서 주식과 채권을 안정적으로 구분하는 기준입니다.")}</span></Field>
         <section className="rounded-xl border bg-[var(--surface-muted)] p-4 sm:col-span-2" aria-labelledby="stock-classification-title">
           <h3 id="stock-classification-title" className="font-semibold">{t("분류")}</h3>
           <div className="mt-4 grid gap-5 sm:grid-cols-2">

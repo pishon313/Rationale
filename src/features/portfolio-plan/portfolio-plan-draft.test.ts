@@ -10,6 +10,7 @@ import {
   parsePercentageToBps,
   portfolioPlanDraftFromActive,
   validatePortfolioPlanEditorDraft,
+  withPortfolioStockTargetInputs,
   withPortfolioStockTargetWeights,
   type PortfolioPlanEditorDraft,
 } from "./portfolio-plan-draft";
@@ -117,6 +118,15 @@ describe("Portfolio Plan draft validation and semantic changes", () => {
       expect.objectContaining({ id: `allocation:stock:${sampleStocks[1]!.id}`, stockId: sampleStocks[1]!.id, accountId: "", weightInput: "30" }),
     ]);
     expect(saved.groups[1]?.targets).toHaveLength(1);
+  });
+
+  it("preserves invalid execution-only stock inputs for inline validation", () => {
+    const execution = withPortfolioStockTargetInputs(validDraft(), [
+      { stockId: sampleStocks[0]!.id, weightInput: "90" },
+      { stockId: sampleStocks[1]!.id, weightInput: "20" },
+    ]);
+    expect(execution.groups[1]?.targets.map((target) => target.weightInput)).toEqual(["90", "20"]);
+    expect(validatePortfolioPlanEditorDraft(execution, sampleStocks, accounts).summary).toContain("Group 내부 Target 비중 합계는 정확히 100%여야 합니다.");
   });
 });
 

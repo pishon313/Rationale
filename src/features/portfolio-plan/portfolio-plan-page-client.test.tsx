@@ -119,6 +119,25 @@ describe("Contribution Plan page", () => {
     expect(within(summary).getByText("₩300,000")).toBeInTheDocument();
   });
 
+  it("balances inside the stock bucket and keeps manual execution edits local to this contribution", () => {
+    seedActive();
+    mocks.collections.set("portfolio-plan-state", [{ ...state, balancePolicy: { version: 1, mode: "balanceAssist", targetWeightsBps: { savings: 0, stocks: 10000, bonds: 0 }, toleranceBps: 300, stockTargets: [{ stockId: sampleStocks[0]!.id, targetWeightBps: 7000 }, { stockId: sampleStocks[1]!.id, targetWeightBps: 3000 }], stockToleranceBps: 300, updatedAt: now } }]);
+    mocks.ledger = { ...mocks.ledger, positions: [{ key: "held", stockId: sampleStocks[0]!.id, stockName: sampleStocks[0]!.name, accountId: "a", accountName: "Account A", currency: "KRW", quantity: 1_000, averagePrice: 0, investedAmount: 0, investedAmountKrw: 0, realizedProfit: 0, realizedProfitKrw: 0 }] };
+    render(<PortfolioPlanPageClient />);
+
+    expect(screen.getByText(/주식 안에서도 부족한 종목을 우선하도록 금액을 나눴습니다/)).toBeInTheDocument();
+    const summary = screen.getByRole("complementary", { name: "이번 저축 실행표" });
+    expect(within(summary).getByText("₩0")).toBeInTheDocument();
+    expect(within(summary).getAllByText("₩1,000,000").length).toBeGreaterThan(0);
+
+    const stockWeights = screen.getAllByLabelText("Within Group (%)");
+    fireEvent.change(stockWeights[0]!, { target: { value: "60" } });
+    fireEvent.change(stockWeights[1]!, { target: { value: "40" } });
+    expect(within(summary).getByText("₩600,000")).toBeInTheDocument();
+    expect(within(summary).getByText("₩400,000")).toBeInTheDocument();
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+
   it("creates a new immutable revision when Thesis changes and disables invalid saves", async () => {
     seedActive();
     render(<PortfolioPlanPageClient />);

@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   applied: new Map<string, ReturnType<typeof vi.fn>>(),
   ledger: { positions: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalRealizedKrw: 0 } as TradingLedger,
+  stocks: [] as typeof sampleStocks,
 }));
 
 vi.mock("@/lib/local-repository", () => ({ saveCollectionsAtomically: mocks.save }));
@@ -18,7 +19,7 @@ vi.mock("@/lib/use-local-collection", () => ({ useLocalCollection: (name: string
   items: mocks.collections.get(name) ?? [], allItems: mocks.collections.get(name) ?? [], ready: true, loadError: "",
   applyCommitted: mocks.applied.get(name) ?? vi.fn(),
 }) }));
-vi.mock("@/features/stocks/use-stock-store", () => ({ useStockStore: () => ({ ready: true, loadError: "", allStocks: sampleStocks, accounts: [], trades: [], ledger: mocks.ledger }) }));
+vi.mock("@/features/stocks/use-stock-store", () => ({ useStockStore: () => ({ ready: true, loadError: "", allStocks: mocks.stocks, accounts: [], trades: [], ledger: mocks.ledger }) }));
 vi.mock("@/features/portfolio-shell/portfolio-shell", () => ({ usePortfolioShell: () => ({ snapshot: { status: "ready", portfolio: { baseCurrency: "KRW" } } }) }));
 vi.mock("@/lib/use-exchange-rates", () => ({ useExchangeRates: () => ({ ready: true, snapshot: { ratesToKrw: fallbackRatesToKrw } }) }));
 
@@ -29,6 +30,7 @@ describe("Portfolio Allocation page", () => {
     mocks.save.mockReset().mockResolvedValue(undefined);
     mocks.applied = new Map(["portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-groups", "portfolio-allocation-targets"].map((name) => [name, vi.fn()]));
     mocks.ledger = { positions: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalRealizedKrw: 0 };
+    mocks.stocks = sampleStocks;
     mocks.collections = new Map([["portfolio-plan-state", []], ["portfolio-plan-revisions", []], ["portfolio-allocation-groups", []], ["portfolio-allocation-targets", []]]);
   });
 
@@ -78,5 +80,27 @@ describe("Portfolio Allocation page", () => {
       ],
       stockToleranceBps: 300,
     });
+  });
+
+  it("uses current holdings as an exact 100% category preset", () => {
+    mocks.ledger = { ...mocks.ledger, positions: [{ key: "held", stockId: sampleStocks[0]!.id, stockName: sampleStocks[0]!.name, accountId: "a", accountName: "A", currency: "KRW", quantity: 2, averagePrice: 0, investedAmount: 0, investedAmountKrw: 0, realizedProfit: 0, realizedProfitKrw: 0 }] };
+    render(<PortfolioAllocationPageClient />);
+    fireEvent.click(screen.getByRole("button", { name: "현재 비중 사용" }));
+    expect(screen.getByLabelText("현금성 자산 전체 목표 (%)")).toHaveValue("0");
+    expect(screen.getByLabelText("주식 투자 전체 목표 (%)")).toHaveValue("100");
+    expect(screen.getByLabelText("채권 전체 목표 (%)")).toHaveValue("0");
+  });
+
+  it("blocks stale stock targets until the deleted stock is replaced", async () => {
+    const deleted = { ...sampleStocks[0]!, deletedAt: now };
+    mocks.stocks = [deleted, ...sampleStocks.slice(1)];
+    mocks.collections.set("portfolio-plan-state", [{ id: "default", activeRevisionId: null, contributionAmountMinor: 0, contributionCurrency: "KRW", updatedAt: now, balancePolicy: { version: 1, mode: "fixed", targetWeightsBps: { savings: 0, stocks: 10000, bonds: 0 }, toleranceBps: 500, stockTargets: [{ stockId: deleted.id, targetWeightBps: 10000 }], stockToleranceBps: 300, updatedAt: now } } satisfies PortfolioPlanState]);
+    render(<PortfolioAllocationPageClient />);
+    expect(screen.getByRole("alert")).toHaveTextContent("삭제되었거나 사용할 수 없는 주식 세부 목표가 있습니다.");
+    expect(screen.getByRole("button", { name: "Allocation 저장" })).toBeDisabled();
+    fireEvent.change(screen.getByRole("combobox", { name: "주식 종목" }), { target: { value: sampleStocks[1]!.id } });
+    expect(screen.getByRole("button", { name: "Allocation 저장" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Allocation 저장" }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
   });
 });

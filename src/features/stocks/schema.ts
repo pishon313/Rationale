@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { marketSectors } from "./market-sectors";
 import { normalizePortfolioCategoryDisplay } from "./portfolio-categories";
-import { currencies, investmentTypes, marketDataProviders, markets, stockStatuses, stockViews } from "./types";
+import { currencies, investmentTypes, marketDataProviders, markets, securityAssetClasses, stockStatuses, stockViews } from "./types";
 
 const optionalNumber = z.preprocess(
   (value) => value === "" || value == null ? null : Number(value),
@@ -18,6 +18,7 @@ export const stockFormSchema = z.object({
   providerSymbol: z.string().trim().max(40),
   provider: z.enum(marketDataProviders),
   assetType: z.string().trim().min(1, "자산 유형을 입력해 주세요."),
+  assetClass: z.enum(securityAssetClasses),
   marketSector: z.preprocess((value) => value === "" || value == null ? null : value, z.enum(marketSectors).nullable()),
   sector: z.string().transform(normalizePortfolioCategoryDisplay).pipe(z.string().max(60, "내 분류는 60자 이내로 입력해 주세요.")),
   status: z.enum(stockStatuses),

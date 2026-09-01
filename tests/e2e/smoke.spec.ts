@@ -36,13 +36,18 @@ test("대시보드 앱 셸을 표시한다", async ({ page }) => {
   await expect(page.getByRole("navigation", { name: "주요 메뉴" })).toBeVisible();
 });
 
-test("포트폴리오 셸이 Overview와 Plan 두 경로를 공유한다", async ({ page }) => {
+test("포트폴리오 셸이 Overview, Allocation, Plan 세 경로를 공유한다", async ({ page }) => {
   await page.goto("/portfolio");
   const nav = page.getByRole("navigation", { name: "포트폴리오 메뉴" });
   await expect(nav).toBeVisible();
-  await expect(nav.getByRole("link")).toHaveCount(2);
+  await expect(nav.getByRole("link")).toHaveCount(3);
   await expect(nav.getByRole("link", { name: "개요" })).toHaveAttribute("aria-current", "page");
-  await expect(page.getByRole("heading", { name: "포트폴리오" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "현재 자산과 다음 저축 계획을 한눈에 보세요." })).toBeVisible();
+
+  await nav.getByRole("link", { name: "배분" }).click();
+  await expect(page).toHaveURL(/\/portfolio\/allocation$/);
+  await expect(page.getByRole("heading", { name: "전체 자산의 목표 비중을 정하세요." })).toBeVisible();
+  await expect(nav.getByRole("link", { name: "배분" })).toHaveAttribute("aria-current", "page");
 
   await nav.getByRole("link", { name: "계획" }).click();
   await expect(page).toHaveURL(/\/portfolio\/plan$/);
@@ -51,20 +56,72 @@ test("포트폴리오 셸이 Overview와 Plan 두 경로를 공유한다", async
 
   await nav.getByRole("link", { name: "개요" }).click();
   await expect(page).toHaveURL(/\/portfolio$/);
-  await expect(page.getByRole("heading", { name: "포트폴리오" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "현재 자산과 다음 저축 계획을 한눈에 보세요." })).toBeVisible();
 });
 
-test("포트폴리오 셸은 320px에서 두 탭과 핵심 메타데이터를 가로 스크롤 없이 표시한다", async ({ page }) => {
+test("포트폴리오 셸은 320px에서 세 탭과 핵심 메타데이터를 가로 스크롤 없이 표시한다", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 844 });
   await page.goto("/portfolio/plan");
   const nav = page.getByRole("navigation", { name: "포트폴리오 메뉴" });
-  await expect(nav.getByRole("link")).toHaveCount(2);
+  await expect(nav.getByRole("link")).toHaveCount(3);
   await expect(nav.getByRole("link", { name: "계획" })).toHaveAttribute("aria-current", "page");
   await expect(page.getByLabel("포트폴리오 선택")).toHaveValue("default");
   await expect(page.getByText("기준 통화", { exact: true })).toBeVisible();
   await expect(page.getByText("활성 Plan", { exact: true })).toBeVisible();
   const widths = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }));
   expect(widths.content).toBeLessThanOrEqual(widths.viewport);
+});
+
+test("Allocation 저장이 Plan 계산과 Overview에 반영되고 새로고침 후 유지된다", async ({ page }) => {
+  const now = "2026-09-01T00:00:00.000Z";
+  const equity = e2eStock("allocation-equity", "Allocation Equity", "Core", { ticker: "EQT", market: "한국", currency: "KRW", status: "보유", quantity: 100_000, averagePrice: 100, currentPrice: 100, ledgerInitializedAt: null, assetClass: "equity" });
+  const bond = e2eStock("allocation-bond", "Allocation Bond", "Bond", { ticker: "BND", market: "한국", currency: "KRW", assetType: "ETF", assetClass: "bond", currentPrice: 100, ledgerInitializedAt: null });
+  const state = { id: "default", activeRevisionId: "r1", contributionAmountMinor: 1_000_000, contributionCurrency: "KRW", updatedAt: now, repairDraft: null, balancePolicy: null };
+  const revision = { id: "r1", revisionNumber: 1, basedOnRevisionId: null, thesis: "", changeNote: "", createdAt: now, activatedAt: now, updatedAt: now };
+  const groups = [
+    { id: "savings", revisionId: "r1", name: "Savings", targetWeightBps: 3000, sortOrder: 0, updatedAt: now },
+    { id: "stocks", revisionId: "r1", name: "Stocks", targetWeightBps: 6000, sortOrder: 1, updatedAt: now },
+    { id: "bonds", revisionId: "r1", name: "Bonds", targetWeightBps: 1000, sortOrder: 2, updatedAt: now },
+  ];
+  const targets = [
+    { id: "cash", revisionId: "r1", groupId: "savings", accountId: null, targetType: "cash", stockId: null, weightWithinGroupBps: 10000, sortOrder: 0, updatedAt: now },
+    { id: "equity", revisionId: "r1", groupId: "stocks", accountId: null, targetType: "stock", stockId: equity.id, weightWithinGroupBps: 10000, sortOrder: 0, updatedAt: now },
+    { id: "bond", revisionId: "r1", groupId: "bonds", accountId: null, targetType: "stock", stockId: bond.id, weightWithinGroupBps: 10000, sortOrder: 0, updatedAt: now },
+  ];
+  await page.addInitScript(({ state, revision, groups, targets, stocks }) => {
+    if (localStorage.getItem("tradejournal.portfolio-plan-state.v1")) return;
+    localStorage.setItem("tradejournal.accounts.v1", "[]");
+    localStorage.setItem("tradejournal.stocks.v1", JSON.stringify(stocks));
+    localStorage.setItem("tradejournal.trades.v1", "[]");
+    localStorage.setItem("tradejournal.portfolio-plan-state.v1", JSON.stringify([state]));
+    localStorage.setItem("tradejournal.portfolio-plan-revisions.v1", JSON.stringify([revision]));
+    localStorage.setItem("tradejournal.portfolio-allocation-groups.v1", JSON.stringify(groups));
+    localStorage.setItem("tradejournal.portfolio-allocation-targets.v1", JSON.stringify(targets));
+  }, { state, revision, groups, targets, stocks: [equity, bond] });
+
+  await page.goto("/portfolio/allocation");
+  await page.getByLabel("현금성 자산 전체 목표 (%)").fill("20");
+  await page.getByLabel("주식 투자 전체 목표 (%)").fill("70");
+  await page.getByRole("button", { name: "Allocation 저장" }).click();
+  await expect(page.getByRole("status")).toContainText("Allocation을 저장했습니다.");
+
+  const nav = page.getByRole("navigation", { name: "포트폴리오 메뉴" });
+  await nav.getByRole("link", { name: "계획" }).click();
+  const weights = page.getByLabel("전체 저축액 중 비율 (%)");
+  await expect(weights.nth(0)).toHaveValue("66.67");
+  await expect(weights.nth(1)).toHaveValue("0");
+  await expect(weights.nth(2)).toHaveValue("33.33");
+
+  await nav.getByRole("link", { name: "개요" }).click();
+  const nextContribution = page.getByRole("region", { name: "다음 저축 계획" });
+  await expect(nextContribution).toContainText("₩666,700");
+  await expect(nextContribution).toContainText("₩333,300");
+
+  await nav.getByRole("link", { name: "배분" }).click();
+  await expect(page).toHaveURL(/\/portfolio\/allocation$/);
+  await page.reload();
+  await expect(page.getByLabel("현금성 자산 전체 목표 (%)")).toHaveValue("20");
+  await expect(page.getByLabel("주식 투자 전체 목표 (%)")).toHaveValue("70");
 });
 
 test("대시보드 자산을 내 분류와 시장 섹터로 전환하고 보기·색상·비중을 안정적으로 유지한다", async ({ page }) => {

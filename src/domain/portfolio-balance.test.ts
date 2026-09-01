@@ -29,6 +29,14 @@ describe("portfolio balance snapshot", () => {
     ]);
   });
 
+  it("uses the stable asset class before free-form asset type inference", () => {
+    const explicitBond = { ...stock, id: "explicit-bond", assetType: "ETF", assetClass: "bond" as const };
+    const explicitEquity = { ...stock, id: "explicit-equity", assetType: "Bond ETF", assetClass: "equity" as const };
+    const result = buildPortfolioBalanceSnapshot({ ledger: ledger([position(explicitBond.id, 1), position(explicitEquity.id, 1)]), stocks: [explicitBond, explicitEquity], ratesToKrw: fallbackRatesToKrw });
+    expect(result.categories.find((row) => row.category === "bonds")?.currentValueKrw).toBe(100);
+    expect(result.categories.find((row) => row.category === "stocks")?.currentValueKrw).toBe(100);
+  });
+
   it("fails closed when prices or cash reconciliation are unavailable", () => {
     expect(buildPortfolioBalanceSnapshot({ ledger: ledger([position("stock", 1)]), stocks: [{ ...stock, currentPrice: 0 }], ratesToKrw: fallbackRatesToKrw }).unavailableReason).toBe("missingPrice");
     expect(buildPortfolioBalanceSnapshot({ ledger: ledger([], [{ accountId: "a", accountName: "A", currency: "KRW", balance: 1, isReconciled: false }]), stocks: [], ratesToKrw: fallbackRatesToKrw }).unavailableReason).toBe("unreconciledCash");

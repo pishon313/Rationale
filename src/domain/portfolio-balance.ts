@@ -2,6 +2,7 @@ import { minorUnitsToMajor, type Currency, type RatesToKrw } from "./currency";
 import type { TradingLedger } from "./trading-ledger";
 import type { PortfolioBalancePolicy } from "@/features/portfolio-plan/types";
 import type { Stock } from "@/features/stocks/types";
+import { isBondStock } from "@/features/stocks/asset-class";
 
 export const portfolioBalanceCategories = ["savings", "stocks", "bonds"] as const;
 export type PortfolioBalanceCategory = (typeof portfolioBalanceCategories)[number];
@@ -50,7 +51,7 @@ export function buildPortfolioBalanceSnapshot(input: {
     if (!Number.isFinite(rate) || rate <= 0) { reason = "invalidFx"; break; }
     const value = position.quantity * stock.currentPrice * rate;
     if (!Number.isFinite(value) || value < 0) { reason = "invalidValue"; break; }
-    values[input.bondStockIds?.has(stock.id) || isBondAssetType(stock.assetType) ? "bonds" : "stocks"] += value;
+    values[input.bondStockIds?.has(stock.id) || isBondStock(stock) ? "bonds" : "stocks"] += value;
   }
 
   if (!reason && input.ledger.cashBalances.some((cash) => !cash.isReconciled)) reason = "unreconciledCash";
@@ -168,8 +169,7 @@ function balanceRecord(value: number): Record<PortfolioBalanceCategory, number> 
 }
 
 export function isBondAssetType(value: string) {
-  const normalized = value.trim().toLocaleLowerCase().replace(/[\s_-]+/g, "");
-  return ["bond", "bonds", "fixedincome", "treasury", "채권", "국채"].some((label) => normalized.includes(label));
+  return isBondStock({ assetType: value });
 }
 
 function unavailableSnapshot(reason: Exclude<PortfolioBalanceUnavailableReason, null>): PortfolioBalanceSnapshot {

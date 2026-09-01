@@ -6,6 +6,7 @@ import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type F
 import { currencies, minorUnitsToMajor, type Currency, type RatesToKrw } from "@/domain/currency";
 import { buildPortfolioBalanceSnapshot, suggestContributionBalance, type PortfolioContributionBalanceSuggestion } from "@/domain/portfolio-balance";
 import type { ContributionPlanCalculation } from "@/domain/portfolio-contribution";
+import { buildPortfolioStockAllocationSnapshot, invalidPortfolioStockTargetIds, suggestStockContributionBalance, type PortfolioStockContributionSuggestion } from "@/domain/portfolio-stock-allocation";
 import type { TradingLedger } from "@/domain/trading-ledger";
 import { formatCurrency } from "@/domain/money";
 import type { InvestmentAccount } from "@/features/accounts/types";
@@ -31,7 +32,7 @@ import {
   portfolioTargetAllocationCategoryName,
   validatePortfolioPlanEditorDraft,
   withPortfolioPlanCategoryWeights,
-  withPortfolioStockTargetWeights,
+  withPortfolioStockTargetInputs,
   type PortfolioPlanEditorDraft,
   type PortfolioPlanEditorGroup,
   type PortfolioPlanEditorTarget,
@@ -58,6 +59,7 @@ import type {
   PortfolioPlanRevision,
   PortfolioPlanState,
 } from "./types";
+import { PortfolioExchangeRateStatus } from "./portfolio-exchange-rate-status";
 
 export function PortfolioPlanPageClient() {
   const { t } = useI18n();
@@ -130,7 +132,7 @@ export function PortfolioPlanPageClient() {
   const state = states[0] ?? null;
   const activeRevision = revisions.find((revision) => revision.id === state?.activeRevisionId) ?? null;
   const stores = { stateStore, revisionStore, groupStore, targetStore };
-  return <>{notice && <p role="status" className="mb-5 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">{notice}</p>}<PortfolioPlanEditor key={`plan:${state?.updatedAt ?? "empty"}:${activeRevision?.id ?? "none"}`} state={state} activeRevision={activeRevision} revisions={revisions} groups={groupStore.allItems} targets={targets} stocks={stockStore.allStocks} accounts={stockStore.accounts} ledger={stockStore.ledger} ratesToKrw={exchangeRates.snapshot.ratesToKrw} stores={stores} onSaved={(message) => setNotice(message)} onChange={() => setNotice("")} /></>;
+  return <>{notice && <p role="status" className="mb-5 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">{notice}</p>}<PortfolioExchangeRateStatus snapshot={exchangeRates.snapshot} refreshing={exchangeRates.refreshing} onlineError={exchangeRates.onlineError} onRefresh={() => void exchangeRates.refresh()} /><PortfolioPlanEditor key={`plan:${state?.updatedAt ?? "empty"}:${activeRevision?.id ?? "none"}`} state={state} activeRevision={activeRevision} revisions={revisions} groups={groupStore.allItems} targets={targets} stocks={stockStore.allStocks} accounts={stockStore.accounts} ledger={stockStore.ledger} ratesToKrw={exchangeRates.snapshot.ratesToKrw} stores={stores} onSaved={(message) => setNotice(message)} onChange={() => setNotice("")} /></>;
 }
 
 type PlanStores = {
@@ -167,6 +169,7 @@ function PortfolioPlanEditor({ state, activeRevision, revisions, groups, targets
   const baseWeights = useMemo(() => portfolioPlanCategoryWeights(draft), [draft]);
   const bondStockIds = useMemo(() => new Set(savedDraft.groups.find((group) => group.category === "bonds")?.targets.flatMap((target) => target.stockId ? [target.stockId] : []) ?? []), [savedDraft]);
   const balanceSnapshot = useMemo(() => buildPortfolioBalanceSnapshot({ ledger, stocks, ratesToKrw, bondStockIds }), [bondStockIds, ledger, ratesToKrw, stocks]);
+  const stockSnapshot = useMemo(() => buildPortfolioStockAllocationSnapshot({ ledger, stocks, ratesToKrw, bondStockIds }), [bondStockIds, ledger, ratesToKrw, stocks]);
   const contributionAmountMinor = parseMajorAmountToMinor(draft.contributionAmountInput, draft.contributionCurrency);
   const balanceSuggestion = useMemo(() => baseWeights && contributionAmountMinor !== null ? suggestContributionBalance({ snapshot: balanceSnapshot, policy: state?.balancePolicy, baseWeightsBps: baseWeights, contributionAmountMinor, contributionCurrency: draft.contributionCurrency, ratesToKrw }) : null, [balanceSnapshot, baseWeights, contributionAmountMinor, draft.contributionCurrency, ratesToKrw, state?.balancePolicy]);
   const suggestionKey = balanceSuggestion ? `${balanceSuggestion.source}:${portfolioPlanCategories.map((category) => balanceSuggestion.weightsBps[category]).join(":")}:${draft.contributionAmountInput}:${draft.contributionCurrency}` : "none";
@@ -175,7 +178,23 @@ function PortfolioPlanEditor({ state, activeRevision, revisions, groups, targets
   const executionInputs = executionOverride?.key === suggestionKey ? executionOverride.inputs : suggestedExecutionInputs;
   const balanceAssistActive = state?.balancePolicy?.mode === "balanceAssist";
   const categoryExecutionDraft = useMemo(() => balanceAssistActive ? withPortfolioPlanCategoryWeights(draft, executionInputs) : draft, [balanceAssistActive, draft, executionInputs]);
-  const executionDraft = useMemo(() => withPortfolioStockTargetWeights(categoryExecutionDraft, state?.balancePolicy?.stockTargets), [categoryExecutionDraft, state?.balancePolicy?.stockTargets]);
+  const invalidStockTargetIds = useMemo(() => invalidPortfolioStockTargetIds(state?.balancePolicy?.stockTargets, stocks), [state?.balancePolicy?.stockTargets, stocks]);
+  const stockPolicyTargets = invalidStockTargetIds.length ? null : state?.balancePolicy?.stockTargets ?? null;
+  const stockContributionValueKrw = useMemo(() => {
+    const stockWeightBps = parsePercentageToBps(executionInputs.stocks);
+    const rate = ratesToKrw[draft.contributionCurrency];
+    if (contributionAmountMinor === null || stockWeightBps === null || !Number.isFinite(rate) || rate <= 0) return null;
+    return minorUnitsToMajor(contributionAmountMinor, draft.contributionCurrency) * stockWeightBps / 10000 * rate;
+  }, [contributionAmountMinor, draft.contributionCurrency, executionInputs.stocks, ratesToKrw]);
+  const stockSuggestion = useMemo(() => balanceAssistActive && stockPolicyTargets?.length && state?.balancePolicy?.stockToleranceBps !== undefined && stockContributionValueKrw !== null
+    ? suggestStockContributionBalance({ snapshot: stockSnapshot, targets: stockPolicyTargets, toleranceBps: state.balancePolicy.stockToleranceBps, contributionValueKrw: stockContributionValueKrw })
+    : null, [balanceAssistActive, state?.balancePolicy?.stockToleranceBps, stockContributionValueKrw, stockPolicyTargets, stockSnapshot]);
+  const suggestedStockInputs = useMemo(() => stockSuggestionInputs(stockSuggestion, stockPolicyTargets), [stockPolicyTargets, stockSuggestion]);
+  const stockSuggestionKey = stockPolicyTargets?.length ? `${stockSuggestion?.source ?? "fixed"}:${stockPolicyTargets.map((target) => `${target.stockId}:${suggestedStockInputs[target.stockId]}`).join(":")}:${suggestionKey}` : "none";
+  const [stockExecutionOverride, setStockExecutionOverride] = useState<{ key: string; inputs: Record<string, string> } | null>(null);
+  const stockExecutionInputs = stockExecutionOverride?.key === stockSuggestionKey ? stockExecutionOverride.inputs : suggestedStockInputs;
+  const executionStockTargets = stockPolicyTargets?.map((target) => ({ stockId: target.stockId, weightInput: stockExecutionInputs[target.stockId] ?? formatBpsInput(target.targetWeightBps) })) ?? null;
+  const executionDraft = useMemo(() => withPortfolioStockTargetInputs(categoryExecutionDraft, executionStockTargets), [categoryExecutionDraft, executionStockTargets]);
   const executionValidation = useMemo(() => validatePortfolioPlanEditorDraft(executionDraft, stocks, accounts), [accounts, executionDraft, stocks]);
   const calculation = useMemo(() => calculatePortfolioPlanDraft(executionDraft), [executionDraft]);
   const activeAccounts = accounts.filter((account) => !account.archivedAt);
@@ -210,6 +229,7 @@ function PortfolioPlanEditor({ state, activeRevision, revisions, groups, targets
   function reset() {
     setDraft(savedDraft);
     setExecutionInputs(suggestionInputs(balanceSuggestion, savedDraft));
+    setStockExecutionOverride(null);
     setExpanded(initialGroupExpansion(savedDraft));
     setSaveError("");
     onChange();
@@ -220,6 +240,12 @@ function PortfolioPlanEditor({ state, activeRevision, revisions, groups, targets
       const base = current?.key === suggestionKey ? current.inputs : suggestedExecutionInputs;
       return { key: suggestionKey, inputs: typeof update === "function" ? update(base) : update };
     });
+  }
+  function setStockExecutionInput(stockId: string, value: string) {
+    setStockExecutionOverride((current) => ({
+      key: stockSuggestionKey,
+      inputs: { ...(current?.key === stockSuggestionKey ? current.inputs : suggestedStockInputs), [stockId]: value },
+    }));
   }
 
   async function savePlan(event: FormEvent) {
@@ -259,7 +285,7 @@ function PortfolioPlanEditor({ state, activeRevision, revisions, groups, targets
       <div className="portfolio-plan-editor">
         <ContributionAmountEditor draft={draft} setDraft={setDraft} error={validation.fields.contributionAmount} onChange={clearFeedback} groupInputs={executionDraft.groups.map((group) => group.weightInput)} targetCount={targetCount} revisionLabel={revisionLabel} />
 
-        <AllocationPlanBridge policy={state?.balancePolicy ?? null} snapshot={balanceSnapshot} suggestion={balanceSuggestion} />
+        <AllocationPlanBridge policy={state?.balancePolicy ?? null} snapshot={balanceSnapshot} suggestion={balanceSuggestion} stockSuggestion={stockSuggestion} invalidStockTargetCount={invalidStockTargetIds.length} />
 
         <section aria-labelledby="target-allocation-title" className="portfolio-plan-card portfolio-plan-allocation-card">
           <header className="portfolio-plan-allocation-header">
@@ -285,7 +311,7 @@ function PortfolioPlanEditor({ state, activeRevision, revisions, groups, targets
                 </div>
                 {expanded[group.id] && <div className="portfolio-plan-targets">
                   <div className="portfolio-plan-target-head"><span>{t("Target")}</span><span>{t("Account")}</span><span>{t("Within Group")}</span><span className="text-right">{t("유효 배분")}</span><span className="text-right">{t("Contribution 금액")}</span><span /></div>
-                  <div>{group.targets.slice().sort(byOrder).map((target) => <TargetEditor key={target.id} group={group} target={target} update={updateTarget} remove={deleteTarget} activeStocks={activeStocks} activeAccounts={activeAccounts} validation={executionValidation.fields} calculation={calculation} currency={draft.contributionCurrency} />)}</div>
+                  <div>{group.targets.slice().sort(byOrder).map((target) => <TargetEditor key={target.id} group={group} target={target} update={updateTarget} remove={deleteTarget} activeStocks={activeStocks} activeAccounts={activeAccounts} validation={executionValidation.fields} calculation={calculation} currency={draft.contributionCurrency} allocationManaged={group.category === "stocks" && Boolean(stockPolicyTargets?.length)} onExecutionWeightChange={group.category === "stocks" && target.stockId && stockPolicyTargets?.length ? (value) => setStockExecutionInput(target.stockId!, value) : undefined} />)}</div>
                   <div className="portfolio-plan-target-actions"><button type="button" onClick={() => addTarget(group.id)}><Plus size={14} aria-hidden="true" />{t(group.category === "savings" ? "적금 계좌 추가" : group.category === "stocks" ? "주식 종목 추가" : "채권 종목 추가")}</button></div>
                   {(executionValidation.fields[`${groupErrorPath}.targets`] || executionValidation.fields[`${groupErrorPath}.targetTotal`]) && <div className="border-t px-3 pb-3">{executionValidation.fields[`${groupErrorPath}.targets`] && <FieldError message={executionValidation.fields[`${groupErrorPath}.targets`]} />}{executionValidation.fields[`${groupErrorPath}.targetTotal`] && <FieldError message={executionValidation.fields[`${groupErrorPath}.targetTotal`]} />}</div>}
                 </div>}
@@ -341,10 +367,12 @@ function ContributionAmountEditor({ draft, setDraft, error, onChange, groupInput
   </section>;
 }
 
-function AllocationPlanBridge({ policy, snapshot, suggestion }: {
+function AllocationPlanBridge({ policy, snapshot, suggestion, stockSuggestion, invalidStockTargetCount }: {
   policy: PortfolioPlanState["balancePolicy"];
   snapshot: ReturnType<typeof buildPortfolioBalanceSnapshot>;
   suggestion: PortfolioContributionBalanceSuggestion | null;
+  stockSuggestion: PortfolioStockContributionSuggestion | null;
+  invalidStockTargetCount: number;
 }) {
   const { t, formatNumber } = useI18n();
   const currentByCategory = new Map(snapshot.categories.map((row) => [row.category, row.currentWeightBps]));
@@ -352,6 +380,10 @@ function AllocationPlanBridge({ policy, snapshot, suggestion }: {
     : suggestion?.source === "withinTolerance" ? t("허용 오차 안에 있어 저장된 기본 Plan 비율을 그대로 사용합니다.")
       : suggestion?.source === "unavailable" ? t("현재 자산 평가를 사용할 수 없어 저장된 기본 Plan 비율을 그대로 사용합니다.")
         : t("저장된 기본 Plan 비율을 사용합니다.");
+  const stockSuggestionLabel = stockSuggestion?.source === "balanced" ? t("주식 안에서도 부족한 종목을 우선하도록 금액을 나눴습니다.")
+    : stockSuggestion?.source === "withinTolerance" ? t("종목별 비중이 허용 오차 안에 있어 저장된 목표 비율을 유지합니다.")
+      : stockSuggestion?.source === "unavailable" ? t("종목 평가를 사용할 수 없어 저장된 목표 비율을 유지합니다.")
+        : null;
   return <section aria-labelledby="allocation-connection-title" className="portfolio-plan-card p-4 sm:p-5">
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="min-w-0"><p className="text-[0.65rem] font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">{t("Allocation 연결")}</p><h2 id="allocation-connection-title" className="mt-1 text-lg font-semibold">{t("전체 자산 목표를 이번 저축 계산에 반영")}</h2><p className="mt-1 max-w-2xl text-xs leading-5 text-[var(--muted)]">{t("Allocation에서 저장한 목표를 기준으로 이번 저축 비율을 계산합니다.")}</p></div>
@@ -363,23 +395,25 @@ function AllocationPlanBridge({ policy, snapshot, suggestion }: {
         return <div key={category} className="rounded-xl border bg-[var(--surface-muted)] p-3"><p className="text-xs font-semibold">{t(portfolioTargetAllocationCategoryName(category))}</p><dl className="mt-2 grid grid-cols-2 gap-2 text-[0.7rem]"><div><dt className="text-[var(--muted)]">{t("목표 비중")}</dt><dd className="mt-1 font-semibold tabular-nums">{formatBpsAny(policy.targetWeightsBps[category])}%</dd></div><div><dt className="text-[var(--muted)]">{t("현재 비중")}</dt><dd className="mt-1 font-semibold tabular-nums">{current === null || current === undefined ? "—" : `${formatNumber(current / 100, { maximumFractionDigits: 2 })}%`}</dd></div></dl></div>;
       })}</div>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--accent-soft)] px-3 py-2 text-xs leading-5 text-[var(--accent)]"><span>{suggestionLabel}</span><div className="flex items-center gap-2"><b>{t(policy.mode === "balanceAssist" ? "균형 맞추기" : "고정 비율")}</b>{policy.stockTargets?.length ? <span>{t("주식 세부 목표 {count}개", { count: policy.stockTargets.length })}</span> : null}</div></div>
+      {stockSuggestionLabel && <p className="mt-2 rounded-lg bg-[var(--surface-muted)] px-3 py-2 text-xs leading-5 text-[var(--muted)]">{stockSuggestionLabel} {t("제안 비율은 아래에서 이번 저축에 한해 수정할 수 있습니다.")}</p>}
+      {invalidStockTargetCount > 0 && <p role="alert" className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">{t("사용할 수 없는 주식 세부 목표가 {count}개 있습니다. Allocation에서 종목을 교체하거나 삭제해 주세요.", { count: invalidStockTargetCount })}</p>}
     </>}
   </section>;
 }
 
-function TargetEditor({ group, target, update, remove, activeStocks, activeAccounts, validation, calculation, currency }: { group: PortfolioPlanEditorGroup; target: PortfolioPlanEditorTarget; update: (groupId: string, targetId: string, update: (target: PortfolioPlanEditorTarget) => PortfolioPlanEditorTarget) => void; remove: (groupId: string, target: PortfolioPlanEditorTarget) => void; activeStocks: Stock[]; activeAccounts: InvestmentAccount[]; validation: Record<string, string>; calculation: ContributionPlanCalculation | null; currency: Currency }) {
+function TargetEditor({ group, target, update, remove, activeStocks, activeAccounts, validation, calculation, currency, allocationManaged = false, onExecutionWeightChange }: { group: PortfolioPlanEditorGroup; target: PortfolioPlanEditorTarget; update: (groupId: string, targetId: string, update: (target: PortfolioPlanEditorTarget) => PortfolioPlanEditorTarget) => void; remove: (groupId: string, target: PortfolioPlanEditorTarget) => void; activeStocks: Stock[]; activeAccounts: InvestmentAccount[]; validation: Record<string, string>; calculation: ContributionPlanCalculation | null; currency: Currency; allocationManaged?: boolean; onExecutionWeightChange?: (value: string) => void }) {
   const { t, localeTag } = useI18n();
   const path = `groups.${group.id}.targets.${target.id}`;
   const amount = calculation?.targets.find((item) => item.targetId === target.id)?.amountMinor;
   const groupBps = parsePercentageToBps(group.weightInput);
   const targetBps = parsePercentageToBps(target.weightInput);
   return <div className="portfolio-plan-target-row">
-    <div className="col-start-1 row-start-1 min-w-0 lg:col-auto lg:row-auto"><span className="mb-1 block text-xs font-medium text-[var(--muted)] lg:sr-only">{t("Target")}</span>{target.targetType === "stock" ? <><RegisteredStockPicker stocks={activeStocks} value={target.stockId} onChange={(stockId) => update(group.id, target.id, (current) => ({ ...current, stockId }))} ariaLabel={t(group.category === "bonds" ? "채권 종목" : "주식 종목")} required />{validation[`${path}.stock`] && <FieldError message={validation[`${path}.stock`]} />}</> : <div className="flex h-10 items-center rounded-lg bg-[var(--surface-muted)] px-3 text-sm font-medium">{t("적금 계좌")}</div>}</div>
-    <div className="col-start-2 row-start-1 min-w-0 lg:col-auto lg:row-auto"><AccountSelect label={`${t(group.category === "savings" ? "은행 / 계좌" : "투자 계좌")} · ${t("선택 사항")}`} accounts={activeAccounts} value={target.accountId} onChange={(accountId) => update(group.id, target.id, (current) => ({ ...current, accountId }))} error={validation[`${path}.account`]} compact /></div>
-    <div className="col-span-2 col-start-1 row-start-2 lg:col-auto lg:row-auto"><PercentageInput label={t("Within Group")} value={target.weightInput} onChange={(value) => update(group.id, target.id, (current) => ({ ...current, weightInput: value }))} error={validation[`${path}.weight`]} compact /></div>
+    <div className="col-start-1 row-start-1 min-w-0 lg:col-auto lg:row-auto"><span className="mb-1 block text-xs font-medium text-[var(--muted)] lg:sr-only">{t("Target")}</span>{target.targetType === "stock" ? <><RegisteredStockPicker stocks={activeStocks} value={target.stockId} onChange={(stockId) => update(group.id, target.id, (current) => ({ ...current, stockId }))} ariaLabel={t(group.category === "bonds" ? "채권 종목" : "주식 종목")} required disabled={allocationManaged} />{validation[`${path}.stock`] && <FieldError message={validation[`${path}.stock`]} />}</> : <div className="flex h-10 items-center rounded-lg bg-[var(--surface-muted)] px-3 text-sm font-medium">{t("적금 계좌")}</div>}</div>
+    <div className="col-start-2 row-start-1 min-w-0 lg:col-auto lg:row-auto"><AccountSelect label={`${t(group.category === "savings" ? "은행 / 계좌" : "투자 계좌")} · ${t("선택 사항")}`} accounts={activeAccounts} value={target.accountId} onChange={(accountId) => update(group.id, target.id, (current) => ({ ...current, accountId }))} error={validation[`${path}.account`]} compact disabled={allocationManaged} /></div>
+    <div className="col-span-2 col-start-1 row-start-2 lg:col-auto lg:row-auto"><PercentageInput label={t("Within Group")} value={target.weightInput} onChange={(value) => onExecutionWeightChange ? onExecutionWeightChange(value) : update(group.id, target.id, (current) => ({ ...current, weightInput: value }))} error={validation[`${path}.weight`]} compact /></div>
     <div className="hidden lg:block"><TargetMetric label={t("유효 배분")} value={groupBps === null || targetBps === null ? "—" : formatEffectiveAllocation(groupBps, targetBps)} /></div>
     <div className="col-span-2 col-start-1 row-start-3 lg:col-auto lg:row-auto"><TargetMetric label={t("Contribution 금액")} value={amount === undefined ? "—" : formatCurrency(minorUnitsToMajor(amount, currency), currency, localeTag)} prominent /></div>
-    <div className="col-start-3 row-start-1 flex justify-end lg:col-auto lg:row-auto lg:items-center"><button type="button" aria-label={t("이 Target 삭제")} onClick={() => remove(group.id, target)} className="grid size-10 place-items-center rounded-lg text-red-700 hover:bg-red-50 dark:text-red-300"><Trash2 size={17} aria-hidden="true" /></button></div>
+    <div className="col-start-3 row-start-1 flex justify-end lg:col-auto lg:row-auto lg:items-center">{allocationManaged ? <span className="px-2 text-[0.65rem] font-semibold text-[var(--muted)]">{t("Allocation 관리")}</span> : <button type="button" aria-label={t("이 Target 삭제")} onClick={() => remove(group.id, target)} className="grid size-10 place-items-center rounded-lg text-red-700 hover:bg-red-50 dark:text-red-300"><Trash2 size={17} aria-hidden="true" /></button>}</div>
   </div>;
 }
 
@@ -459,9 +493,9 @@ function PercentageInput({ label, value, onChange, error, compact = false }: { l
   const errorId = `${id}-error`;
   return <label htmlFor={id} className="block min-w-0"><span className={compact ? "mb-1 block text-xs font-medium text-[var(--muted)] lg:sr-only" : "mb-1 block text-xs font-medium text-[var(--muted)]"}>{label}</span><span className={`flex h-10 min-w-0 items-center overflow-hidden rounded-lg border bg-[var(--surface)] ${error ? "border-red-600 dark:border-red-400" : ""}`}><input id={id} value={value} inputMode="decimal" onChange={(event) => onChange(event.target.value)} aria-label={`${label} (%)`} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} className="h-full min-w-0 flex-1 border-0 bg-transparent pl-2 pr-1 text-right text-sm tabular-nums outline-none" /><span aria-hidden="true" className="pr-2 text-xs text-[var(--muted)]">%</span></span>{error && <span id={errorId} className="mt-1 block text-xs font-normal text-red-700 dark:text-red-300">{t(error)}</span>}</label>;
 }
-function AccountSelect({ label, accounts, value, onChange, error, compact = false }: { label: string; accounts: readonly InvestmentAccount[]; value: string; onChange: (value: string) => void; error?: string; compact?: boolean }) {
+function AccountSelect({ label, accounts, value, onChange, error, compact = false, disabled = false }: { label: string; accounts: readonly InvestmentAccount[]; value: string; onChange: (value: string) => void; error?: string; compact?: boolean; disabled?: boolean }) {
   const { t } = useI18n();
-  return <label className="block min-w-0"><span className={compact ? "mb-1 block text-xs font-medium text-[var(--muted)] lg:sr-only" : "block text-sm font-medium"}>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)} aria-invalid={Boolean(error)} className={`${compact ? "" : "mt-1"} h-10 w-full min-w-0 rounded-lg border bg-[var(--surface)] px-3 text-sm font-normal`}><option value="">{t("계좌 미지정")}</option>{accounts.map((account) => <option key={account.id} value={account.id}>{accountLabel(account, account.name)} · {account.baseCurrency}</option>)}</select>{error && <span className="mt-1 block text-xs font-normal text-red-700 dark:text-red-300">{t(error)}</span>}</label>;
+  return <label className="block min-w-0"><span className={compact ? "mb-1 block text-xs font-medium text-[var(--muted)] lg:sr-only" : "block text-sm font-medium"}>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)} aria-invalid={Boolean(error)} disabled={disabled} className={`${compact ? "" : "mt-1"} h-10 w-full min-w-0 rounded-lg border bg-[var(--surface)] px-3 text-sm font-normal disabled:cursor-not-allowed disabled:opacity-70`}><option value="">{t("계좌 미지정")}</option>{accounts.map((account) => <option key={account.id} value={account.id}>{accountLabel(account, account.name)} · {account.baseCurrency}</option>)}</select>{error && <span className="mt-1 block text-xs font-normal text-red-700 dark:text-red-300">{t(error)}</span>}</label>;
 }
 function ReadOnlyMetric({ label, value, compact = false }: { label: string; value: string; compact?: boolean }) { return <div className="min-w-0"><p className="text-xs font-medium text-[var(--muted)]">{label}</p><p className={`${compact ? "bg-transparent px-0 font-semibold" : "rounded-lg bg-[var(--surface-muted)] px-3"} mt-1 min-h-10 truncate py-2.5 text-sm tabular-nums`} title={value}>{value}</p></div>; }
 function SummaryStat({ label, value, tone }: { label: string; value: string; tone?: "good" | "warning" }) { return <div className="min-w-0 border-r px-3 py-3 last:border-r-0 sm:px-4"><dt className="truncate text-[0.65rem] font-medium uppercase tracking-[0.06em] text-[var(--muted)]">{label}</dt><dd className={`mt-1 truncate text-sm font-semibold tabular-nums ${tone === "good" ? "text-emerald-700 dark:text-emerald-300" : tone === "warning" ? "text-amber-700 dark:text-amber-300" : ""}`} title={value}>{value}</dd></div>; }
@@ -477,6 +511,10 @@ function suggestionInputs(suggestion: PortfolioContributionBalanceSuggestion | n
   const fallback = portfolioPlanCategoryWeights(draft) ?? { savings: 3000, stocks: 6000, bonds: 1000 };
   const weights = suggestion?.weightsBps ?? fallback;
   return Object.fromEntries(portfolioPlanCategories.map((category) => [category, formatBpsInput(weights[category])])) as Record<(typeof portfolioPlanCategories)[number], string>;
+}
+function stockSuggestionInputs(suggestion: PortfolioStockContributionSuggestion | null, targets: readonly { stockId: string; targetWeightBps: number }[] | null | undefined) {
+  const suggestedByStockId = new Map(suggestion?.targets.map((target) => [target.stockId, target.suggestedWeightBps]) ?? []);
+  return Object.fromEntries((targets ?? []).map((target) => [target.stockId, formatBpsInput(suggestedByStockId.get(target.stockId) ?? target.targetWeightBps)]));
 }
 function applyActivation(stores: PlanStores, activation: { states: PortfolioPlanState[]; revisions: PortfolioPlanRevision[]; groups: PortfolioAllocationGroup[]; targets: PortfolioAllocationTarget[] }) { stores.stateStore.applyCommitted(activation.states); stores.revisionStore.applyCommitted(activation.revisions); stores.groupStore.applyCommitted(activation.groups); stores.targetStore.applyCommitted(activation.targets); }
 function formatBpsAny(bps: number) { const whole = Math.floor(bps / 100); const fraction = String(bps % 100).padStart(2, "0").replace(/0+$/, ""); return fraction ? `${whole}.${fraction}` : String(whole); }

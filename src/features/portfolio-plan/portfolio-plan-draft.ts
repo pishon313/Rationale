@@ -220,6 +220,11 @@ export function withPortfolioPlanCategoryWeights(draft: PortfolioPlanEditorDraft
 
 /** Applies optional Allocation stock targets to the execution draft without mutating the saved Contribution Plan. */
 export function withPortfolioStockTargetWeights(draft: PortfolioPlanEditorDraft, targets: readonly { stockId: string; targetWeightBps: number }[] | null | undefined) {
+  return withPortfolioStockTargetInputs(draft, targets?.map((target) => ({ stockId: target.stockId, weightInput: formatBpsInput(target.targetWeightBps) })));
+}
+
+/** Applies editable, execution-only stock inputs while keeping the saved Plan revision immutable. */
+export function withPortfolioStockTargetInputs(draft: PortfolioPlanEditorDraft, targets: readonly { stockId: string; weightInput: string }[] | null | undefined) {
   if (!targets?.length) return draft;
   const bondStockIds = new Set(draft.groups.find((group) => group.category === "bonds")?.targets.flatMap((target) => target.stockId ? [target.stockId] : []) ?? []);
   return {
@@ -236,7 +241,7 @@ export function withPortfolioStockTargetWeights(draft: PortfolioPlanEditorDraft,
             targetType: "stock" as const,
             stockId: target.stockId,
             accountId: current?.accountId ?? "",
-            weightInput: formatBpsInput(target.targetWeightBps),
+            weightInput: target.weightInput,
             sortOrder,
           };
         }),

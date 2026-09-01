@@ -100,6 +100,20 @@ describe("Portfolio Overview", () => {
     expect(within(stockPlan).getByText("₩540,000")).toBeInTheDocument();
   });
 
+  it("shows the stock-bucket Balance Assist amounts on Overview", () => {
+    reset(true);
+    mocks.collections.set("portfolio-plan-state", [{ ...state, balancePolicy: {
+      version: 1, mode: "balanceAssist", targetWeightsBps: { savings: 0, stocks: 10000, bonds: 0 }, toleranceBps: 500,
+      stockTargets: [{ stockId: sampleStocks[0]!.id, targetWeightBps: 7000 }, { stockId: sampleStocks[1]!.id, targetWeightBps: 3000 }], stockToleranceBps: 300, updatedAt: now,
+    } }]);
+    mocks.ledger = { ...mocks.ledger, positions: [{ key: "p", stockId: sampleStocks[0]!.id, stockName: "Samsung", accountId: "a", accountName: "A", currency: "KRW", quantity: 100_000, averagePrice: 0, investedAmount: 0, investedAmountKrw: 0, realizedProfit: 0, realizedProfitKrw: 0 }] };
+    render(<PortfolioPageClient />);
+    const stockPlan = screen.getByRole("region", { name: "종목별 다음 투자 계획" });
+    expect(within(stockPlan).getByText("부족한 종목을 우선한 이번 저축 제안입니다.")).toBeInTheDocument();
+    expect(within(stockPlan).getByText("₩0")).toBeInTheDocument();
+    expect(within(stockPlan).getByText("₩1,800,000")).toBeInTheDocument();
+  });
+
   it("atomically upgrades locally stored V6 Portfolio records before rendering", async () => {
     mocks.collections = new Map([
       ["portfolio-plan-state", [{ id: "default", activeRevisionId: "r1", updatedAt: now }]],
