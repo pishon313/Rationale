@@ -1,5 +1,7 @@
 export const currencies = ["KRW", "USD", "JPY", "EUR", "CAD", "HKD"] as const;
 export type Currency = (typeof currencies)[number];
+export function currencyMinorUnitDigits(currency: Currency) { return currency === "KRW" || currency === "JPY" ? 0 : 2; }
+export function minorUnitsToMajor(value: number, currency: Currency) { return value / 10 ** currencyMinorUnitDigits(currency); }
 export type RatesToKrw = Record<Currency, number>;
 
 export const fallbackRatesToKrw: RatesToKrw = { KRW: 1, USD: 1380, JPY: 9.2, EUR: 1600, CAD: 1000, HKD: 177 };

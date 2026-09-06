@@ -66,7 +66,7 @@ describe("Sample Dataset v1", () => {
 
   it("blocks removal when an immutable Portfolio Plan target references a sample Stock", async () => {
     const sample = buildSampleDataset(now);
-    const target: PortfolioAllocationTarget = { id: "user:portfolio-target", revisionId: "user:portfolio-revision", targetType: "stock", stockId: sample.stocks[0].id, targetWeightBps: 10000, sortOrder: 0, updatedAt: now };
+    const target: PortfolioAllocationTarget = { id: "user:portfolio-target", revisionId: "user:portfolio-revision", groupId: "user:portfolio-group", accountId: sample.accounts[0].id, targetType: "stock", stockId: sample.stocks[0].id, weightWithinGroupBps: 10000, sortOrder: 0, updatedAt: now };
     const stored: SampleCollections = { ...sample, portfolioAllocationTargets: [target] };
     const save = vi.fn();
 

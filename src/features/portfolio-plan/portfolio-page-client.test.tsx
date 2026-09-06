@@ -1,26 +1,27 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fallbackRatesToKrw } from "@/domain/currency";
 import type { TradingLedger } from "@/domain/trading-ledger";
 import { sampleStocks } from "@/features/stocks/sample-data";
-import type { PortfolioAllocationTarget, PortfolioPlanRevision, PortfolioPlanState } from "./types";
+import type { PortfolioAllocationGroup, PortfolioAllocationTarget, PortfolioPlanRevision, PortfolioPlanState } from "./types";
 import { PortfolioPageClient } from "./portfolio-page-client";
 
 const mocks = vi.hoisted(() => ({
   collections: new Map<string, unknown[]>(),
-  save: vi.fn(),
   ledger: { positions: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalRealizedKrw: 0 } as TradingLedger,
   stocks: [] as typeof sampleStocks,
+  save: vi.fn(),
 }));
-vi.mock("@/lib/local-repository", async (original) => ({ ...(await original<typeof import("@/lib/local-repository")>()), saveCollectionsAtomically: mocks.save }));
+vi.mock("@/lib/local-repository", () => ({ saveCollectionsAtomically: mocks.save }));
 vi.mock("@/lib/use-local-collection", () => ({ useLocalCollection: (name: string) => ({ items: mocks.collections.get(name) ?? [], allItems: mocks.collections.get(name) ?? [], ready: true, applyCommitted: vi.fn() }) }));
-vi.mock("@/features/stocks/use-stock-store", () => ({ useStockStore: () => ({ ready: true, allStocks: mocks.stocks, ledger: mocks.ledger }) }));
+vi.mock("@/features/stocks/use-stock-store", () => ({ useStockStore: () => ({ ready: true, allStocks: mocks.stocks, accounts: [{ id: "a", name: "A", institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault: true, archivedAt: null, memo: "", createdAt: now, updatedAt: now }], trades: [], ledger: mocks.ledger }) }));
 vi.mock("@/lib/use-exchange-rates", () => ({ useExchangeRates: () => ({ ready: true, snapshot: { ratesToKrw: fallbackRatesToKrw } }) }));
 
 const now = "2026-08-18T00:00:00.000Z";
-const revision: PortfolioPlanRevision = { id: "r1", revisionNumber: 1, basedOnRevisionId: null, targetAmountKrw: 1_800_000, thesis: "Stay intentional", changeNote: "", createdAt: now, activatedAt: now, updatedAt: now };
-const state: PortfolioPlanState = { id: "default", activeRevisionId: revision.id, updatedAt: now };
-const target: PortfolioAllocationTarget = { id: "t1", revisionId: revision.id, targetType: "stock", stockId: sampleStocks[0].id, targetWeightBps: 10000, sortOrder: 0, updatedAt: now };
+const revision: PortfolioPlanRevision = { id: "r1", revisionNumber: 1, basedOnRevisionId: null, thesis: "Stay intentional", changeNote: "", createdAt: now, activatedAt: now, updatedAt: now };
+const state: PortfolioPlanState = { id: "default", activeRevisionId: revision.id, contributionAmountMinor: 1_800_000, contributionCurrency: "KRW", updatedAt: now };
+const group: PortfolioAllocationGroup = { id: "g1", revisionId: revision.id, name: "Stocks", targetWeightBps: 10000, sortOrder: 0, updatedAt: now };
+const target: PortfolioAllocationTarget = { id: "t1", revisionId: revision.id, groupId: group.id, accountId: "a", targetType: "stock", stockId: sampleStocks[0].id, weightWithinGroupBps: 10000, sortOrder: 0, updatedAt: now };
 
 function reset(active = false) {
   mocks.save.mockReset().mockResolvedValue(undefined);
@@ -29,77 +30,99 @@ function reset(active = false) {
   mocks.collections = new Map([
     ["portfolio-plan-state", active ? [state] : []],
     ["portfolio-plan-revisions", active ? [revision] : []],
+    ["portfolio-allocation-groups", active ? [group] : []],
     ["portfolio-allocation-targets", active ? [target] : []],
   ]);
 }
 
-describe("PortfolioPageClient", () => {
+describe("Portfolio Overview", () => {
   beforeEach(() => reset());
 
-  it("shows the editable worksheet immediately without a separate create step", () => {
+  it("keeps current assets and the next contribution usable without a Plan or Account", () => {
     render(<PortfolioPageClient />);
-    expect(screen.getByRole("heading", { name: "목표 배분 워크시트" })).toBeInTheDocument();
-    expect(screen.getByLabelText("목표 운용 금액")).toHaveValue(0);
-    expect(screen.queryByRole("button", { name: "계획 만들기" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "현재 자산과 다음 저축 계획을 한눈에 보세요." })).toBeInTheDocument();
+    expect(screen.getByText("아직 평가할 자산이 없습니다.")).toBeInTheDocument();
+    expect(screen.getByText("아직 Contribution Plan이 없습니다.")).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "Plan 만들기" })[0]).toHaveAttribute("href", "/portfolio/plan");
   });
 
-  it("creates a Plan only when targets total exactly 100%", async () => {
-    render(<PortfolioPageClient />);
-    const picker = screen.getByRole("combobox", { name: "등록 종목 추가" });
-    fireEvent.focus(picker); fireEvent.change(picker, { target: { value: sampleStocks[0].ticker } });
-    fireEvent.click(screen.getByRole("option", { name: `${sampleStocks[0].ticker} · ${sampleStocks[0].name}` }));
-    const save = screen.getByRole("button", { name: "계획 저장" });
-    expect(save).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("목표 운용 금액"), { target: { value: "-1" } });
-    fireEvent.change(screen.getByLabelText(`${sampleStocks[0].name} 목표 비중`), { target: { value: "100" } });
-    expect(save).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("목표 운용 금액"), { target: { value: "1800000" } });
-    expect(save).toBeEnabled();
-    expect(screen.getAllByText("₩1,800,000").length).toBeGreaterThanOrEqual(2);
-    fireEvent.click(save);
-    await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
-    expect(mocks.save.mock.calls[0][0].map((write: { collection: string }) => write.collection)).toEqual(["portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-targets"]);
-    const revisionWrite = mocks.save.mock.calls[0][0].find((write: { collection: string }) => write.collection === "portfolio-plan-revisions");
-    expect(revisionWrite.values.at(-1)).toMatchObject({ targetAmountKrw: 1_800_000 });
-  });
-
-  it("prevents adding a duplicate target Stock", () => {
-    render(<PortfolioPageClient />);
-    const picker = screen.getByRole("combobox", { name: "등록 종목 추가" });
-    for (let count = 0; count < 2; count += 1) {
-      fireEvent.focus(picker); fireEvent.change(picker, { target: { value: sampleStocks[0].ticker } });
-      fireEvent.click(screen.getByRole("option", { name: `${sampleStocks[0].ticker} · ${sampleStocks[0].name}` }));
-    }
-    expect(screen.getByRole("alert")).toHaveTextContent("같은 종목은 한 번만 추가할 수 있습니다.");
-    expect(screen.getAllByLabelText(`${sampleStocks[0].name} 목표 비중`)).toHaveLength(1);
-  });
-
-  it("displays active targets, drift, and an outside-plan holding", () => {
+  it("renders current assets separately from the normalized next contribution", () => {
     reset(true);
-    mocks.ledger = { ...mocks.ledger, positions: [
-      { key: "1", stockId: sampleStocks[0].id, stockName: sampleStocks[0].name, accountId: "a", accountName: "A", currency: sampleStocks[0].currency, quantity: 1, averagePrice: 0, investedAmount: 0, investedAmountKrw: 0, realizedProfit: 0, realizedProfitKrw: 0 },
-      { key: "2", stockId: sampleStocks[1].id, stockName: sampleStocks[1].name, accountId: "a", accountName: "A", currency: sampleStocks[1].currency, quantity: 1, averagePrice: 0, investedAmount: 0, investedAmountKrw: 0, realizedProfit: 0, realizedProfitKrw: 0 },
-    ] };
+    mocks.ledger = { ...mocks.ledger, positions: [{ key: "p", stockId: sampleStocks[0]!.id, stockName: "Samsung", accountId: "a", accountName: "A", currency: "KRW", quantity: 2, averagePrice: 0, investedAmount: 0, investedAmountKrw: 0, realizedProfit: 0, realizedProfitKrw: 0 }] };
     render(<PortfolioPageClient />);
-    expect(screen.getByDisplayValue("Stay intentional")).toBeInTheDocument();
-    expect(screen.getByText("현재 계획 밖 보유")).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "차이" })).toBeInTheDocument();
+    const currentAllocation = screen.getByRole("region", { name: "현재 자산 배분" });
+    const nextContribution = screen.getByRole("region", { name: "다음 저축 계획" });
+    expect(within(currentAllocation).getByRole("heading", { name: "현재 자산 배분" })).toBeInTheDocument();
+    expect(within(currentAllocation).getByText("현금성 자산")).toBeInTheDocument();
+    expect(within(currentAllocation).queryByText("적금")).not.toBeInTheDocument();
+    expect(within(nextContribution).getByRole("heading", { name: "다음 저축 계획" })).toBeInTheDocument();
+    expect(within(nextContribution).getByText("적금")).toBeInTheDocument();
+    expect(screen.getAllByText("주식 투자").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("₩1,800,000").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("₩200").length).toBeGreaterThan(0);
+    expect(screen.getByText("리비전 1 · 현재 활성")).toBeInTheDocument();
   });
 
-  it("fails closed when a held Stock has no valid current price", () => {
-    reset(true); mocks.stocks = mocks.stocks.map((stock, index) => index === 0 ? { ...stock, currentPrice: 0 } : stock);
-    mocks.ledger = { ...mocks.ledger, positions: [{ key: "1", stockId: sampleStocks[0].id, stockName: sampleStocks[0].name, accountId: "a", accountName: "A", currency: sampleStocks[0].currency, quantity: 1, averagePrice: 0, investedAmount: 0, investedAmountKrw: 0, realizedProfit: 0, realizedProfitKrw: 0 }] };
+  it("shows whole-portfolio drift and an editable-in-Plan new-cash balance suggestion", () => {
+    reset(true);
+    mocks.collections.set("portfolio-plan-state", [{ ...state, balancePolicy: { version: 1, mode: "balanceAssist", targetWeightsBps: { savings: 3000, stocks: 6000, bonds: 1000 }, toleranceBps: 100, updatedAt: now } }]);
+    mocks.ledger = { ...mocks.ledger, positions: [{ key: "p", stockId: sampleStocks[0]!.id, stockName: "Samsung", accountId: "a", accountName: "A", currency: "KRW", quantity: 80_000, averagePrice: 0, investedAmount: 0, investedAmountKrw: 0, realizedProfit: 0, realizedProfitKrw: 0 }] };
     render(<PortfolioPageClient />);
-    expect(screen.getByText("현재 배분을 계산할 수 없습니다.")).toBeInTheDocument();
-    expect(screen.getByText("하나 이상의 보유 종목에 유효한 현재가가 없습니다.")).toBeInTheDocument();
+    expect(screen.getByText("균형 맞추기 제안")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "현재 자산 배분" })).getByText("현재 / 목표")).toBeInTheDocument();
+    expect(screen.getByText("조정 필요")).toBeInTheDocument();
+    expect(screen.getByText("목표보다 30%p 부족")).toBeInTheDocument();
+    expect(screen.getByText("₩1,350,000")).toBeInTheDocument();
+    expect(screen.getByText("₩450,000")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Plan에서 금액과 비율 수정" })).toHaveAttribute("href", "/portfolio/plan");
   });
 
-  it("editing starts a new revision without mutating revision 1", async () => {
-    reset(true); render(<PortfolioPageClient />);
-    fireEvent.change(screen.getByLabelText("목표 운용 금액"), { target: { value: "2000000" } });
-    fireEvent.click(screen.getByRole("button", { name: "변경사항 저장" }));
+  it("shows Allocation targets even before a Plan or Account exists", () => {
+    mocks.collections.set("portfolio-plan-state", [{ ...state, activeRevisionId: null, balancePolicy: { version: 1, mode: "fixed", targetWeightsBps: { savings: 3000, stocks: 6000, bonds: 1000 }, toleranceBps: 500, updatedAt: now } }]);
+    render(<PortfolioPageClient />);
+    const allocation = screen.getByRole("region", { name: "현재 자산 배분" });
+    expect(within(allocation).getByText("현재 자산은 없지만 저장된 Allocation 목표는 확인할 수 있습니다.")).toBeInTheDocument();
+    expect(within(allocation).getByText("현금성 자산")).toBeInTheDocument();
+    expect(screen.getByText("비교 대기")).toBeInTheDocument();
+  });
+
+  it("shows optional stock targets with their next contribution amounts", () => {
+    reset(true);
+    mocks.collections.set("portfolio-plan-state", [{ ...state, balancePolicy: {
+      version: 1, mode: "fixed", targetWeightsBps: { savings: 0, stocks: 10000, bonds: 0 }, toleranceBps: 500,
+      stockTargets: [{ stockId: sampleStocks[0]!.id, targetWeightBps: 7000 }, { stockId: sampleStocks[1]!.id, targetWeightBps: 3000 }], stockToleranceBps: 300, updatedAt: now,
+    } }]);
+    render(<PortfolioPageClient />);
+    const stockPlan = screen.getByRole("region", { name: "종목별 다음 투자 계획" });
+    expect(within(stockPlan).getByText("삼성전자")).toBeInTheDocument();
+    expect(within(stockPlan).getByText("현대차")).toBeInTheDocument();
+    expect(within(stockPlan).getByText("₩1,260,000")).toBeInTheDocument();
+    expect(within(stockPlan).getByText("₩540,000")).toBeInTheDocument();
+  });
+
+  it("shows the stock-bucket Balance Assist amounts on Overview", () => {
+    reset(true);
+    mocks.collections.set("portfolio-plan-state", [{ ...state, balancePolicy: {
+      version: 1, mode: "balanceAssist", targetWeightsBps: { savings: 0, stocks: 10000, bonds: 0 }, toleranceBps: 500,
+      stockTargets: [{ stockId: sampleStocks[0]!.id, targetWeightBps: 7000 }, { stockId: sampleStocks[1]!.id, targetWeightBps: 3000 }], stockToleranceBps: 300, updatedAt: now,
+    } }]);
+    mocks.ledger = { ...mocks.ledger, positions: [{ key: "p", stockId: sampleStocks[0]!.id, stockName: "Samsung", accountId: "a", accountName: "A", currency: "KRW", quantity: 100_000, averagePrice: 0, investedAmount: 0, investedAmountKrw: 0, realizedProfit: 0, realizedProfitKrw: 0 }] };
+    render(<PortfolioPageClient />);
+    const stockPlan = screen.getByRole("region", { name: "종목별 다음 투자 계획" });
+    expect(within(stockPlan).getByText("부족한 종목을 우선한 이번 저축 제안입니다.")).toBeInTheDocument();
+    expect(within(stockPlan).getByText("₩0")).toBeInTheDocument();
+    expect(within(stockPlan).getByText("₩1,800,000")).toBeInTheDocument();
+  });
+
+  it("atomically upgrades locally stored V6 Portfolio records before rendering", async () => {
+    mocks.collections = new Map([
+      ["portfolio-plan-state", [{ id: "default", activeRevisionId: "r1", updatedAt: now }]],
+      ["portfolio-plan-revisions", [{ ...revision, targetAmountKrw: 1_800_000 }]],
+      ["portfolio-allocation-groups", []],
+      ["portfolio-allocation-targets", [{ id: "t1", revisionId: "r1", targetType: "stock", stockId: sampleStocks[0].id, targetWeightBps: 10000, sortOrder: 0, updatedAt: now }]],
+    ]);
+    render(<PortfolioPageClient />);
     await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
-    const revisionWrite = mocks.save.mock.calls[0][0].find((write: { collection: string }) => write.collection === "portfolio-plan-revisions");
-    expect(revisionWrite.values).toEqual([revision, expect.objectContaining({ revisionNumber: 2, basedOnRevisionId: "r1", targetAmountKrw: 2_000_000 })]);
+    expect(mocks.save.mock.calls[0]?.[0].map((write: { collection: string }) => write.collection)).toEqual(["portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-groups", "portfolio-allocation-targets"]);
   });
 });

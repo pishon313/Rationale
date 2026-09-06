@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { validateBackupPayload, type ValidatedBackup } from "./backup";
-import type { BackupV5, BackupV6 } from "./backup-service";
+import type { BackupV5, BackupV6, BackupV7 } from "./backup-service";
 
 export const encryptedBackupFormat = "rationale-encrypted-backup";
 export const encryptedBackupExtension = "rationale-backup";
@@ -31,7 +31,7 @@ export function parseSelectedBackup(content: string, filename = ""): SelectedBac
   return { kind: "plaintext", backup: validateBackupPayload(value) };
 }
 
-export async function encryptBackupPayload(backup: BackupV5 | BackupV6, password: string) {
+export async function encryptBackupPayload(backup: BackupV5 | BackupV6 | BackupV7, password: string) {
   return invoke<string>("encrypt_backup", { content: JSON.stringify(backup), password });
 }
 

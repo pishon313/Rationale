@@ -38,6 +38,7 @@ function sourceCollections() {
     preferences: [fallbackCurrencyPreference],
     "portfolio-plan-state": [],
     "portfolio-plan-revisions": [],
+    "portfolio-allocation-groups": [],
     "portfolio-allocation-targets": [],
   };
 }
@@ -73,6 +74,21 @@ describe("automatic backup candidate", () => {
     expect(candidate.sourceCounts.find((item) => item.collection === "trades")?.count).toBe(sampleTrades.length);
   });
 
+  it("creates Backup V7 with grouped Portfolio records and exact source counts", async () => {
+    const sources = sourceCollections();
+    const now = exportedAt;
+    const accountId = sources.accounts[0]!.id;
+    useSources({
+      "portfolio-plan-state": [{ id: "default", activeRevisionId: "r1", contributionAmountMinor: 1_000_000, contributionCurrency: "KRW", updatedAt: now }],
+      "portfolio-plan-revisions": [{ id: "r1", revisionNumber: 1, basedOnRevisionId: null, thesis: "", changeNote: "", createdAt: now, activatedAt: now, updatedAt: now }],
+      "portfolio-allocation-groups": [{ id: "g1", revisionId: "r1", name: "Stocks", targetWeightBps: 10000, sortOrder: 0, updatedAt: now }],
+      "portfolio-allocation-targets": [{ id: "t1", revisionId: "r1", groupId: "g1", accountId, targetType: "stock", stockId: sampleStocks[0].id, weightWithinGroupBps: 10000, sortOrder: 0, updatedAt: now }],
+    } as unknown as Partial<ReturnType<typeof sourceCollections>>);
+    const candidate = await createBackupCandidate("en");
+    expect(candidate.backup).toMatchObject({ version: 7, portfolioAllocationGroups: [{ id: "g1" }], portfolioAllocationTargets: [{ id: "t1", accountId }] });
+    expect(candidate.sourceCounts.find((item) => item.collection === "portfolio-allocation-groups")?.count).toBe(1);
+  });
+
   it("counts soft-deleted records because the backup preserves them", async () => {
     const deleted = { ...sampleStocks[0], id: "deleted-stock", deletedAt: exportedAt };
     useSources({ stocks: [sampleStocks[0], deleted] });
@@ -81,7 +97,7 @@ describe("automatic backup candidate", () => {
     expect(candidate.backup.stocks).toHaveLength(2);
   });
 
-  it("preserves reset Trade tombstones in current Backup V6 without exporting the device-local undo snapshot", async () => {
+  it("preserves reset Trade tombstones in current Backup V7 without exporting the device-local undo snapshot", async () => {
     const resetAt = "2026-08-21T00:00:00.000Z";
     const sources = sourceCollections();
     const tombstones = sources.trades.map((trade) => ({ ...trade, deletedAt: resetAt, updatedAt: resetAt }));
@@ -89,7 +105,7 @@ describe("automatic backup candidate", () => {
 
     const candidate = await createBackupCandidate("en");
 
-    expect(candidate.backup.version).toBe(6);
+    expect(candidate.backup.version).toBe(7);
     expect(candidate.backup.trades).toHaveLength(tombstones.length);
     expect(candidate.backup.trades).toEqual(tombstones.map((trade) => expect.objectContaining({ id: trade.id, createdAt: trade.createdAt, quantity: trade.quantity, price: trade.price, origin: expect.any(Object), deletedAt: resetAt, updatedAt: resetAt })));
     expect(candidate.backup.trades.every((trade) => trade.deletedAt === resetAt)).toBe(true);
@@ -112,7 +128,7 @@ describe("automatic backup candidate", () => {
     useSources({ stocks: [eodhdStock] });
     const candidate = await createBackupCandidate("en");
     const payload = await createBackupPayload("en");
-    expect(payload).toMatchObject({ version: 6, stocks: [eodhdStock], portfolioPlanState: [], portfolioPlanRevisions: [], portfolioAllocationTargets: [] });
+    expect(payload).toMatchObject({ version: 7, stocks: [eodhdStock], portfolioPlanState: [], portfolioPlanRevisions: [], portfolioAllocationGroups: [], portfolioAllocationTargets: [] });
     expect(candidate.backup.stocks[0]).toEqual(eodhdStock);
   });
 });

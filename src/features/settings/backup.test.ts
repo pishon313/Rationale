@@ -17,7 +17,15 @@ import { marketSectors } from "@/features/stocks/market-sectors";
 import type { AccountFeePolicyV1 } from "@/features/accounts/account-fee-policy";
 import Decimal from "decimal.js";
 import type { AccountFeeCalculationSnapshotV1, Trade } from "@/features/trades/types";
-import type { PortfolioAllocationTarget, PortfolioPlanRevision, PortfolioPlanState } from "@/features/portfolio-plan/types";
+import type {
+  LegacyPortfolioAllocationTargetV6,
+  LegacyPortfolioPlanRevisionV6,
+  LegacyPortfolioPlanStateV6,
+  PortfolioAllocationGroup,
+  PortfolioAllocationTarget,
+  PortfolioPlanRevision,
+  PortfolioPlanState,
+} from "@/features/portfolio-plan/types";
 
 const repositoryMocks = vi.hoisted(() => ({ saveCollectionsAtomically: vi.fn() }));
 vi.mock("@/lib/local-repository", () => ({ loadCollection: vi.fn(), saveCollectionsAtomically: repositoryMocks.saveCollectionsAtomically }));
@@ -44,11 +52,20 @@ function version5(overrides: Record<string, unknown> = {}) {
   return { ...version4(), version: 5, accounts: migrated.accounts, trades: migrated.trades, ...overrides };
 }
 
-const portfolioRevision: PortfolioPlanRevision = { id: "portfolio-r1", revisionNumber: 1, basedOnRevisionId: null, targetAmountKrw: 1_800_000, thesis: "Target", changeNote: "", createdAt: valid.exportedAt, activatedAt: valid.exportedAt, updatedAt: valid.exportedAt };
-const portfolioState: PortfolioPlanState = { id: "default", activeRevisionId: portfolioRevision.id, updatedAt: valid.exportedAt };
-const portfolioTarget: PortfolioAllocationTarget = { id: "portfolio-t1", revisionId: portfolioRevision.id, targetType: "stock", stockId: sampleStocks[0].id, targetWeightBps: 10000, sortOrder: 0, updatedAt: valid.exportedAt };
+const portfolioRevision: LegacyPortfolioPlanRevisionV6 = { id: "portfolio-r1", revisionNumber: 1, basedOnRevisionId: null, targetAmountKrw: 1_800_000, thesis: "Target", changeNote: "", createdAt: valid.exportedAt, activatedAt: valid.exportedAt, updatedAt: valid.exportedAt };
+const portfolioState: LegacyPortfolioPlanStateV6 = { id: "default", activeRevisionId: portfolioRevision.id, updatedAt: valid.exportedAt };
+const portfolioTarget: LegacyPortfolioAllocationTargetV6 = { id: "portfolio-t1", revisionId: portfolioRevision.id, targetType: "stock", stockId: sampleStocks[0].id, targetWeightBps: 10000, sortOrder: 0, updatedAt: valid.exportedAt };
 function version6(overrides: Record<string, unknown> = {}) {
   return { ...version5(), version: 6, portfolioPlanState: [portfolioState], portfolioPlanRevisions: [portfolioRevision], portfolioAllocationTargets: [portfolioTarget], ...overrides };
+}
+
+const portfolioRevisionV7: PortfolioPlanRevision = { id: "portfolio-r1", revisionNumber: 1, basedOnRevisionId: null, thesis: "Target", changeNote: "", createdAt: valid.exportedAt, activatedAt: valid.exportedAt, updatedAt: valid.exportedAt };
+const portfolioStateV7: PortfolioPlanState = { id: "default", activeRevisionId: portfolioRevisionV7.id, contributionAmountMinor: 1_800_000, contributionCurrency: "KRW", updatedAt: valid.exportedAt };
+const portfolioGroupV7: PortfolioAllocationGroup = { id: "portfolio-g1", revisionId: portfolioRevisionV7.id, name: "Stocks", targetWeightBps: 10000, sortOrder: 0, updatedAt: valid.exportedAt };
+function version7(overrides: Record<string, unknown> = {}) {
+  const current = version5();
+  const portfolioTargetV7: PortfolioAllocationTarget = { id: "portfolio-t1", revisionId: portfolioRevisionV7.id, groupId: portfolioGroupV7.id, accountId: current.accounts[0]!.id, targetType: "stock", stockId: sampleStocks[0].id, weightWithinGroupBps: 10000, sortOrder: 0, updatedAt: valid.exportedAt };
+  return { ...current, version: 7, portfolioPlanState: [portfolioStateV7], portfolioPlanRevisions: [portfolioRevisionV7], portfolioAllocationGroups: [portfolioGroupV7], portfolioAllocationTargets: [portfolioTargetV7], ...overrides };
 }
 
 function feeSnapshotFor(trade: Trade): AccountFeeCalculationSnapshotV1 {
@@ -124,24 +141,41 @@ describe("validateBackupPayload", () => {
     expect(parsed.portfolioPlanRevisions).toEqual([portfolioRevision]);
     expect(parsed.portfolioAllocationTargets).toEqual([portfolioTarget]);
     const writes = writesByCollection(parsed);
-    expect(writes.get("portfolio-plan-state")).toEqual([portfolioState]);
-    expect(writes.get("portfolio-plan-revisions")).toEqual([portfolioRevision]);
-    expect(writes.get("portfolio-allocation-targets")).toEqual([portfolioTarget]);
+    expect(writes.get("portfolio-plan-state")).toEqual([expect.objectContaining({ activeRevisionId: portfolioRevision.id, contributionAmountMinor: 1_800_000, contributionCurrency: "KRW" })]);
+    expect(writes.get("portfolio-plan-revisions")).toEqual([portfolioRevisionV7]);
+    expect(writes.get("portfolio-allocation-groups")).toEqual([expect.objectContaining({ revisionId: portfolioRevision.id, name: "Legacy Allocation", targetWeightBps: 10000 })]);
+    expect(writes.get("portfolio-allocation-targets")).toEqual([expect.objectContaining({ id: portfolioTarget.id, groupId: `legacy-allocation:${portfolioRevision.id}`, weightWithinGroupBps: 10000 })]);
+  });
+
+  it("creates, validates, and restores complete Portfolio Plan collections in Backup V7", () => {
+    const parsed = validateBackupPayload(version7());
+    expect(parsed.version).toBe(7);
+    if (parsed.version !== 7) throw new Error("expected version 7");
+    expect(parsed.portfolioAllocationGroups).toEqual([portfolioGroupV7]);
+    const writes = writesByCollection(parsed);
+    expect(writes.get("portfolio-plan-state")).toEqual([portfolioStateV7]);
+    expect(writes.get("portfolio-plan-revisions")).toEqual([portfolioRevisionV7]);
+    expect(writes.get("portfolio-allocation-groups")).toEqual([portfolioGroupV7]);
+    expect(writes.get("portfolio-allocation-targets")).toEqual(parsed.portfolioAllocationTargets);
+  });
+
+  it("requires the Allocation Group collection in Backup V7", () => {
+    expect(() => validateBackupPayload(version7({ portfolioAllocationGroups: undefined }))).toThrow("Allocation Group 목록");
   });
 
   it("rejects broken Portfolio Plan references in Backup V6", () => {
     expect(() => validateBackupPayload(version6({ portfolioPlanState: [] }))).toThrow("활성 리비전");
-    expect(() => validateBackupPayload(version6({ portfolioPlanState: [{ ...portfolioState, activeRevisionId: "missing" }] }))).toThrow("활성 포트폴리오");
+    expect(() => validateBackupPayload(version6({ portfolioPlanState: [{ ...portfolioState, activeRevisionId: "missing" }] }))).toThrow("활성 V6 포트폴리오");
     expect(() => validateBackupPayload(version6({ portfolioAllocationTargets: [{ ...portfolioTarget, revisionId: "missing" }] }))).toThrow("리비전이 존재하지 않습니다");
     expect(() => validateBackupPayload(version6({ portfolioAllocationTargets: [{ ...portfolioTarget, stockId: "missing" }] }))).toThrow("종목이 존재하지 않습니다");
   });
 
   it("rejects invalid activated allocations in Backup V6", () => {
     expect(() => validateBackupPayload(version6({ portfolioAllocationTargets: [{ ...portfolioTarget, targetWeightBps: 9000 }] }))).toThrow("100%");
-    expect(() => validateBackupPayload(version6({ portfolioAllocationTargets: [] }))).toThrow("배분 대상");
-    expect(() => validateBackupPayload(version6({ portfolioAllocationTargets: [portfolioTarget, { ...portfolioTarget, id: "duplicate" }] }))).toThrow("같은 종목");
-    const cash: PortfolioAllocationTarget = { ...portfolioTarget, id: "cash-1", targetType: "cash", stockId: null, targetWeightBps: 0 };
-    expect(() => validateBackupPayload(version6({ portfolioAllocationTargets: [portfolioTarget, cash, { ...cash, id: "cash-2" }] }))).toThrow("현금 목표");
+    expect(() => validateBackupPayload(version6({ portfolioAllocationTargets: [] }))).toThrow("Target Weight");
+    expect(() => validateBackupPayload(version6({ portfolioAllocationTargets: [{ ...portfolioTarget, targetWeightBps: 5000 }, { ...portfolioTarget, id: "duplicate", targetWeightBps: 5000 }] }))).toThrow("같은 종목");
+    const cash: LegacyPortfolioAllocationTargetV6 = { ...portfolioTarget, id: "cash-1", targetType: "cash", stockId: null, targetWeightBps: 0 };
+    expect(() => validateBackupPayload(version6({ portfolioAllocationTargets: [portfolioTarget, cash, { ...cash, id: "cash-2" }] }))).toThrow("Cash Target");
   });
 
   it("rejects duplicate revision numbers and a non-activated active revision in Backup V6", () => {
@@ -316,7 +350,7 @@ describe("validateBackupPayload", () => {
   it("prepares every version 4 collection for an atomic restore", () => {
     const parsed = validateBackupPayload({ ...valid, version: 4, observations: sampleObservations, reviews: sampleReviews, rules: sampleRules, notes: [], language: "ko", dashboardNotes: [], earningsEvents: [], displayCurrency: "KRW" });
     const names = backupWrites(parsed).map((write) => write.collection);
-    expect(names).toEqual(["accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences", "portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-targets"]);
+    expect(names).toEqual(["accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences", "portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-groups", "portfolio-allocation-targets"]);
     expect(backupCounts(parsed)).toMatchObject({ stocks: sampleStocks.length, trades: sampleTrades.length, notes: 0 });
   });
 
@@ -325,7 +359,7 @@ describe("validateBackupPayload", () => {
     const writes = backupWrites(parsed);
     const byCollection = writesByCollection(parsed);
 
-    expect(writes.map((write) => write.collection)).toEqual(["accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences", "portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-targets"]);
+    expect(writes.map((write) => write.collection)).toEqual(["accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences", "portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-groups", "portfolio-allocation-targets"]);
     expect(byCollection.get("stocks")).toEqual(sampleStocks);
     expect(byCollection.get("plans")).toEqual(samplePlans);
     expect(byCollection.get("trades")).toHaveLength(sampleTrades.length);
@@ -337,6 +371,7 @@ describe("validateBackupPayload", () => {
     expect(byCollection.get("preferences")).toEqual([fallbackCurrencyPreference]);
     expect(byCollection.get("portfolio-plan-state")).toEqual([]);
     expect(byCollection.get("portfolio-plan-revisions")).toEqual([]);
+    expect(byCollection.get("portfolio-allocation-groups")).toEqual([]);
     expect(byCollection.get("portfolio-allocation-targets")).toEqual([]);
   });
 
@@ -344,7 +379,7 @@ describe("validateBackupPayload", () => {
     const parsed = validateBackupPayload({ ...valid, version, observations: sampleObservations, reviews: sampleReviews, rules: sampleRules });
     const byCollection = writesByCollection(parsed);
 
-    expect(byCollection.size).toBe(15);
+    expect(byCollection.size).toBe(16);
     expect(byCollection.get("observations")).toEqual(sampleObservations.map(normalizeObservation));
     expect(byCollection.get("reviews")).toEqual(sampleReviews);
     expect(byCollection.get("rules")).toEqual(sampleRules);
@@ -359,7 +394,7 @@ describe("validateBackupPayload", () => {
     const parsed = validateBackupPayload(version4());
     const byCollection = writesByCollection(parsed);
 
-    expect(byCollection.size).toBe(15);
+    expect(byCollection.size).toBe(16);
     expect(byCollection.get("notes")).toEqual([note]);
     expect(byCollection.get("language-preferences")).toEqual([expect.objectContaining({ id: "language", locale: "en" })]);
     expect(byCollection.get("dashboard-notes")).toEqual([dashboardNote]);
@@ -371,7 +406,7 @@ describe("validateBackupPayload", () => {
     const parsed = validateBackupPayload(version4({ dashboardNotes: undefined, earningsEvents: undefined, displayCurrency: undefined }));
     const byCollection = writesByCollection(parsed);
 
-    expect(byCollection.size).toBe(15);
+    expect(byCollection.size).toBe(16);
     expect(byCollection.get("dashboard-notes")).toEqual([emptyDashboardNote]);
     expect(byCollection.get("earnings-events")).toEqual([]);
     expect(byCollection.get("preferences")).toEqual([fallbackCurrencyPreference]);
@@ -384,7 +419,7 @@ describe("validateBackupPayload", () => {
     const saved = JSON.parse(String((write.values[0] as unknown as { content: string }).content));
     expect(saved).toMatchObject({ version: 5, accounts: backup.accounts, stocks: sampleStocks, notes: [note], language: "en", dashboardNotes: [dashboardNote], earningsEvents: [earningsEvent], displayCurrency: "USD" });
     const undoWrites = backupWrites(validateBackupPayload(saved));
-    expect(undoWrites.map((item) => item.collection)).toHaveLength(15);
+    expect(undoWrites.map((item) => item.collection)).toHaveLength(16);
     expect(undoWrites.find((item) => item.collection === "accounts")?.values).toEqual(backup.accounts);
     expect(undoWrites.some((item) => item.collection === "restore-snapshots")).toBe(false);
   });
@@ -399,6 +434,6 @@ describe("validateBackupPayload", () => {
     expect(repositoryMocks.saveCollectionsAtomically).toHaveBeenCalledTimes(1);
     expect(repositoryMocks.saveCollectionsAtomically).toHaveBeenCalledWith(expect.any(Array), { resolveCorruption: true, source: "backupRestore" });
     const writes = repositoryMocks.saveCollectionsAtomically.mock.calls[0]?.[0];
-    expect(writes.map((write: { collection: string }) => write.collection)).toEqual(["restore-snapshots", "accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences", "portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-targets"]);
+    expect(writes.map((write: { collection: string }) => write.collection)).toEqual(["restore-snapshots", "accounts", "stocks", "plans", "trades", "observations", "reviews", "rules", "notes", "language-preferences", "dashboard-notes", "earnings-events", "preferences", "portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-groups", "portfolio-allocation-targets"]);
   });
 });

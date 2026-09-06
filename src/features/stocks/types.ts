@@ -11,12 +11,14 @@ export const marketDataProviders = ["manual", ...remoteMarketDataProviders] as c
 export const quotePreferences = ["auto", ...marketDataProviders] as const;
 export const quoteFreshnessValues = ["realtime", "delayed", "eod", "manual", "unknown"] as const;
 export const priceStatuses = ["manual", "online", "offline", "error"] as const;
+export const securityAssetClasses = ["equity", "bond"] as const;
 export type MarketDataProvider = (typeof marketDataProviders)[number];
 export type RemoteMarketDataProvider = (typeof remoteMarketDataProviders)[number];
 export type ProviderInstrumentRef = { provider: RemoteMarketDataProvider; symbol: string; exchangeCode?: string | null };
 export type QuotePreference = (typeof quotePreferences)[number];
 export type QuoteFreshness = (typeof quoteFreshnessValues)[number];
 export type PriceStatus = (typeof priceStatuses)[number];
+export type SecurityAssetClass = (typeof securityAssetClasses)[number];
 
 export type Stock = {
   id: string;
@@ -32,6 +34,8 @@ export type Stock = {
   providerRefs?: ProviderInstrumentRef[];
   quotePreference?: QuotePreference;
   assetType: string;
+  /** Stable Allocation classification; older records fall back to assetType inference. */
+  assetClass?: SecurityAssetClass;
   marketSector?: MarketSectorId | null;
   sector: string;
   status: (typeof stockStatuses)[number];

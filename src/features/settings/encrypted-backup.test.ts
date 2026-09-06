@@ -4,7 +4,7 @@ import { sampleStocks } from "@/features/stocks/sample-data";
 import { sampleTrades } from "@/features/trades/sample-data";
 import { migrateLegacyAccounts } from "@/features/accounts/migrate-accounts";
 import { decryptBackupPayload, encryptedBackupFormat, encryptBackupPayload, parseSelectedBackup, validateNewBackupPassword } from "./encrypted-backup";
-import type { BackupV5 } from "./backup-service";
+import type { BackupV5, BackupV7 } from "./backup-service";
 import type { AccountFeePolicyV1 } from "@/features/accounts/account-fee-policy";
 import Decimal from "decimal.js";
 import type { AccountFeeCalculationSnapshotV1, Trade } from "@/features/trades/types";
@@ -85,6 +85,15 @@ describe("encrypted backup routing", () => {
     await expect(encryptBackupPayload(backup, "password123")).resolves.toBe("encrypted");
     const restored = await decryptBackupPayload("encrypted", "password123");
     expect(restored.trades[0]).toMatchObject({ feeMode: "accountPolicy", feeCalculation: trades[0].feeCalculation });
+  });
+
+  it("round-trips encrypted Backup V7 with the Allocation Group collection", async () => {
+    const migrated = migrateLegacyAccounts([], sampleTrades, legacy.exportedAt);
+    const backup: BackupV7 = { version: 7, exportedAt: legacy.exportedAt, accounts: migrated.accounts, stocks: sampleStocks, plans: samplePlans, trades: migrated.trades, observations: [], reviews: [], rules: [], notes: [], language: "ko", dashboardNotes: [], earningsEvents: [], displayCurrency: "KRW", portfolioPlanState: [], portfolioPlanRevisions: [], portfolioAllocationGroups: [], portfolioAllocationTargets: [] };
+    invokeMock.mockImplementation((command: string) => Promise.resolve(command === "encrypt_backup" ? "encrypted" : JSON.stringify(backup)));
+    await expect(encryptBackupPayload(backup, "password123")).resolves.toBe("encrypted");
+    const restored = await decryptBackupPayload("encrypted", "password123");
+    expect(restored).toMatchObject({ version: 7, portfolioAllocationGroups: [] });
   });
 
   it("validates password length and exact confirmation without trimming", () => {
