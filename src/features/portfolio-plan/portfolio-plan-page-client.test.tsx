@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   applied: new Map<string, ReturnType<typeof vi.fn>>(),
   accountItems: [] as InvestmentAccount[],
-  ledger: { positions: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalRealizedKrw: 0 } as TradingLedger,
+  ledger: { positions: [], tradeCapitalBalances: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalNetTradeCapitalKrw: 0, totalRealizedKrw: 0 } as TradingLedger,
 }));
 
 vi.mock("@/lib/local-repository", () => ({ saveCollectionsAtomically: mocks.save }));
@@ -36,7 +36,7 @@ describe("Contribution Plan page", () => {
     mocks.save.mockReset().mockResolvedValue(undefined);
     mocks.applied = new Map(["portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-groups", "portfolio-allocation-targets"].map((name) => [name, vi.fn()]));
     mocks.accountItems = accounts;
-    mocks.ledger = { positions: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalRealizedKrw: 0 };
+    mocks.ledger = { positions: [], tradeCapitalBalances: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalNetTradeCapitalKrw: 0, totalRealizedKrw: 0 };
     mocks.collections = new Map([["portfolio-plan-state", []], ["portfolio-plan-revisions", []], ["portfolio-allocation-groups", []], ["portfolio-allocation-targets", []]]);
     vi.spyOn(window, "confirm").mockReturnValue(true);
   });

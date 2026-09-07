@@ -15,6 +15,7 @@ import { buildAccountTransfer } from "@/features/accounts/account-transfer";
 import { backupCounts, backupWrites, restoreBackup, snapshotWrite, type BackupV5 } from "./backup-service";
 import { marketSectors } from "@/features/stocks/market-sectors";
 import type { AccountFeePolicyV1 } from "@/features/accounts/account-fee-policy";
+import { cashTrackingOf, type AccountCashTrackingV1 } from "@/features/accounts/types";
 import Decimal from "decimal.js";
 import type { AccountFeeCalculationSnapshotV1, Trade } from "@/features/trades/types";
 import type {
@@ -42,6 +43,7 @@ const note = { id: "n1", title: "Memo", content: "Text", createdAt: "2026-08-01T
 const dashboardNote = { id: "dashboard-note", content: "Next week", updatedAt: "2026-08-01T00:00:00.000Z" };
 const earningsEvent = { id: "e1", name: "NVIDIA", ticker: "NVDA", date: "2026-08-20", updatedAt: "2026-08-01T00:00:00.000Z", deletedAt: null };
 const feePolicy: AccountFeePolicyV1 = { version: 1, enabled: true, rules: [{ id: "usd-buy", name: "USD buy", market: "미국", currency: "USD", side: "buy", ratePercent: "0.1", fixedFee: "0", minimumFee: null, maximumFee: null, grossAmountFrom: null, grossAmountTo: null, effectiveFrom: "2026-01-01", effectiveTo: null, roundingMode: "round", roundingUnit: "0.01" }] };
+const cashTracking: AccountCashTrackingV1 = { version: 1, baselines: [{ currency: "KRW", balance: "1000", asOf: valid.exportedAt, createdAt: valid.exportedAt, updatedAt: valid.exportedAt }] };
 
 function version4(overrides: Record<string, unknown> = {}) {
   return { ...valid, version: 4, observations: sampleObservations, reviews: sampleReviews, rules: sampleRules, notes: [note], language: "en", dashboardNotes: [dashboardNote], earningsEvents: [earningsEvent], displayCurrency: "USD", ...overrides };
@@ -157,6 +159,29 @@ describe("validateBackupPayload", () => {
     expect(writes.get("portfolio-plan-revisions")).toEqual([portfolioRevisionV7]);
     expect(writes.get("portfolio-allocation-groups")).toEqual([portfolioGroupV7]);
     expect(writes.get("portfolio-allocation-targets")).toEqual(parsed.portfolioAllocationTargets);
+  });
+
+  it("round-trips and normalizes optional cash baselines in Backup V7", () => {
+    const backup = version7();
+    const accounts = backup.accounts.map((account, index) => index === 0 ? { ...account, cashTracking: { ...cashTracking, baselines: [{ ...cashTracking.baselines[0], balance: "+001000.5000" }] } } : account);
+    const parsed = validateBackupPayload({ ...backup, accounts });
+    if (parsed.version !== 7) throw new Error("expected version 7");
+    expect(parsed.accounts[0].cashTracking).toEqual({ ...cashTracking, baselines: [{ ...cashTracking.baselines[0], balance: "1000.5" }] });
+    expect(backupWrites(parsed).find((write) => write.collection === "accounts")?.values).toEqual(parsed.accounts);
+  });
+
+  it("accepts a missing cashTracking field in Backup V7 as untracked without adding it", () => {
+    const parsed = validateBackupPayload(version7());
+    if (parsed.version !== 7) throw new Error("expected version 7");
+    expect(parsed.accounts[0]).not.toHaveProperty("cashTracking");
+    expect(cashTrackingOf(parsed.accounts[0])).toEqual({ version: 1, baselines: [] });
+  });
+
+  it("fails closed for a future cashTracking version or duplicate Currency baseline", () => {
+    const backup = version7();
+    const base = backup.accounts[0];
+    expect(() => validateBackupPayload({ ...backup, accounts: [{ ...base, cashTracking: { ...cashTracking, version: 2 } }] })).toThrow("현금 추적 버전");
+    expect(() => validateBackupPayload({ ...backup, accounts: [{ ...base, cashTracking: { version: 1, baselines: [cashTracking.baselines[0], { ...cashTracking.baselines[0], balance: "2" }] } }] })).toThrow("중복");
   });
 
   it("requires the Allocation Group collection in Backup V7", () => {

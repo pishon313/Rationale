@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   collections: new Map<string, unknown[]>(),
   save: vi.fn(),
   applied: new Map<string, ReturnType<typeof vi.fn>>(),
-  ledger: { positions: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalRealizedKrw: 0 } as TradingLedger,
+  ledger: { positions: [], tradeCapitalBalances: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalNetTradeCapitalKrw: 0, totalRealizedKrw: 0 } as TradingLedger,
   stocks: [] as typeof sampleStocks,
 }));
 
@@ -29,7 +29,7 @@ describe("Portfolio Allocation page", () => {
   beforeEach(() => {
     mocks.save.mockReset().mockResolvedValue(undefined);
     mocks.applied = new Map(["portfolio-plan-state", "portfolio-plan-revisions", "portfolio-allocation-groups", "portfolio-allocation-targets"].map((name) => [name, vi.fn()]));
-    mocks.ledger = { positions: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalRealizedKrw: 0 };
+    mocks.ledger = { positions: [], tradeCapitalBalances: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalNetTradeCapitalKrw: 0, totalRealizedKrw: 0 };
     mocks.stocks = sampleStocks;
     mocks.collections = new Map([["portfolio-plan-state", []], ["portfolio-plan-revisions", []], ["portfolio-allocation-groups", []], ["portfolio-allocation-targets", []]]);
   });

@@ -54,7 +54,7 @@ describe("stock storage validation", () => {
   });
 });
 
-describe("account fee policy storage validation", () => {
+describe("Account metadata storage validation", () => {
   const account: InvestmentAccount = { id: "a", name: "A", institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault: true, archivedAt: null, memo: "", createdAt: "2026-08-17T00:00:00Z", updatedAt: "2026-08-17T00:00:00Z" };
   const feePolicy = { version: 1 as const, enabled: true, rules: [{ id: "r1", name: "Fee", market: "all" as const, currency: "KRW" as const, side: "both" as const, ratePercent: "0.1", fixedFee: "0", minimumFee: null, maximumFee: null, grossAmountFrom: null, grossAmountTo: null, effectiveFrom: "2026-01-01", effectiveTo: null, roundingMode: "floor" as const, roundingUnit: "1" }] };
 
@@ -67,6 +67,14 @@ describe("account fee policy storage validation", () => {
   it("quarantines invalid and future policy records", () => {
     expect(validateStoredCollection("accounts", [{ ...account, feePolicy: { ...feePolicy, version: 2 } }])).toEqual({ valid: false, errorType: "INVALID_RECORD", index: 0 });
     expect(validateStoredCollection("accounts", [{ ...account, feePolicy: { ...feePolicy, rules: [{ ...feePolicy.rules[0], fixedFee: "-1" }] } }])).toEqual({ valid: false, errorType: "INVALID_RECORD", index: 0 });
+  });
+
+  it("accepts missing and valid cash tracking while rejecting malformed metadata", () => {
+    const baseline = { currency: "KRW" as const, balance: "0", asOf: account.updatedAt, createdAt: account.createdAt, updatedAt: account.updatedAt };
+    expect(validateStoredCollection("accounts", [account])).toEqual({ valid: true });
+    expect(validateStoredCollection("accounts", [{ ...account, cashTracking: { version: 1, baselines: [baseline] } }])).toEqual({ valid: true });
+    expect(validateStoredCollection("accounts", [{ ...account, cashTracking: { version: 2, baselines: [] } }])).toEqual({ valid: false, errorType: "INVALID_RECORD", index: 0 });
+    expect(validateStoredCollection("accounts", [{ ...account, cashTracking: { version: 1, baselines: [baseline, { ...baseline }] } }])).toEqual({ valid: false, errorType: "INVALID_RECORD", index: 0 });
   });
 });
 

@@ -7,15 +7,20 @@ import { accountIdentity, type InvestmentAccount } from "@/features/accounts/typ
 export type AccountPerformance = {
   accountId: string;
   accountName: string;
-  cashKrw: number;
+  cashKrw: number | null;
   marketValueKrw: number;
-  totalAssetsKrw: number;
-  netContributionsKrw: number;
-  reconciliationAdjustmentKrw: number;
-  performanceBasisKrw: number;
-  totalProfitKrw: number;
-  totalReturnPercent: number | null;
-  xirrPercent: number | null;
+  investedCostKrw: number;
+  realizedProfitKrw: number;
+  unrealizedProfitKrw: number;
+  netTradeCapitalKrw: number;
+  openPositionCount: number;
+  totalAssetsKrw: number | null;
+  netContributionsKrw: null;
+  reconciliationAdjustmentKrw: null;
+  performanceBasisKrw: null;
+  totalProfitKrw: null;
+  totalReturnPercent: null;
+  xirrPercent: null;
   unpricedPositionCount: number;
 };
 
@@ -23,25 +28,37 @@ export type LongTermPerformance = AccountPerformance & { accounts: AccountPerfor
 
 type CashFlow = { date: Date; amount: number };
 
-export function buildLongTermPerformance(trades: Trade[], stocks: Stock[], ledger: TradingLedger, rates: RatesToKrw, asOf = new Date(), accountEntities: readonly InvestmentAccount[] = []): LongTermPerformance {
+export function buildLongTermPerformance(trades: Trade[], stocks: Stock[], ledger: TradingLedger, rates: RatesToKrw, _asOf = new Date(), accountEntities: readonly InvestmentAccount[] = []): LongTermPerformance {
+  void _asOf;
   const active = trades.filter((trade) => !trade.deletedAt && !ledger.calculations[trade.id]?.error);
   const stockById = new Map(stocks.filter((stock) => !stock.deletedAt).map((stock) => [stock.id, stock]));
   const names = new Map(accountEntities.map((account) => [account.id, account.name]));
+  const archivedAccountIds = new Set(accountEntities.filter((account) => account.archivedAt).map((account) => account.id));
   ledger.cashBalances.forEach((balance) => names.set(balance.accountId, balance.accountName));
   ledger.positions.forEach((position) => names.set(position.accountId, position.accountName));
   active.forEach((trade) => { const id = accountIdentity(trade); if (!names.has(id)) names.set(id, trade.accountName); });
-  const accounts = [...names].sort(([, a], [, b]) => a.localeCompare(b)).map(([accountId, accountName]) => buildAccount(accountId, accountName, active, stockById, ledger, rates, asOf));
-  const aggregate = aggregateAccounts(accounts, active, ledger, asOf);
+  const accounts = [...names].sort(([, a], [, b]) => a.localeCompare(b)).map(([accountId, accountName]) => buildAccount(accountId, accountName, stockById, ledger, rates, archivedAccountIds.has(accountId)));
+  const aggregate = aggregateAccounts(accounts);
   return { accountId: "all", accountName: "전체 계좌", ...aggregate, accounts };
 }
 
-function buildAccount(accountId: string, accountName: string, trades: Trade[], stocks: Map<string, Stock>, ledger: TradingLedger, rates: RatesToKrw, asOf: Date): AccountPerformance {
-  const cashKrw = ledger.cashBalances
-    .filter((balance) => balance.accountId === accountId)
-    .reduce((sum, balance) => sum + balance.balance * rates[balance.currency], 0);
+function buildAccount(accountId: string, accountName: string, stocks: Map<string, Stock>, ledger: TradingLedger, rates: RatesToKrw, archived: boolean): AccountPerformance {
+  const accountCash = ledger.cashBalances.filter((balance) => balance.accountId === accountId);
+  const cashKrw = archived
+    ? 0
+    : accountCash.length
+    ? accountCash.reduce((sum, balance) => sum + balance.balance * rates[balance.currency], 0)
+    : null;
   let marketValueKrw = 0;
+  let investedCostKrw = 0;
+  let realizedProfitKrw = 0;
+  let openPositionCount = 0;
   let unpricedPositionCount = 0;
-  for (const position of ledger.positions.filter((item) => item.accountId === accountId && item.quantity > 0)) {
+  for (const position of ledger.positions.filter((item) => item.accountId === accountId)) {
+    realizedProfitKrw += position.realizedProfitKrw;
+    if (position.quantity <= 0) continue;
+    investedCostKrw += position.investedAmountKrw;
+    openPositionCount += 1;
     const price = stocks.get(position.stockId)?.currentPrice ?? 0;
     if (price > 0) marketValueKrw += position.quantity * price * rates[position.currency];
     else {
@@ -49,77 +66,52 @@ function buildAccount(accountId: string, accountName: string, trades: Trade[], s
       unpricedPositionCount += 1;
     }
   }
-  const totalAssetsKrw = cashKrw + marketValueKrw;
-  const accountTrades = trades.filter((trade) => accountIdentity(trade) === accountId);
-  const flows = contributionFlows(accountTrades, false, false);
-  const xirrFlows = contributionFlows(accountTrades, false, true);
-  const netContributionsKrw = normalizeZero(-flows.reduce((sum, flow) => sum + flow.amount, 0));
-  const reconciliationAdjustmentKrw = reconciliationAdjustment(accountTrades);
-  const performanceBasisKrw = netContributionsKrw + reconciliationAdjustmentKrw;
-  const totalProfitKrw = totalAssetsKrw - performanceBasisKrw;
+  const netTradeCapitalKrw = ledger.tradeCapitalBalances
+    .filter((balance) => balance.accountId === accountId)
+    .reduce((sum, balance) => sum + balance.netAmountKrw, 0);
   return {
     accountId, accountName,
     cashKrw,
     marketValueKrw,
-    totalAssetsKrw,
-    netContributionsKrw,
-    reconciliationAdjustmentKrw,
-    performanceBasisKrw,
-    totalProfitKrw,
-    totalReturnPercent: performanceBasisKrw > 0 ? totalProfitKrw / performanceBasisKrw * 100 : null,
-    xirrPercent: flows.length ? calculateXirr([...xirrFlows, { date: asOf, amount: totalAssetsKrw }]) : null,
+    investedCostKrw,
+    realizedProfitKrw,
+    unrealizedProfitKrw: marketValueKrw - investedCostKrw,
+    netTradeCapitalKrw,
+    openPositionCount,
+    totalAssetsKrw: cashKrw === null ? null : cashKrw + marketValueKrw,
+    netContributionsKrw: null,
+    reconciliationAdjustmentKrw: null,
+    performanceBasisKrw: null,
+    totalProfitKrw: null,
+    totalReturnPercent: null,
+    xirrPercent: null,
     unpricedPositionCount,
   };
 }
 
-function aggregateAccounts(accounts: AccountPerformance[], trades: Trade[], ledger: TradingLedger, asOf: Date): Omit<AccountPerformance, "accountId" | "accountName"> {
-  const cashKrw = sum(accounts.map((account) => account.cashKrw));
+function aggregateAccounts(accounts: AccountPerformance[]): Omit<AccountPerformance, "accountId" | "accountName"> {
+  const cashKrw = accounts.length > 0 && accounts.every((account) => account.cashKrw !== null)
+    ? sum(accounts.map((account) => account.cashKrw as number))
+    : null;
   const marketValueKrw = sum(accounts.map((account) => account.marketValueKrw));
-  const totalAssetsKrw = cashKrw + marketValueKrw;
-  const eligibleTrades = trades.filter((trade) => !ledger.calculations[trade.id]?.error);
-  const flows = contributionFlows(eligibleTrades, true, false);
-  const xirrFlows = contributionFlows(eligibleTrades, true, true);
-  const netContributionsKrw = normalizeZero(-sum(flows.map((flow) => flow.amount)));
-  const reconciliationAdjustmentKrw = reconciliationAdjustment(eligibleTrades);
-  const performanceBasisKrw = netContributionsKrw + reconciliationAdjustmentKrw;
-  const totalProfitKrw = totalAssetsKrw - performanceBasisKrw;
+  const investedCostKrw = sum(accounts.map((account) => account.investedCostKrw));
   return {
     cashKrw,
     marketValueKrw,
-    totalAssetsKrw,
-    netContributionsKrw,
-    reconciliationAdjustmentKrw,
-    performanceBasisKrw,
-    totalProfitKrw,
-    totalReturnPercent: performanceBasisKrw > 0 ? totalProfitKrw / performanceBasisKrw * 100 : null,
-    xirrPercent: flows.length ? calculateXirr([...xirrFlows, { date: asOf, amount: totalAssetsKrw }]) : null,
+    investedCostKrw,
+    realizedProfitKrw: sum(accounts.map((account) => account.realizedProfitKrw)),
+    unrealizedProfitKrw: marketValueKrw - investedCostKrw,
+    netTradeCapitalKrw: sum(accounts.map((account) => account.netTradeCapitalKrw)),
+    openPositionCount: sum(accounts.map((account) => account.openPositionCount)),
+    totalAssetsKrw: cashKrw === null ? null : cashKrw + marketValueKrw,
+    netContributionsKrw: null,
+    reconciliationAdjustmentKrw: null,
+    performanceBasisKrw: null,
+    totalProfitKrw: null,
+    totalReturnPercent: null,
+    xirrPercent: null,
     unpricedPositionCount: sum(accounts.map((account) => account.unpricedPositionCount)),
   };
-}
-
-function contributionFlows(trades: Trade[], aggregate: boolean, includeReconciliation: boolean): CashFlow[] {
-  return trades.flatMap((trade) => {
-    const date = new Date(trade.tradedAt);
-    if (!Number.isFinite(date.getTime())) return [];
-    const kind = trade.cashFlowKind ?? (trade.isOpeningPosition ? "opening" : "external");
-    if (kind === "reconciliation" && !includeReconciliation || aggregate && kind === "transfer") return [];
-    if (trade.tradeType === "입금") return [{ date, amount: -(trade.amount ?? 0) * trade.exchangeRate }];
-    if (trade.tradeType === "출금") return [{ date, amount: (trade.amount ?? 0) * trade.exchangeRate }];
-    if (trade.isOpeningPosition && trade.tradeType === "매수") {
-      return [{ date, amount: -(trade.quantity * trade.price + trade.fee + trade.tax) * trade.exchangeRate }];
-    }
-    return [];
-  });
-}
-
-function reconciliationAdjustment(trades: Trade[]) {
-  return normalizeZero(trades.reduce((total, trade) => {
-    if (trade.cashFlowKind !== "reconciliation") return total;
-    const amountKrw = (trade.amount ?? 0) * trade.exchangeRate;
-    if (trade.tradeType === "입금") return total + amountKrw;
-    if (trade.tradeType === "출금") return total - amountKrw;
-    return total;
-  }, 0));
 }
 
 export function calculateXirr(flows: CashFlow[]): number | null {
@@ -144,4 +136,3 @@ export function calculateXirr(flows: CashFlow[]): number | null {
 }
 
 function sum(values: number[]) { return values.reduce((total, value) => total + value, 0); }
-function normalizeZero(value: number) { return Object.is(value, -0) ? 0 : value; }

@@ -1,4 +1,6 @@
+import Decimal from "decimal.js";
 import { buildTradingLedger, type TradingLedger } from "@/domain/trading-ledger";
+import { currencies, type Currency } from "@/domain/currency";
 import type { Trade } from "@/features/trades/types";
 import { saveCollectionsAtomically, type CollectionWrite } from "@/lib/local-repository";
 import type { InvestmentAccount } from "./types";
@@ -25,17 +27,40 @@ export function archiveAccount(accounts: InvestmentAccount[], accountId: string,
 
 export function buildAccountMerge(accounts: InvestmentAccount[], trades: Trade[], sourceAccountId: string, targetAccountId: string, now = new Date().toISOString()): CollectionWrite[] {
   if (!sourceAccountId || sourceAccountId === targetAccountId) throw new Error("서로 다른 계좌를 선택해 주세요.");
-  const source = accounts.find((account) => account.id === sourceAccountId);
+  const source = accounts.find((account) => account.id === sourceAccountId && !account.archivedAt);
   const target = accounts.find((account) => account.id === targetAccountId && !account.archivedAt);
   if (!source || !target) throw new Error("병합할 활성 계좌를 찾을 수 없습니다.");
-  const nextTrades = trades.map((trade) => trade.accountId === sourceAccountId ? { ...trade, accountId: targetAccountId, updatedAt: now } : trade);
-  const nextAccounts = accounts.map((account) => account.id === sourceAccountId ? { ...account, archivedAt: now, isDefault: false, updatedAt: now } : account.id === targetAccountId && source.isDefault ? { ...account, isDefault: true, updatedAt: now } : account);
   const before = buildTradingLedger(trades, accounts);
   if (before.errors.length) throw new Error(`계좌 병합 전에 원장 오류를 먼저 해결해 주세요. ${before.errors[0].message}`);
+  const mergeTime = Date.parse(now);
+  if (!Number.isFinite(mergeTime)) throw new Error("계좌 병합 일시가 올바르지 않습니다.");
+  const mergeTimestamp = new Date(mergeTime).toISOString();
+  const cashAtMerge = buildTradingLedger(trades.filter((trade) => Date.parse(trade.tradedAt) <= mergeTime), accounts);
+  const mergedBaselines = mergedCashBaselines(cashAtMerge, sourceAccountId, targetAccountId, mergeTimestamp);
+  const nextTrades = trades.map((trade) => trade.accountId === sourceAccountId ? { ...trade, accountId: targetAccountId, updatedAt: mergeTimestamp } : trade);
+  const nextAccounts = accounts.map((account) => account.id === sourceAccountId
+    ? { ...account, archivedAt: mergeTimestamp, isDefault: false, updatedAt: mergeTimestamp }
+    : account.id === targetAccountId
+      ? { ...account, isDefault: source.isDefault || account.isDefault, cashTracking: { version: 1 as const, baselines: mergedBaselines }, updatedAt: mergeTimestamp }
+      : account);
   const after = buildTradingLedger(nextTrades, nextAccounts);
   if (after.errors.length) throw new Error(after.errors[0].message);
   if (!sameLedgerEconomics(before, after)) throw new Error("같은 종목의 거래 이력이 두 계좌에 겹쳐 있어 병합 시 원장 계산 결과가 달라집니다.");
   return [{ collection: "accounts", values: nextAccounts }, { collection: "trades", values: nextTrades }];
+}
+
+function mergedCashBaselines(ledger: TradingLedger, sourceAccountId: string, targetAccountId: string, now: string) {
+  const combined = new Map<Currency, Decimal>();
+  for (const balance of ledger.cashBalances) {
+    if (balance.accountId !== sourceAccountId && balance.accountId !== targetAccountId) continue;
+    combined.set(balance.currency, (combined.get(balance.currency) ?? new Decimal(0)).add(balance.balance));
+  }
+  return currencies.flatMap((currency) => {
+    const balance = combined.get(currency);
+    if (!balance) return [];
+    if (balance.isNegative()) throw new Error(`${currency} 현금 잔액이 음수라 계좌를 병합할 수 없습니다.`);
+    return [{ currency, balance: balance.toString(), asOf: now, createdAt: now, updatedAt: now }];
+  });
 }
 
 export async function mergeAccounts(accounts: InvestmentAccount[], trades: Trade[], sourceAccountId: string, targetAccountId: string) {

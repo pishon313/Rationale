@@ -16,7 +16,7 @@ describe("portfolio balance snapshot", () => {
       ledger: ledger([
         position("stock", 6),
         position("bond", 1),
-      ], [{ accountId: "a", accountName: "A", currency: "KRW", balance: 300, isReconciled: true }]),
+      ], [{ accountId: "a", accountName: "A", currency: "KRW", baselineBalance: 300, baselineAsOf: "2026-01-01T00:00:00.000Z", balance: 300, isNegative: false, isReconciled: true }]),
       stocks: [stock, bond],
       ratesToKrw: fallbackRatesToKrw,
       bondStockIds: new Set(["bond"]),
@@ -39,7 +39,7 @@ describe("portfolio balance snapshot", () => {
 
   it("fails closed when prices or cash reconciliation are unavailable", () => {
     expect(buildPortfolioBalanceSnapshot({ ledger: ledger([position("stock", 1)]), stocks: [{ ...stock, currentPrice: 0 }], ratesToKrw: fallbackRatesToKrw }).unavailableReason).toBe("missingPrice");
-    expect(buildPortfolioBalanceSnapshot({ ledger: ledger([], [{ accountId: "a", accountName: "A", currency: "KRW", balance: 1, isReconciled: false }]), stocks: [], ratesToKrw: fallbackRatesToKrw }).unavailableReason).toBe("unreconciledCash");
+    expect(buildPortfolioBalanceSnapshot({ ledger: ledger([], [{ accountId: "a", accountName: "A", currency: "KRW", baselineBalance: 1, baselineAsOf: "2026-01-01T00:00:00.000Z", balance: 1, isNegative: false, isReconciled: false }]), stocks: [], ratesToKrw: fallbackRatesToKrw }).unavailableReason).toBe("unreconciledCash");
   });
 });
 
@@ -80,7 +80,7 @@ function snapshot(savings: number, stocks: number, bonds: number) {
 }
 
 function ledger(positions: TradingLedger["positions"] = [], cashBalances: TradingLedger["cashBalances"] = []): TradingLedger {
-  return { positions, cashBalances, cycles: [], calculations: {}, errors: [], totalRealizedKrw: 0 };
+  return { positions, tradeCapitalBalances: [], cashBalances, cycles: [], calculations: {}, errors: [], totalNetTradeCapitalKrw: 0, totalRealizedKrw: 0 };
 }
 
 function position(stockId: string, quantity: number): TradingLedger["positions"][number] {

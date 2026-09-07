@@ -4,21 +4,24 @@ import { buildTradingLedger } from "@/domain/trading-ledger";
 import type { InvestmentAccount } from "./types";
 import { archiveAccount, buildAccountMerge, ledgerEconomicSnapshot, mergeAccounts, withSingleDefault } from "./account-operations";
 import type { AccountFeePolicyV1 } from "./account-fee-policy";
-import type { AccountFeeCalculationSnapshotV1 } from "@/features/trades/types";
+import type { AccountFeeCalculationSnapshotV1, Trade } from "@/features/trades/types";
 
 const repository = vi.hoisted(() => ({ save: vi.fn() }));
 vi.mock("@/lib/local-repository", () => ({ saveCollectionsAtomically: repository.save }));
 
 const now = "2026-08-08T00:00:00.000Z";
 const account = (id: string, name: string, isDefault = false): InvestmentAccount => ({ id, name, institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault, archivedAt: null, memo: "", createdAt: now, updatedAt: now });
+const withCash = (value: InvestmentAccount, balance: string, currency: "KRW" | "USD" = "KRW"): InvestmentAccount => ({ ...value, cashTracking: { version: 1, baselines: [{ currency, balance, asOf: "2026-01-01T00:00:00.000Z", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" }] } });
 const feePolicy: AccountFeePolicyV1 = { version: 1, enabled: true, rules: [{ id: "r1", name: "기본", market: "all", currency: "KRW", side: "both", ratePercent: "0.1", fixedFee: "0", minimumFee: null, maximumFee: null, grossAmountFrom: null, grossAmountTo: null, effectiveFrom: "2026-01-01", effectiveTo: null, roundingMode: "floor", roundingUnit: "1" }] };
 
 describe("account operations", () => {
   beforeEach(() => repository.save.mockReset());
   it("allows a zero-balance account and keeps at most one default", () => {
-    const result = withSingleDefault([account("a", "A", true)], account("b", "B", true));
+    const edited = withCash(account("b", "B", true), "0");
+    const result = withSingleDefault([account("a", "A", true)], edited);
     expect(result.filter((item) => item.isDefault).map((item) => item.id)).toEqual(["b"]);
     expect(result[0]).not.toHaveProperty("balance");
+    expect(result[0].cashTracking).toEqual(edited.cashTracking);
   });
   it("archives instead of deleting and promotes another active default", () => {
     const result = archiveAccount([account("a", "A", true), account("b", "B")], "a", buildTradingLedger([], [account("a", "A", true), account("b", "B")]), now);
@@ -45,8 +48,10 @@ describe("account operations", () => {
     const entities = [account("a", "A", true), account("b", "B")];
     const position = [security("buy", "a", "NVDA", "매수", 1, 100, "2026-01-01")];
     expect(() => archiveAccount(entities, "a", buildTradingLedger(position, entities), now)).toThrow("보유 자산 또는 현금");
-    const cash = [{ ...sampleTrades[0], id: "cash", stockId: null, stockName: "", accountId: "a", accountName: "A", tradeType: "입금" as const, quantity: 0, price: 0, amount: 100 }];
-    expect(() => archiveAccount(entities, "a", buildTradingLedger(cash, entities), now)).toThrow("보유 자산 또는 현금");
+    const trackedEntities = [withCash(entities[0], "100"), entities[1]];
+    expect(() => archiveAccount(trackedEntities, "a", buildTradingLedger([], trackedEntities), now)).toThrow("보유 자산 또는 현금");
+    const zeroEntities = [withCash(entities[0], "0"), entities[1]];
+    expect(archiveAccount(zeroEntities, "a", buildTradingLedger([], zeroEntities), now).find((item) => item.id === "a")?.cashTracking).toEqual(zeroEntities[0].cashTracking);
     expect(archiveAccount(entities, "a", buildTradingLedger([], entities), now).find((item) => item.id === "a")?.archivedAt).toBe(now);
   });
   it("merges by accountId without rewriting legacy accountName", () => {
@@ -77,6 +82,41 @@ describe("account operations", () => {
     await mergeAccounts(entities, trades, "a", "b");
     expect(repository.save).toHaveBeenCalledTimes(1);
     expect(repository.save.mock.calls[0][0].map((write: { collection: string }) => write.collection)).toEqual(["accounts", "trades"]);
+  });
+  it("re-anchors the sum of known tracked cash on the target without replaying old Trades", () => {
+    const source = withCash(account("a", "A"), "100");
+    const target = withCash(account("b", "B"), "200");
+    const trades = [
+      { ...sampleTrades[0], id: "source-deposit", stockId: null, stockName: "", accountId: "a", accountName: "A", tradeType: "입금" as const, quantity: 0, price: 0, amount: 25, currency: "KRW" as const, exchangeRate: 1, fee: 0, tax: 0, tradedAt: "2026-02-01T00:00:00.000Z", createdAt: "2026-02-01T00:00:00.000Z" },
+      { ...sampleTrades[0], id: "target-withdrawal", stockId: null, stockName: "", accountId: "b", accountName: "B", tradeType: "출금" as const, quantity: 0, price: 0, amount: 50, currency: "KRW" as const, exchangeRate: 1, fee: 0, tax: 0, tradedAt: "2026-02-01T00:00:00.000Z", createdAt: "2026-02-01T00:00:00.000Z" },
+    ];
+    const writes = buildAccountMerge([source, target], trades, "a", "b", now);
+    const nextAccounts = writes.find((write) => write.collection === "accounts")!.values as InvestmentAccount[];
+    const nextTrades = writes.find((write) => write.collection === "trades")!.values as Trade[];
+    expect(nextAccounts.find((item) => item.id === "a")?.cashTracking).toEqual(source.cashTracking);
+    expect(nextAccounts.find((item) => item.id === "b")?.cashTracking).toEqual({ version: 1, baselines: [{ currency: "KRW", balance: "275", asOf: now, createdAt: now, updatedAt: now }] });
+    expect(buildTradingLedger(nextTrades, nextAccounts).cashBalances).toEqual([expect.objectContaining({ accountId: "b", balance: 275, baselineAsOf: now })]);
+  });
+  it("preserves one known balance and leaves currencies unknown on both Accounts untracked", () => {
+    const source = account("a", "A");
+    const target = withCash(account("b", "B"), "12", "USD");
+    const writes = buildAccountMerge([source, target], [], "a", "b", now);
+    const nextAccounts = writes.find((write) => write.collection === "accounts")!.values as InvestmentAccount[];
+    expect(nextAccounts.find((item) => item.id === "b")?.cashTracking).toEqual({ version: 1, baselines: [{ currency: "USD", balance: "12", asOf: now, createdAt: now, updatedAt: now }] });
+
+    const untrackedWrites = buildAccountMerge([source, account("b", "B")], [], "a", "b", now);
+    const untrackedAccounts = untrackedWrites.find((write) => write.collection === "accounts")!.values as InvestmentAccount[];
+    expect(untrackedAccounts.find((item) => item.id === "b")?.cashTracking).toEqual({ version: 1, baselines: [] });
+  });
+  it("does not count an already-recorded future cash event twice when re-anchoring", () => {
+    const source = withCash(account("a", "A"), "100");
+    const target = account("b", "B");
+    const future = { ...sampleTrades[0], id: "future-deposit", stockId: null, stockName: "", accountId: "a", accountName: "A", tradeType: "입금" as const, quantity: 0, price: 0, amount: 25, currency: "KRW" as const, exchangeRate: 1, fee: 0, tax: 0, tradedAt: "2026-09-01T00:00:00.000Z", createdAt: "2026-09-01T00:00:00.000Z" };
+    const writes = buildAccountMerge([source, target], [future], "a", "b", now);
+    const nextAccounts = writes.find((write) => write.collection === "accounts")!.values as InvestmentAccount[];
+    const nextTrades = writes.find((write) => write.collection === "trades")!.values as Trade[];
+    expect(nextAccounts.find((item) => item.id === "b")?.cashTracking?.baselines[0].balance).toBe("100");
+    expect(buildTradingLedger(nextTrades, nextAccounts).cashBalances.find((item) => item.accountId === "b")?.balance).toBe(125);
   });
 });
 

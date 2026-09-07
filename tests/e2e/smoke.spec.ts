@@ -1243,7 +1243,7 @@ test("계좌 병합은 대상 정책을 유지하고 원본 정책과 기존 거
   expect(accounts.find((item: { id: string }) => item.id === "merge-target")).toMatchObject({ feePolicy: target.feePolicy });
 });
 
-test("분석에서 장기 계좌 성과와 계좌별 결과를 표시한다", async ({ page }) => {
+test("현금 기준점이 없으면 분석에서 현금 의존 성과를 계산 불가로 표시한다", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("tradejournal.trades.v1", JSON.stringify([{
     id: "long-term-deposit", stockId: null, stockName: "", planId: null, tradeType: "입금", tradedAt: "2025-01-01T09:00:00+09:00",
     quantity: 0, price: 0, amount: 100000, currency: "KRW", exchangeRate: 1, fee: 0, tax: 0, accountName: "장기 계좌",
@@ -1253,8 +1253,11 @@ test("분석에서 장기 계좌 성과와 계좌별 결과를 표시한다", as
   await page.goto("/analytics");
   await expect(page.getByRole("heading", { name: "장기 계좌 성과" })).toBeVisible();
   const accountRow = page.getByRole("row").filter({ hasText: "장기 계좌" });
-  await expect(accountRow).toContainText("₩100,000");
-  await expect(accountRow).toContainText("0.0%");
+  const cells = accountRow.getByRole("cell");
+  await expect(cells.nth(1)).toHaveText("—");
+  await expect(cells.nth(2)).toContainText("₩0");
+  await expect(cells.nth(3)).toHaveText("—");
+  await expect(cells.nth(7)).toHaveText("—");
 });
 
 test("계좌 이름 변경 후에도 기존 거래 identity를 유지한다", async ({ page }) => {
@@ -1267,7 +1270,7 @@ test("계좌 이름 변경 후에도 기존 거래 identity를 유지한다", as
   await page.addInitScript(({records,accounts}) => { localStorage.setItem("tradejournal.trades.v1", JSON.stringify(records)); localStorage.setItem("tradejournal.accounts.v1", JSON.stringify(accounts)); }, {records: [base("a", "pension", "연금", 100000), base("b", "general", "일반", 200000)], accounts:[e2eAccount("pension","연금"),e2eAccount("general","일반",false)]});
   await page.goto("/accounts");
   const source = page.locator("article").filter({ hasText: "연금" });
-  await expect(source).toContainText("100,000");
+  await expect(source).toContainText("현금—");
   await source.getByRole("button", { name: "수정" }).click();
   await page.getByLabel("계좌명").fill("연금 변경");
   await page.getByRole("button", { name: "저장", exact: true }).click();

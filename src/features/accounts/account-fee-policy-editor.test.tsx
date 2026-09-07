@@ -56,9 +56,19 @@ describe("AccountForm fee policy persistence", () => {
     fireEvent.click(screen.getByRole("button", { name: "저장" }));
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
     expect(onSave.mock.calls[0][0]).toMatchObject({ id: "a", feePolicy: { version: 1, enabled: true, rules: [expect.objectContaining({ fixedFee: "0.25" })] } });
+    expect(onSave.mock.calls[0][0].cashTracking).toEqual(account.cashTracking);
+  });
+
+  it("persists canonical empty cash tracking for a newly created Account", async () => {
+    const onSave = vi.fn<(account: InvestmentAccount) => Promise<void>>().mockResolvedValue(undefined);
+    render(<AccountForm hasDefault={false} onCancel={vi.fn()} onSave={onSave}/>);
+    fireEvent.change(screen.getByLabelText("계좌명"), { target: { value: "New Account" } });
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave.mock.calls[0][0].cashTracking).toEqual({ version: 1, baselines: [] });
   });
 });
 
-const account: InvestmentAccount = { id: "a", name: "Account", institution: "Broker", kind: "brokerage", subtype: "", baseCurrency: "USD", isDefault: true, archivedAt: null, memo: "", feePolicy: policy, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" };
+const account: InvestmentAccount = { id: "a", name: "Account", institution: "Broker", kind: "brokerage", subtype: "", baseCurrency: "USD", isDefault: true, archivedAt: null, memo: "", feePolicy: policy, cashTracking: { version: 1, baselines: [{ currency: "USD", balance: "10", asOf: "2026-01-01T00:00:00Z", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }] }, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" };
 
 function Harness() { const [value, setValue] = useState<AccountFeePolicyV1 | null>(null); return <AccountFeePolicyEditor value={value} baseCurrency="KRW" onChange={setValue}/>; }

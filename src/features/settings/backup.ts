@@ -11,6 +11,7 @@ import { validateTradeFeeMetadata } from "@/features/trades/trade-fee";
 import { accountKinds } from "@/features/accounts/types";
 import type { InvestmentAccount } from "@/features/accounts/types";
 import { validateAccountFeePolicy } from "@/features/accounts/account-fee-policy";
+import { validateAccountCashTracking } from "@/features/accounts/account-cash-tracking";
 import { validateTransferPairs } from "@/features/accounts/account-transfer";
 import { isLocale, type Locale } from "@/i18n/types";
 import type {
@@ -527,5 +528,10 @@ function validateAccountRecord(account: Record<string, unknown>, index: number) 
     const result = validateAccountFeePolicy(account.feePolicy);
     if (!result.valid) throw new Error(`${label}의 ${result.issues[0]?.message ?? "수수료 정책이 올바르지 않습니다."}`);
     account.feePolicy = result.policy;
+  }
+  if (account.cashTracking !== undefined && account.cashTracking !== null) {
+    const result = validateAccountCashTracking(account.cashTracking);
+    if (!result.valid) throw new Error(`${label}의 ${result.issues[0]?.message ?? "현금 추적 설정이 올바르지 않습니다."}`);
+    account.cashTracking = result.tracking;
   }
 }

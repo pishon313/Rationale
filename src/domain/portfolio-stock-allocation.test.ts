@@ -4,7 +4,7 @@ import type { TradingLedger } from "./trading-ledger";
 import { buildPortfolioStockAllocationSnapshot, suggestStockContributionBalance } from "./portfolio-stock-allocation";
 import { sampleStocks } from "@/features/stocks/sample-data";
 
-const emptyLedger: TradingLedger = { positions: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalRealizedKrw: 0 };
+const emptyLedger: TradingLedger = { positions: [], tradeCapitalBalances: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalNetTradeCapitalKrw: 0, totalRealizedKrw: 0 };
 
 describe("portfolio stock allocation snapshot", () => {
   it("aggregates positions across accounts into within-stock weights", () => {

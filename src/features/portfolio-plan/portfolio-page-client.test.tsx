@@ -8,7 +8,7 @@ import { PortfolioPageClient } from "./portfolio-page-client";
 
 const mocks = vi.hoisted(() => ({
   collections: new Map<string, unknown[]>(),
-  ledger: { positions: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalRealizedKrw: 0 } as TradingLedger,
+  ledger: { positions: [], tradeCapitalBalances: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalNetTradeCapitalKrw: 0, totalRealizedKrw: 0 } as TradingLedger,
   stocks: [] as typeof sampleStocks,
   save: vi.fn(),
 }));
@@ -26,7 +26,7 @@ const target: PortfolioAllocationTarget = { id: "t1", revisionId: revision.id, g
 function reset(active = false) {
   mocks.save.mockReset().mockResolvedValue(undefined);
   mocks.stocks = sampleStocks.map((stock, index) => ({ ...stock, currentPrice: index === 0 ? 100 : 50 }));
-  mocks.ledger = { positions: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalRealizedKrw: 0 };
+  mocks.ledger = { positions: [], tradeCapitalBalances: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalNetTradeCapitalKrw: 0, totalRealizedKrw: 0 };
   mocks.collections = new Map([
     ["portfolio-plan-state", active ? [state] : []],
     ["portfolio-plan-revisions", active ? [revision] : []],

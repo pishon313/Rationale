@@ -5,7 +5,7 @@ import type { Stock } from "@/features/stocks/types";
 import type { AccountFeeCalculationSnapshotV1, Trade } from "@/features/trades/types";
 import { MockSyncTransport } from "./mock-sync-transport";
 import { mergeSyncCollections } from "./sync-merge";
-import { fromStockSyncPayload, isSyncableRecord, recordNameFor, toAccountSyncPayload, toStockSyncPayload, toSyncEnvelope, toTradeSyncPayload } from "./sync-projection";
+import { fromAccountSyncPayload, fromStockSyncPayload, isSyncableRecord, recordNameFor, toAccountSyncPayload, toStockSyncPayload, toSyncEnvelope, toTradeSyncPayload } from "./sync-projection";
 import { runForegroundSync } from "./sync-service";
 import type { SyncCollections } from "./sync-types";
 import { validateSyncCandidate } from "./sync-validation";
@@ -14,6 +14,7 @@ import type { AccountFeePolicyV1 } from "@/features/accounts/account-fee-policy"
 const at = "2026-08-10T00:00:00.000Z";
 const account: InvestmentAccount = { id: "a", name: "A", institution: "Demo", kind: "brokerage", subtype: "", baseCurrency: "USD", isDefault: true, archivedAt: null, memo: "", createdAt: at, updatedAt: at };
 const feePolicy: AccountFeePolicyV1 = { version: 1, enabled: true, rules: [{ id: "r1", name: "Fee", market: "all", currency: "USD", side: "both", ratePercent: "0.1", fixedFee: "0", minimumFee: null, maximumFee: null, grossAmountFrom: null, grossAmountTo: null, effectiveFrom: "2026-01-01", effectiveTo: null, roundingMode: "round", roundingUnit: "0.01" }] };
+const cashTracking = { version: 1 as const, baselines: [{ currency: "USD" as const, balance: "123.45", asOf: at, createdAt: at, updatedAt: at }] };
 const stock: Stock = { id: "nvda", ticker: "NVDA", name: "NVIDIA", market: "미국", currency: "USD", assetType: "주식", sector: "", status: "보유", investmentType: "장기 코어", currentPrice: 140, priceUpdatedAt: at, priceQuotedAt: at, priceSource: "manual", priceStatus: "manual", targetPrice: 160, averagePrice: 100, quantity: 9, thesisSummary: "AI", currentView: "강세", currentViewMemo: "", nextReviewDate: null, nextEarningsDate: null, ledgerInitializedAt: at, tags: [], createdAt: at, updatedAt: at, deletedAt: null };
 const trade = (id: string, quantity: number, updatedAt = at): Trade => ({ id, stockId: stock.id, stockName: stock.name, planId: null, tradeType: "매수", tradedAt: updatedAt, quantity, price: 100, currency: "USD", exchangeRate: 1380, fee: 0, tax: 0, accountId: account.id, accountName: account.name, memo: "", emotion: "평온", emotionIntensity: 1, confidenceScore: 3, ruleComplianceScore: 3, ruleViolations: [], createdAt: updatedAt, updatedAt, deletedAt: null });
 const collections = (trades: Trade[] = [trade("t1", 0.35)]): SyncCollections => ({ accounts: [account], stocks: [stock], trades });
@@ -34,6 +35,21 @@ describe("Sync Contract v1", () => {
     expect(projected.feePolicy).toEqual(feePolicy);
     expect(toSyncEnvelope("accounts", { ...account, feePolicy }).schemaVersion).toBe(1);
     expect(() => validateSyncCandidate({ ...collections(), accounts: [{ ...account, feePolicy }] })).not.toThrow();
+  });
+
+  it("keeps optional cashTracking additive and round-trips it through Sync V1", () => {
+    expect(toAccountSyncPayload(account)).not.toHaveProperty("cashTracking");
+    expect(toAccountSyncPayload({ ...account, cashTracking: null })).toHaveProperty("cashTracking", null);
+    const payload = toAccountSyncPayload({ ...account, cashTracking });
+    expect(payload.cashTracking).toEqual(cashTracking);
+    expect(fromAccountSyncPayload(payload, account)).toEqual({ ...account, cashTracking });
+    expect(toSyncEnvelope("accounts", { ...account, cashTracking })).toMatchObject({ schemaVersion: 1, payload: { cashTracking } });
+    expect(() => validateSyncCandidate({ ...collections(), accounts: [{ ...account, cashTracking }] })).not.toThrow();
+  });
+
+  it("fails closed for future or duplicate cash baseline metadata in Sync V1", () => {
+    expect(() => validateSyncCandidate({ ...collections(), accounts: [{ ...account, cashTracking: { ...cashTracking, version: 2 } }] as unknown as InvestmentAccount[] })).toThrow("현금 추적 버전");
+    expect(() => validateSyncCandidate({ ...collections(), accounts: [{ ...account, cashTracking: { version: 1, baselines: [cashTracking.baselines[0], { ...cashTracking.baselines[0], balance: "1" }] } }] as InvestmentAccount[] })).toThrow("중복");
   });
 
   it("fails closed for malformed and future fee policies in Sync V1", () => {
