@@ -1127,6 +1127,111 @@ test("새 계좌를 등록하고 Trade 없이 현재 현금을 추적한다", as
   expect(stored.trades).toEqual([]);
 });
 
+test("nested 현재 현금 dialog의 Escape와 저장은 Trade draft를 보존한다", async ({ page }) => {
+  const accounts = [e2eAccount("escape-a", "Escape A"), { ...e2eAccount("escape-b", "Escape B", false), baseCurrency: "USD" }];
+  await page.addInitScript((values) => {
+    localStorage.setItem("tradejournal.accounts.v1", JSON.stringify(values));
+    localStorage.setItem("tradejournal.stocks.v1", "[]");
+    localStorage.setItem("tradejournal.trades.v1", "[]");
+  }, accounts);
+  await page.goto("/trades");
+
+  await page.getByRole("button", { name: "원장 기록" }).click();
+  let tradeDialog = page.getByRole("dialog", { name: "새 원장 기록" });
+  await tradeDialog.getByRole("button", { name: "입금", exact: true }).click();
+  await tradeDialog.getByLabel("입금 금액").fill("4321");
+  await tradeDialog.getByLabel("계좌").selectOption("escape-b");
+  await tradeDialog.getByLabel("통화").selectOption("USD");
+  await tradeDialog.getByLabel("거래 일시").fill("2026-02-03T04:05:06");
+  await tradeDialog.getByLabel("메모").fill("Escape draft");
+  await tradeDialog.getByRole("button", { name: "기록 저장" }).click();
+  await tradeDialog.getByRole("button", { name: "현재 현금 입력" }).click();
+  let cashDialog = page.getByRole("dialog", { name: "현재 현금 입력" });
+  await expect(cashDialog).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(cashDialog).toHaveCount(0);
+  await expect(tradeDialog).toBeVisible();
+  await expect(tradeDialog.getByLabel("입금 금액")).toHaveValue("4321");
+  await expect(tradeDialog.getByLabel("계좌")).toHaveValue("escape-b");
+  await expect(tradeDialog.getByLabel("통화")).toHaveValue("USD");
+  await expect(tradeDialog.getByLabel("거래 일시")).toHaveValue("2026-02-03T04:05:06");
+  await expect(tradeDialog.getByLabel("메모")).toHaveValue("Escape draft");
+  await expect(tradeDialog.getByRole("button", { name: "기록 저장" })).toBeFocused();
+
+  await page.keyboard.press("Escape");
+  await expect(tradeDialog).toHaveCount(0);
+
+  await page.getByRole("button", { name: "원장 기록" }).click();
+  tradeDialog = page.getByRole("dialog", { name: "새 원장 기록" });
+  await tradeDialog.getByRole("button", { name: "출금", exact: true }).click();
+  await tradeDialog.getByLabel("출금 금액").fill("7654");
+  await tradeDialog.getByLabel("계좌").selectOption("escape-b");
+  await tradeDialog.getByLabel("통화").selectOption("USD");
+  await tradeDialog.getByLabel("거래 일시").fill("2026-02-04T05:06:07");
+  await tradeDialog.getByLabel("메모").fill("Saved baseline draft");
+  await tradeDialog.getByRole("button", { name: "기록 저장" }).click();
+  await tradeDialog.getByRole("button", { name: "현재 현금 입력" }).click();
+  cashDialog = page.getByRole("dialog", { name: "현재 현금 입력" });
+  await cashDialog.getByLabel("현재 현금").fill("0");
+  await cashDialog.getByLabel("기준 일시").fill("2026-01-01T00:00");
+  await cashDialog.getByRole("button", { name: "저장", exact: true }).click();
+
+  await expect(cashDialog).toHaveCount(0);
+  await expect(tradeDialog).toBeVisible();
+  await expect(tradeDialog.getByLabel("출금 금액")).toHaveValue("7654");
+  await expect(tradeDialog.getByLabel("계좌")).toHaveValue("escape-b");
+  await expect(tradeDialog.getByLabel("통화")).toHaveValue("USD");
+  await expect(tradeDialog.getByLabel("거래 일시")).toHaveValue("2026-02-04T05:06:07");
+  await expect(tradeDialog.getByLabel("메모")).toHaveValue("Saved baseline draft");
+  await expect(tradeDialog.getByRole("button", { name: "기록 저장" })).toBeFocused();
+  await tradeDialog.getByRole("button", { name: "취소" }).click();
+  await expect(tradeDialog).toHaveCount(0);
+});
+
+test("Transfer dialog는 nested 현재 현금 dialog 이후에도 draft와 유효한 복귀 포커스를 유지한다", async ({ page }) => {
+  const accounts = [e2eAccount("transfer-escape-a", "Transfer A"), e2eAccount("transfer-escape-b", "Transfer B", false)];
+  await page.addInitScript((values) => {
+    localStorage.setItem("tradejournal.accounts.v1", JSON.stringify(values));
+    localStorage.setItem("tradejournal.stocks.v1", "[]");
+    localStorage.setItem("tradejournal.trades.v1", "[]");
+  }, accounts);
+  await page.goto("/trades");
+  await page.getByRole("button", { name: "계좌 간 이체" }).click();
+  const transferDialog = page.getByRole("dialog", { name: "계좌 간 이체" });
+  await transferDialog.getByLabel("금액").fill("987");
+  await transferDialog.getByLabel("통화").selectOption("USD");
+  await transferDialog.getByLabel("일시").fill("2026-03-04T05:06:07");
+  await transferDialog.getByLabel("메모").fill("Transfer draft");
+  await transferDialog.getByRole("button", { name: "보내는 계좌 현재 현금 입력" }).click();
+  let cashDialog = page.getByRole("dialog", { name: "현재 현금 입력" });
+  await page.keyboard.press("Escape");
+
+  await expect(cashDialog).toHaveCount(0);
+  await expect(transferDialog).toBeVisible();
+  await expect(transferDialog.getByLabel("금액")).toHaveValue("987");
+  await expect(transferDialog.getByLabel("통화")).toHaveValue("USD");
+  await expect(transferDialog.getByLabel("일시")).toHaveValue("2026-03-04T05:06:07");
+  await expect(transferDialog.getByLabel("메모")).toHaveValue("Transfer draft");
+  await expect(transferDialog.getByLabel("금액")).toBeFocused();
+
+  await transferDialog.getByRole("button", { name: "보내는 계좌 현재 현금 입력" }).click();
+  cashDialog = page.getByRole("dialog", { name: "현재 현금 입력" });
+  await cashDialog.getByLabel("현재 현금").fill("0");
+  await cashDialog.getByLabel("기준 일시").fill("2026-01-01T00:00");
+  await cashDialog.getByRole("button", { name: "저장", exact: true }).click();
+
+  await expect(cashDialog).toHaveCount(0);
+  await expect(transferDialog).toBeVisible();
+  await expect(transferDialog.getByLabel("금액")).toHaveValue("987");
+  await expect(transferDialog.getByLabel("통화")).toHaveValue("USD");
+  await expect(transferDialog.getByLabel("일시")).toHaveValue("2026-03-04T05:06:07");
+  await expect(transferDialog.getByLabel("메모")).toHaveValue("Transfer draft");
+  await expect(transferDialog.getByLabel("금액")).toBeFocused();
+  await transferDialog.getByRole("button", { name: "취소" }).click();
+  await expect(transferDialog).toHaveCount(0);
+});
+
 test("Trade-only 사용자는 입금 없이 매수·일부 매도하고 순투입액과 손익을 확인한다", async ({ page }) => {
   await page.goto("/accounts");
   await page.getByRole("button", { name: "계좌 추가" }).click();

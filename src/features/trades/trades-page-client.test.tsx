@@ -121,7 +121,7 @@ describe("AccountTransferDialog", () => {
     expect(screen.getByRole("button", { name: "받는 계좌 현재 현금 입력" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "보내는 계좌 현재 현금 입력" }));
     expect(onRequestCash).toHaveBeenCalledWith("a", "KRW", expect.any(HTMLElement));
-    expect(onRequestCash.mock.calls[0][2]).toHaveTextContent("이체 저장");
+    expect(onRequestCash.mock.calls[0][2]).toBe(screen.getByLabelText("금액"));
     expect(screen.getByRole("button", { name: "이체 저장" })).toBeDisabled();
 
     view.rerender(<AccountTransferDialog {...props} accounts={[withCash(untrackedA), withCash(untrackedB)]} />);

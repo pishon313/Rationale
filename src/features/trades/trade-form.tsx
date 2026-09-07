@@ -45,6 +45,7 @@ type Props = {
   ledger: TradingLedger;
   accounts?: InvestmentAccount[];
   formError?: string;
+  escapeSuspended?: boolean;
   onRequestCash?: (accountId: string, currency: Trade["currency"], trigger: HTMLElement) => void;
   onCancel: () => void;
   onSave: (trade: Trade) => Promise<void> | void;
@@ -57,7 +58,7 @@ const cashBaselineRequiredMessage = "입출금을 현금에 반영하려면 이 
 // 계획 연결 데이터와 저장 로직은 유지하되, 당분간 원장 입력 UI에서는 숨깁니다.
 const showLinkedPlanField = false;
 
-export function TradeForm({ trade, initialType = "매수", initialStockId, lockedStockId, initialAccountId, lockedAccountId, allowedTypes, openingPosition: createOpeningPosition = false, stocks, plans, rules, ledger, accounts, formError = "", onRequestCash, onCancel, onSave }: Props) {
+export function TradeForm({ trade, initialType = "매수", initialStockId, lockedStockId, initialAccountId, lockedAccountId, allowedTypes, openingPosition: createOpeningPosition = false, stocks, plans, rules, ledger, accounts, formError = "", escapeSuspended = false, onRequestCash, onCancel, onSave }: Props) {
   const { t, formatDate, formatNumber } = useI18n();
   const exchangeRates = useExchangeRates();
   const openingPosition = trade?.isOpeningPosition === true || createOpeningPosition;
@@ -154,10 +155,10 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, locke
   }, [currency, exchangeRates.snapshot.rateDate, exchangeRates.snapshot.ratesToKrw, trade, tradedAt]);
 
   useEffect(() => {
-    const close = (event: KeyboardEvent) => { if (event.key === "Escape" && !saving) onCancel(); };
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape" && !saving && !escapeSuspended) onCancel(); };
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [onCancel, saving]);
+  }, [escapeSuspended, onCancel, saving]);
 
   function syncStockCurrency(nextStock?: Stock) {
     if (!nextStock) return;

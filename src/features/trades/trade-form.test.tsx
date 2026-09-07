@@ -90,6 +90,34 @@ describe("TradeForm", () => {
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ tradeType, amount: 1234, cashFlowKind: "external", accountId: "a" }));
   });
 
+  it("nested dialog가 열려 있으면 Escape를 무시하고 해제된 뒤에만 TradeForm을 닫는다", () => {
+    const onCancel = vi.fn();
+    const onRequestCash = vi.fn();
+    const accounts = [account("a", "Account A", true), account("b", "Account B")];
+    const props = { initialType: "입금" as const, stocks: [], plans: samplePlans, rules: sampleRules, ledger: buildTradingLedger([]), accounts, onCancel, onSave: vi.fn(), onRequestCash };
+    const view = render(<TradeForm {...props} />);
+    fireEvent.change(screen.getByLabelText("입금 금액"), { target: { value: "4321" } });
+    fireEvent.change(screen.getByLabelText("계좌"), { target: { value: "b" } });
+    fireEvent.change(screen.getByLabelText("거래 일시"), { target: { value: "2026-02-03T04:05:06" } });
+    fireEvent.change(screen.getByLabelText("메모"), { target: { value: "nested draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "기록 저장" }));
+    fireEvent.click(screen.getByRole("button", { name: "현재 현금 입력" }));
+    expect((onRequestCash.mock.calls[0][2] as HTMLElement).isConnected).toBe(true);
+
+    view.rerender(<TradeForm {...props} escapeSuspended />);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("입금 금액")).toHaveValue(4321);
+    expect(screen.getByLabelText("계좌")).toHaveValue("b");
+    expect(screen.getByLabelText("통화")).toHaveValue("KRW");
+    expect(screen.getByLabelText("거래 일시")).toHaveValue("2026-02-03T04:05:06.000");
+    expect(screen.getByLabelText("메모")).toHaveValue("nested draft");
+
+    view.rerender(<TradeForm {...props} escapeSuspended={false} />);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
   it("현금 미추적 계좌에서도 매수와 배당을 기록한다", () => {
     const untracked = account("a", "Account A", true);
     const onBuy = vi.fn();
