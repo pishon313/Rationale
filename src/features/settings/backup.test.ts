@@ -340,7 +340,7 @@ describe("validateBackupPayload", () => {
     const backup = version5();
     const second = { ...backup.accounts[0], id: "second-account", name: "Second", isDefault: false };
     const accounts = [...backup.accounts, second];
-    const pair = buildAccountTransfer(accounts, { sourceAccountId: accounts[0].id, targetAccountId: second.id, amount: 100, currency: "KRW", tradedAt: valid.exportedAt, memo: "" }, valid.exportedAt, "transfer-test");
+    const pair = buildAccountTransfer(accounts.map((account) => ({ ...account, cashTracking })), { sourceAccountId: accounts[0].id, targetAccountId: second.id, amount: 100, currency: "KRW", tradedAt: valid.exportedAt, memo: "" }, valid.exportedAt, "transfer-test");
     expect(() => validateBackupPayload({ ...backup, accounts, trades: [...backup.trades, pair[0]] })).toThrow("두 건");
     expect(() => validateBackupPayload({ ...backup, accounts, trades: [...backup.trades, pair[0], { ...pair[1], amount: 101 }] })).toThrow("일치");
     expect(() => validateBackupPayload({ ...backup, accounts, trades: [...backup.trades, pair[0], { ...pair[1], currency: "USD", exchangeRate: 1400 }] })).toThrow("일치");

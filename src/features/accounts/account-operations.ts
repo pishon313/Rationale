@@ -16,7 +16,8 @@ export function archiveAccount(accounts: InvestmentAccount[], accountId: string,
   const tolerance = 1e-8;
   const hasPosition = ledger.positions.some((position) => position.accountId === accountId && Math.abs(position.quantity) > tolerance);
   const hasCash = ledger.cashBalances.some((balance) => balance.accountId === accountId && Math.abs(balance.balance) > tolerance);
-  if (hasPosition || hasCash) throw new Error("이 계좌에는 보유 자산 또는 현금이 남아 있어 보관할 수 없습니다. 보유 자산을 정리하고 현금 잔액을 0으로 맞춘 뒤 다시 시도해 주세요.");
+  if (hasPosition) throw new Error("이 계좌에는 열린 포지션이 있어 보관할 수 없습니다. 보유 자산을 먼저 정리해 주세요.");
+  if (hasCash) throw new Error("이 계좌에는 알려진 추적 현금이 남아 있어 보관할 수 없습니다. 현재 현금을 0으로 맞춘 뒤 다시 시도해 주세요.");
   const next = accounts.map((account) => account.id === accountId ? { ...account, isDefault: false, archivedAt: now, updatedAt: now } : account);
   if (!next.some((account) => !account.archivedAt && account.isDefault)) {
     const first = next.find((account) => !account.archivedAt);
@@ -64,7 +65,12 @@ function mergedCashBaselines(ledger: TradingLedger, sourceAccountId: string, tar
 }
 
 export async function mergeAccounts(accounts: InvestmentAccount[], trades: Trade[], sourceAccountId: string, targetAccountId: string) {
-  await saveCollectionsAtomically(buildAccountMerge(accounts, trades, sourceAccountId, targetAccountId));
+  const writes = buildAccountMerge(accounts, trades, sourceAccountId, targetAccountId);
+  await saveCollectionsAtomically(writes);
+  return {
+    accounts: writes.find((write) => write.collection === "accounts")!.values as InvestmentAccount[],
+    trades: writes.find((write) => write.collection === "trades")!.values as Trade[],
+  };
 }
 
 type EconomicPosition = { stockId: string; currency: string; quantity: number; investedAmountKrw: number; averagePrice: number };

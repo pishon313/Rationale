@@ -1,4 +1,4 @@
-# Trade-Centric Ledger v1 — Phase 1
+# Trade-Centric Ledger v1 — Phase 1 + Phase 2
 
 Trade-Centric Ledger makes security Trades the independent source for positions, invested cost, realized profit and Net Trade Capital. Cash is optional Account metadata. A Buy does not require a Deposit or a positive cash balance.
 
@@ -45,7 +45,20 @@ Archived Accounts retain their metadata but do not emit active CashBalance entri
 
 Market value, invested cost, realized P&L, unrealized P&L, Net Trade Capital, and open-position count are calculated without cash. Tracked cash and holdings-plus-cash are available only when cash is tracked. Aggregated cash is unavailable when any included Account is untracked.
 
-Net external contributions, full-account profit/return, XIRR, and an equity curve cannot be inferred from a current-cash snapshot and remain explicitly unavailable. The existing UI only receives minimal nullable compile adapters in Phase 1; final Trade and Account presentation belongs to Phase 2.
+Net external contributions, full-account profit/return, XIRR, and an equity curve cannot be inferred from a current-cash snapshot and remain explicitly unavailable. Trade and Account screens therefore lead with cash-independent position, invested-cost, Net Trade Capital, and realized/unrealized P&L metrics.
+
+## Phase 2 user experience
+
+- A Deposit is not required before a Buy or Sell. Trade recording and P&L remain available while cash is untracked.
+- Untracked cash is unavailable, not zero. An explicitly tracked balance of zero is shown as an actual zero.
+- Entering or updating current cash changes only Account metadata. It never creates a Trade or a reconciliation record.
+- The baseline timestamp is an exclusive boundary: only events whose `tradedAt` is later than `baseline.asOf` affect current cash.
+- Deposit and Withdrawal require a matching Account + Currency baseline. Transfer requires matching baselines on both Accounts. The forms preserve entered values while the user opens current-cash setup.
+- Dividend remains recordable without a baseline and receives no cash effect while that Account + Currency is untracked.
+- Cash tracking can be stopped for one Account + Currency after confirmation without deleting Trades or changing position, capital, or P&L history.
+- Account screens keep fee-policy status, positions, recent Trades, and Trade-derived performance available independently of cash. A cash-inclusive figure is labeled only as `Holdings + tracked cash` and discloses partial Currency coverage.
+
+Rationale has no production users or distributed production data. Neither Phase 1 nor Phase 2 performs cash migration, infers cash intent from old Trades, converts old balances into baselines, or rewrites Accounts at startup.
 
 ## Account merge
 
@@ -63,4 +76,4 @@ The source Account is archived with its metadata preserved. Archived baselines a
 
 ## Deferred work
 
-Phase 1 does not add current-cash dialogs, cash-event UX gating, final Trade/Account page designs, Portfolio cash behavior, Reports changes, Windows work, or Sync V2. The temporary Portfolio reconciliation adapter remains until the Portfolio phase owns the new cash-availability contract.
+Portfolio cash behavior, Reports changes, Windows work, Sync V2, and broad schema cleanup remain deferred. The temporary Portfolio reconciliation adapter remains until the Portfolio phase owns the new cash-availability contract. Phase 2 preserves read compatibility with historical reconciliation records but the normal UI no longer creates them.

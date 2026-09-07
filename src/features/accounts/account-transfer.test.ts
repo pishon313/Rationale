@@ -75,7 +75,8 @@ describe("cash flow semantics", () => {
 
   it("edits both transfer entries while preserving transfer and Trade IDs", () => {
     const pair = buildAccountTransfer(accounts, { sourceAccountId: "a", targetAccountId: "b", amount: 10, currency: "KRW", tradedAt: now, memo: "old" }, now, "pair");
-    const next = updateAccountTransfer(pair, accounts, "pair", { sourceAccountId: "b", targetAccountId: "a", amount: 25, currency: "USD", tradedAt: "2026-02-01T00:00:00.000Z", memo: "new" }, "2026-02-02T00:00:00.000Z");
+    const multiCurrency = accounts.map((account) => ({ ...account, cashTracking: { version: 1 as const, baselines: [...account.cashTracking!.baselines, { currency: "USD" as const, balance: "0", asOf: "2025-12-31T00:00:00.000Z", createdAt: "2025-12-31T00:00:00.000Z", updatedAt: "2025-12-31T00:00:00.000Z" }] } }));
+    const next = updateAccountTransfer(pair, multiCurrency, "pair", { sourceAccountId: "b", targetAccountId: "a", amount: 25, currency: "USD", tradedAt: "2026-02-01T00:00:00.000Z", memo: "new" }, "2026-02-02T00:00:00.000Z");
     expect(next.map((item) => item.id)).toEqual(pair.map((item) => item.id));
     expect(next.every((item) => item.transferId === "pair" && item.amount === 25 && item.currency === "USD" && item.tradedAt === "2026-02-01T00:00:00.000Z")).toBe(true);
     expect(getTransferPair(next, "pair").outgoing.accountId).toBe("b");
@@ -99,5 +100,16 @@ describe("cash flow semantics", () => {
     validateTransferPairs(pair);
     const ledger = buildTradingLedger(pair, accounts);
     expect(ledger.cashBalances.reduce((sum, item) => sum + item.balance, 0)).toBe(0);
+  });
+
+  it.each([
+    ["source", [{ ...accounts[0], cashTracking: { version: 1 as const, baselines: [] } }, accounts[1]]],
+    ["target", [accounts[0], { ...accounts[1], cashTracking: { version: 1 as const, baselines: [] } }]],
+    ["both", accounts.map((account) => ({ ...account, cashTracking: { version: 1 as const, baselines: [] } }))],
+  ])("blocks a transfer when %s cash is untracked without writing either leg", async (_label, candidateAccounts) => {
+    expect(() => buildAccountTransfer(candidateAccounts, { sourceAccountId: "a", targetAccountId: "b", amount: 10, currency: "KRW", tradedAt: now, memo: "" })).toThrow("양쪽 계좌의 현재 현금");
+    const save = vi.fn();
+    await expect(saveAccountTransfer([], candidateAccounts, { sourceAccountId: "a", targetAccountId: "b", amount: 10, currency: "KRW", tradedAt: now, memo: "" }, save)).rejects.toThrow("양쪽 계좌의 현재 현금");
+    expect(save).not.toHaveBeenCalled();
   });
 });

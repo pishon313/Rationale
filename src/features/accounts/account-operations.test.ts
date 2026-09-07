@@ -47,9 +47,9 @@ describe("account operations", () => {
   it("blocks archive while positions or cash remain and allows a zero-balance account", () => {
     const entities = [account("a", "A", true), account("b", "B")];
     const position = [security("buy", "a", "NVDA", "매수", 1, 100, "2026-01-01")];
-    expect(() => archiveAccount(entities, "a", buildTradingLedger(position, entities), now)).toThrow("보유 자산 또는 현금");
+    expect(() => archiveAccount(entities, "a", buildTradingLedger(position, entities), now)).toThrow("열린 포지션");
     const trackedEntities = [withCash(entities[0], "100"), entities[1]];
-    expect(() => archiveAccount(trackedEntities, "a", buildTradingLedger([], trackedEntities), now)).toThrow("보유 자산 또는 현금");
+    expect(() => archiveAccount(trackedEntities, "a", buildTradingLedger([], trackedEntities), now)).toThrow("알려진 추적 현금");
     const zeroEntities = [withCash(entities[0], "0"), entities[1]];
     expect(archiveAccount(zeroEntities, "a", buildTradingLedger([], zeroEntities), now).find((item) => item.id === "a")?.cashTracking).toEqual(zeroEntities[0].cashTracking);
     expect(archiveAccount(entities, "a", buildTradingLedger([], entities), now).find((item) => item.id === "a")?.archivedAt).toBe(now);

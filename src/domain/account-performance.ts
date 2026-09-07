@@ -4,10 +4,16 @@ import type { Stock } from "@/features/stocks/types";
 import type { Trade } from "@/features/trades/types";
 import { accountIdentity, type InvestmentAccount } from "@/features/accounts/types";
 
+export type AccountCashTrackingStatus = "untracked" | "partial" | "tracked";
+
 export type AccountPerformance = {
   accountId: string;
   accountName: string;
   cashKrw: number | null;
+  cashTrackingStatus: AccountCashTrackingStatus;
+  trackedCashCurrencyCount: number;
+  untrackedCashCurrencyCount: number;
+  holdingsPlusTrackedCashKrw: number | null;
   marketValueKrw: number;
   investedCostKrw: number;
   realizedProfitKrw: number;
@@ -37,16 +43,38 @@ export function buildLongTermPerformance(trades: Trade[], stocks: Stock[], ledge
   ledger.cashBalances.forEach((balance) => names.set(balance.accountId, balance.accountName));
   ledger.positions.forEach((position) => names.set(position.accountId, position.accountName));
   active.forEach((trade) => { const id = accountIdentity(trade); if (!names.has(id)) names.set(id, trade.accountName); });
-  const accounts = [...names].sort(([, a], [, b]) => a.localeCompare(b)).map(([accountId, accountName]) => buildAccount(accountId, accountName, stockById, ledger, rates, archivedAccountIds.has(accountId)));
+  const accountById = new Map(accountEntities.map((account) => [account.id, account]));
+  const accounts = [...names].sort(([, a], [, b]) => a.localeCompare(b)).map(([accountId, accountName]) => buildAccount(
+    accountId,
+    accountName,
+    stockById,
+    ledger,
+    rates,
+    archivedAccountIds.has(accountId),
+    active.filter((trade) => accountIdentity(trade) === accountId),
+    accountById.get(accountId),
+  ));
   const aggregate = aggregateAccounts(accounts);
   return { accountId: "all", accountName: "전체 계좌", ...aggregate, accounts };
 }
 
-function buildAccount(accountId: string, accountName: string, stocks: Map<string, Stock>, ledger: TradingLedger, rates: RatesToKrw, archived: boolean): AccountPerformance {
+function buildAccount(accountId: string, accountName: string, stocks: Map<string, Stock>, ledger: TradingLedger, rates: RatesToKrw, archived: boolean, trades: Trade[], account?: InvestmentAccount): AccountPerformance {
   const accountCash = ledger.cashBalances.filter((balance) => balance.accountId === accountId);
-  const cashKrw = archived
-    ? 0
-    : accountCash.length
+  const relevantCurrencies = new Set<Trade["currency"]>();
+  if (!archived && account) relevantCurrencies.add(account.baseCurrency);
+  if (!archived) {
+    trades.forEach((trade) => relevantCurrencies.add(trade.currency));
+    accountCash.forEach((balance) => relevantCurrencies.add(balance.currency));
+  }
+  const trackedCurrencies = new Set(accountCash.map((balance) => balance.currency));
+  const trackedCashCurrencyCount = trackedCurrencies.size;
+  const untrackedCashCurrencyCount = [...relevantCurrencies].filter((currency) => !trackedCurrencies.has(currency)).length;
+  const cashTrackingStatus: AccountCashTrackingStatus = trackedCashCurrencyCount === 0
+    ? "untracked"
+    : untrackedCashCurrencyCount > 0
+      ? "partial"
+      : "tracked";
+  const cashKrw = accountCash.length
     ? accountCash.reduce((sum, balance) => sum + balance.balance * rates[balance.currency], 0)
     : null;
   let marketValueKrw = 0;
@@ -72,13 +100,17 @@ function buildAccount(accountId: string, accountName: string, stocks: Map<string
   return {
     accountId, accountName,
     cashKrw,
+    cashTrackingStatus,
+    trackedCashCurrencyCount,
+    untrackedCashCurrencyCount,
+    holdingsPlusTrackedCashKrw: cashKrw === null ? null : cashKrw + marketValueKrw,
     marketValueKrw,
     investedCostKrw,
     realizedProfitKrw,
     unrealizedProfitKrw: marketValueKrw - investedCostKrw,
     netTradeCapitalKrw,
     openPositionCount,
-    totalAssetsKrw: cashKrw === null ? null : cashKrw + marketValueKrw,
+    totalAssetsKrw: cashTrackingStatus === "tracked" && cashKrw !== null ? cashKrw + marketValueKrw : null,
     netContributionsKrw: null,
     reconciliationAdjustmentKrw: null,
     performanceBasisKrw: null,
@@ -90,13 +122,20 @@ function buildAccount(accountId: string, accountName: string, stocks: Map<string
 }
 
 function aggregateAccounts(accounts: AccountPerformance[]): Omit<AccountPerformance, "accountId" | "accountName"> {
-  const cashKrw = accounts.length > 0 && accounts.every((account) => account.cashKrw !== null)
+  const fullyTracked = accounts.length > 0 && accounts.every((account) => account.cashTrackingStatus === "tracked");
+  const anyTracked = accounts.some((account) => account.cashKrw !== null);
+  const cashKrw = fullyTracked
     ? sum(accounts.map((account) => account.cashKrw as number))
     : null;
+  const knownCashKrw = sum(accounts.map((account) => account.cashKrw ?? 0));
   const marketValueKrw = sum(accounts.map((account) => account.marketValueKrw));
   const investedCostKrw = sum(accounts.map((account) => account.investedCostKrw));
   return {
     cashKrw,
+    cashTrackingStatus: fullyTracked ? "tracked" : anyTracked ? "partial" : "untracked",
+    trackedCashCurrencyCount: sum(accounts.map((account) => account.trackedCashCurrencyCount)),
+    untrackedCashCurrencyCount: sum(accounts.map((account) => account.untrackedCashCurrencyCount)),
+    holdingsPlusTrackedCashKrw: anyTracked ? marketValueKrw + knownCashKrw : null,
     marketValueKrw,
     investedCostKrw,
     realizedProfitKrw: sum(accounts.map((account) => account.realizedProfitKrw)),

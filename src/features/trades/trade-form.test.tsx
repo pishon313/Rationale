@@ -67,6 +67,56 @@ describe("TradeForm", () => {
     expect(screen.queryByLabelText("수량")).not.toBeInTheDocument();
   });
 
+  it.each(["입금", "출금"] as const)("%s은 현재 현금이 없으면 막고 입력값을 유지한 채 기준선 설정으로 연결한다", (tradeType) => {
+    const onSave = vi.fn();
+    const onRequestCash = vi.fn();
+    const untracked = account("a", "Account A", true);
+    const props = { initialType: tradeType, stocks: sampleStocks, plans: samplePlans, rules: sampleRules, ledger: buildTradingLedger([]), onCancel: vi.fn(), onSave, onRequestCash };
+    const view = render(<TradeForm {...props} accounts={[untracked]} />);
+    const amountLabel = `${tradeType} 금액`;
+    fireEvent.change(screen.getByLabelText(amountLabel), { target: { value: "1234" } });
+    fireEvent.click(screen.getByRole("button", { name: "기록 저장" }));
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("현재 현금을 먼저 입력");
+    fireEvent.click(screen.getByRole("button", { name: "현재 현금 입력" }));
+    expect(onRequestCash).toHaveBeenCalledWith("a", "KRW", expect.any(HTMLElement));
+    expect(onRequestCash.mock.calls[0][2]).toHaveTextContent("기록 저장");
+
+    view.rerender(<TradeForm {...props} accounts={[withCashBaseline(untracked)]} />);
+    expect(screen.getByLabelText(amountLabel)).toHaveValue(1234);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "기록 저장" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ tradeType, amount: 1234, cashFlowKind: "external", accountId: "a" }));
+  });
+
+  it("현금 미추적 계좌에서도 매수와 배당을 기록한다", () => {
+    const untracked = account("a", "Account A", true);
+    const onBuy = vi.fn();
+    const buy = render(<TradeForm initialType="매수" stocks={sampleStocks} plans={samplePlans} rules={sampleRules} ledger={buildTradingLedger([])} accounts={[untracked]} onCancel={vi.fn()} onSave={onBuy} />);
+    fireEvent.change(screen.getByLabelText("수량"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("체결 가격"), { target: { value: "1000" } });
+    fireEvent.click(screen.getByRole("button", { name: "기록 저장" }));
+    expect(onBuy).toHaveBeenCalledWith(expect.objectContaining({ tradeType: "매수", accountId: "a" }));
+    buy.unmount();
+
+    const onDividend = vi.fn();
+    render(<TradeForm initialType="배당" stocks={sampleStocks} plans={samplePlans} rules={sampleRules} ledger={buildTradingLedger([])} accounts={[untracked]} onCancel={vi.fn()} onSave={onDividend} />);
+    fireEvent.change(screen.getByLabelText("세전 배당금"), { target: { value: "500" } });
+    fireEvent.click(screen.getByRole("button", { name: "기록 저장" }));
+    expect(onDividend).toHaveBeenCalledWith(expect.objectContaining({ tradeType: "배당", amount: 500, accountId: "a" }));
+  });
+
+  it("추적 계좌의 기존 입금 금액을 수정해 저장한다", () => {
+    const tracked = withCashBaseline(account("a", "Account A", true));
+    const deposit = { ...sampleTrades[0], id: "deposit", stockId: null, stockName: "", tradeType: "입금" as const, quantity: 0, price: 0, amount: 100_000, accountId: "a", accountName: "Account A", cashFlowKind: "external" as const };
+    const onSave = vi.fn();
+    render(<TradeForm trade={deposit} stocks={sampleStocks} plans={samplePlans} rules={sampleRules} ledger={buildTradingLedger([], [tracked])} accounts={[tracked]} onCancel={vi.fn()} onSave={onSave} />);
+    fireEvent.change(screen.getByLabelText("입금 금액"), { target: { value: "120000" } });
+    fireEvent.click(screen.getByRole("button", { name: "변경 저장" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ id: "deposit", amount: 120_000 }));
+  });
+
   it("원화 종목에서 달러 종목으로 바꾸면 기본 환율을 적용한다", () => {
     render(<TradeForm stocks={sampleStocks} plans={samplePlans} rules={sampleRules} ledger={buildTradingLedger([])} onCancel={vi.fn()} onSave={vi.fn()} />);
     selectRegisteredStock("MU", "MU · Micron Technology");
@@ -257,6 +307,10 @@ describe("TradeForm", () => {
 
 function account(id: string, name: string, isDefault = false): InvestmentAccount {
   return { id, name, institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault, archivedAt: null, memo: "", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
+}
+
+function withCashBaseline(value: InvestmentAccount): InvestmentAccount {
+  return { ...value, cashTracking: { version: 1, baselines: [{ currency: "KRW", balance: "0", asOf: "2026-01-01T00:00:00.000Z", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" }] } };
 }
 
 const feePolicy: AccountFeePolicyV1 = { version: 1, enabled: true, rules: [{ id: "fee-rule", name: "한국 매수", market: "한국", currency: "KRW", side: "buy", ratePercent: "0.1", fixedFee: "0", minimumFee: null, maximumFee: null, grossAmountFrom: null, grossAmountTo: null, effectiveFrom: "2026-01-01", effectiveTo: null, roundingMode: "floor", roundingUnit: "1" }] };

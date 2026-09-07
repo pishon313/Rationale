@@ -62,6 +62,24 @@ describe("long-term account performance compile contract", () => {
     expect(result.totalAssetsKrw).toBeNull();
   });
 
+  it("marks partial Currency tracking and scopes holdings plus known tracked cash", () => {
+    const tracked = trackedAccount("a", "A", "0");
+    const trades = [trade({ id: "usd-buy", tradeType: "매수", tradedAt: "2025-01-02", stockId: "usd", stockName: "USD Stock", quantity: 1, price: 10, currency: "USD", exchangeRate: 1400, accountId: "a" })];
+    const result = performance(trades, [stock({ id: "usd", name: "USD Stock", currentPrice: 12, currency: "USD" })], [tracked]).accounts[0];
+    expect(result).toMatchObject({
+      cashKrw: 0,
+      cashTrackingStatus: "partial",
+      trackedCashCurrencyCount: 1,
+      untrackedCashCurrencyCount: 1,
+      marketValueKrw: 16_800,
+      holdingsPlusTrackedCashKrw: 16_800,
+      totalAssetsKrw: null,
+      netContributionsKrw: null,
+      totalReturnPercent: null,
+      xirrPercent: null,
+    });
+  });
+
   it("calculates realized, unrealized, invested cost, and capital independently", () => {
     const accounts = [account("a", "A")];
     const trades = [

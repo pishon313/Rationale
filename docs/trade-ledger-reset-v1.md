@@ -6,7 +6,7 @@ Trade-ledger Reset provides a deliberately narrow reset under **Settings → Dat
 
 The reset covers buys, sells, dividends, deposits, withdrawals, balance reconciliations, both sides of account transfers, opening positions, imported records, manual records, sample records, and system-derived records.
 
-It does not delete or rewrite Stocks, Accounts, Buy Plans, Observations, Reviews, Notes, Rules, dashboard notes, earnings events, credentials, preferences, or import-mapping profiles. Stock prices, thesis, classification, tags, Account metadata, Plan state, and Review references remain unchanged. Holdings, average cost, cash balances, realized P&L, and position cycles become zero or empty only because they are derived from the active Trade ledger.
+It does not delete or rewrite Stocks, Accounts, Buy Plans, Observations, Reviews, Notes, Rules, dashboard notes, earnings events, credentials, preferences, or import-mapping profiles. Stock prices, thesis, classification, tags, Account metadata, Plan state, and Review references remain unchanged. Holdings, average cost, realized P&L, Net Trade Capital, and position cycles become zero or empty because they are derived from the active Trade ledger. Tracked current cash returns to its preserved Account baseline after post-baseline Trade events are removed; untracked cash remains unavailable rather than becoming zero.
 
 ## Bulk soft delete
 
@@ -44,7 +44,7 @@ Reset and Undo use caller-managed failure handling. A failed destructive write i
 
 Sync remains version 1. An ordinary Trade tombstone with a newer `updatedAt` wins over an older active record. Undo produces the same Trade ID with an even newer `updatedAt` and `deletedAt: null`. Sample IDs remain device-local, and the reset snapshot is never a Sync entity.
 
-The current Backup format remains version 5 on this branch. Trade tombstones stay in the ordinary Trade array, while `trade-ledger-reset-snapshots` is excluded from manual Backup, encrypted Backup payloads, restore writes, and automatic-backup source counts. A pre-reset Backup can still restore active Trades; the device-local one-level undo does not travel with a Backup or another Mac.
+The current Backup format remains version 7 on this branch. Trade tombstones stay in the ordinary Trade array, while `trade-ledger-reset-snapshots` is excluded from manual Backup, encrypted Backup payloads, restore writes, and automatic-backup source counts. A pre-reset Backup can still restore active Trades; the device-local one-level undo does not travel with a Backup or another Mac.
 
 Imported tombstones retain their source keys and journal fields. Reimporting the same source identifies a `previously_deleted` restoration candidate instead of inserting a duplicate. Explicit restoration reuses the same Trade ID and the established Import Pipeline preflight.
 
