@@ -15,7 +15,7 @@ The final visible local navigation contains only Overview and Plan. Holdings rem
 
 V1 does not execute orders, connect to brokers, track monthly completion, recommend trades or rebalancing, correct Contributions for Drift, define tolerance bands, support multiple Portfolios or reference models, create Holding persistence, show Revision history, or sync Portfolio state.
 
-`Trade` and `TradingLedger` remain the source of truth for actual positions and Cash. Portfolio persists intent and mutable Contribution settings only.
+`Trade` and `TradingLedger` remain the source of truth for actual positions. Cash is available only for Account-and-Currency pairs with an explicit current-cash baseline. Portfolio persists intent and mutable Contribution settings only.
 
 ## Terminology
 
@@ -89,13 +89,14 @@ The Group total, each Group's Target total, and the final Target total must exac
 Overview compares Target and current values at Group level with nested Target details:
 
 - Stock current value aggregates that Stock's open positions across every Account.
-- Cash Target current value includes reconciled Cash for that Target's Account.
-- The denominator includes every open position and every reconciled Cash balance.
-- unplanned Stocks and Cash Accounts form the synthetic `Outside Current Plan` Group with zero Target Weight;
+- A positive Cash Target with a selected Account requires a matching baseline in the Plan contribution Currency.
+- Without a required Cash target, the denominator contains valid open Stock and Bond positions only; unknown cash is omitted and disclosed, never treated as zero.
+- With required Cash targets, the denominator includes valid positions plus only their matching tracked Cash balances.
+- unplanned Stocks preserve their existing outside-plan behavior; tracked Cash without a matching target remains outside the current Plan and is excluded from target weights;
 - known assets are never renormalized to hide unknown or outside values;
 - Target Value is current total Portfolio value multiplied by Target Weight, never Contribution Amount.
 
-Valuation fails closed for a ledger error, missing held Stock reference, invalid/missing price, invalid FX, unreconciled Cash, or invalid numeric result. In that state, all Current Weights and Drift values are unavailable together, while Target Allocation remains visible.
+Valuation fails closed for a ledger error, missing held Stock reference, invalid/missing price, invalid FX, missing/unreconciled/negative required Cash, or invalid numeric result. In that state, all Current Weights and Drift values are unavailable together, while Target Allocation remains visible. When required Cash is unavailable, Balance Assist uses the saved fixed Contribution Plan instead of inventing a cash-aware recommendation.
 
 ## Backup V7 and V6 migration
 

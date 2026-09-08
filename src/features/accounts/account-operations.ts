@@ -4,6 +4,7 @@ import { currencies, type Currency } from "@/domain/currency";
 import type { Trade } from "@/features/trades/types";
 import { saveCollectionsAtomically, type CollectionWrite } from "@/lib/local-repository";
 import type { InvestmentAccount } from "./types";
+import type { PortfolioAllocationTarget } from "@/features/portfolio-plan/types";
 
 export function withSingleDefault(accounts: InvestmentAccount[], account: InvestmentAccount) {
   return [account, ...accounts.filter((item) => item.id !== account.id)].map((item) => ({
@@ -26,7 +27,7 @@ export function archiveAccount(accounts: InvestmentAccount[], accountId: string,
   return next;
 }
 
-export function buildAccountMerge(accounts: InvestmentAccount[], trades: Trade[], sourceAccountId: string, targetAccountId: string, now = new Date().toISOString()): CollectionWrite[] {
+export function buildAccountMerge(accounts: InvestmentAccount[], trades: Trade[], sourceAccountId: string, targetAccountId: string, now = new Date().toISOString(), portfolioTargets: readonly PortfolioAllocationTarget[] = []): CollectionWrite[] {
   if (!sourceAccountId || sourceAccountId === targetAccountId) throw new Error("서로 다른 계좌를 선택해 주세요.");
   const source = accounts.find((account) => account.id === sourceAccountId && !account.archivedAt);
   const target = accounts.find((account) => account.id === targetAccountId && !account.archivedAt);
@@ -47,7 +48,10 @@ export function buildAccountMerge(accounts: InvestmentAccount[], trades: Trade[]
   const after = buildTradingLedger(nextTrades, nextAccounts);
   if (after.errors.length) throw new Error(after.errors[0].message);
   if (!sameLedgerEconomics(before, after)) throw new Error("같은 종목의 거래 이력이 두 계좌에 겹쳐 있어 병합 시 원장 계산 결과가 달라집니다.");
-  return [{ collection: "accounts", values: nextAccounts }, { collection: "trades", values: nextTrades }];
+  const nextPortfolioTargets = redirectPortfolioAccountReferences(portfolioTargets, sourceAccountId, targetAccountId, mergeTimestamp);
+  const writes: CollectionWrite[] = [{ collection: "accounts", values: nextAccounts }, { collection: "trades", values: nextTrades }];
+  if (nextPortfolioTargets.some((item, index) => item !== portfolioTargets[index])) writes.push({ collection: "portfolio-allocation-targets", values: nextPortfolioTargets });
+  return writes;
 }
 
 function mergedCashBaselines(ledger: TradingLedger, sourceAccountId: string, targetAccountId: string, now: string) {
@@ -64,13 +68,24 @@ function mergedCashBaselines(ledger: TradingLedger, sourceAccountId: string, tar
   });
 }
 
-export async function mergeAccounts(accounts: InvestmentAccount[], trades: Trade[], sourceAccountId: string, targetAccountId: string) {
-  const writes = buildAccountMerge(accounts, trades, sourceAccountId, targetAccountId);
+export async function mergeAccounts(accounts: InvestmentAccount[], trades: Trade[], sourceAccountId: string, targetAccountId: string, portfolioTargets: readonly PortfolioAllocationTarget[] = []) {
+  const writes = buildAccountMerge(accounts, trades, sourceAccountId, targetAccountId, new Date().toISOString(), portfolioTargets);
   await saveCollectionsAtomically(writes);
   return {
     accounts: writes.find((write) => write.collection === "accounts")!.values as InvestmentAccount[],
     trades: writes.find((write) => write.collection === "trades")!.values as Trade[],
+    portfolioTargets: (writes.find((write) => write.collection === "portfolio-allocation-targets")?.values as PortfolioAllocationTarget[] | undefined) ?? [...portfolioTargets],
   };
+}
+
+function redirectPortfolioAccountReferences(targets: readonly PortfolioAllocationTarget[], sourceAccountId: string, targetAccountId: string, updatedAt: string) {
+  const occupiedCashRevisions = new Set(targets.filter((target) => target.targetType === "cash" && target.accountId === targetAccountId).map((target) => target.revisionId));
+  return targets.map((target) => {
+    if (target.accountId !== sourceAccountId) return target;
+    const accountId = target.targetType === "cash" && occupiedCashRevisions.has(target.revisionId) ? null : targetAccountId;
+    if (target.targetType === "cash" && accountId === targetAccountId) occupiedCashRevisions.add(target.revisionId);
+    return { ...target, accountId, updatedAt };
+  });
 }
 
 type EconomicPosition = { stockId: string; currency: string; quantity: number; investedAmountKrw: number; averagePrice: number };

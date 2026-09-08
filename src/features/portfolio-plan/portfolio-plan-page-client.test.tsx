@@ -108,6 +108,19 @@ describe("Contribution Plan page", () => {
     expect(categoryWeights[2]).toHaveValue("25");
   });
 
+  it("explains the fixed fallback when a selected Cash target has no current-cash baseline", () => {
+    seedActive();
+    mocks.collections.set("portfolio-plan-state", [{ ...state, balancePolicy: { version: 1, mode: "balanceAssist", targetWeightsBps: { savings: 3000, stocks: 6000, bonds: 1000 }, toleranceBps: 0, updatedAt: now } }]);
+    mocks.collections.set("portfolio-allocation-groups", [{ ...group, name: "Cash" }]);
+    mocks.collections.set("portfolio-allocation-targets", [{ ...target, targetType: "cash", stockId: null, accountId: "a" }]);
+    mocks.ledger = { ...mocks.ledger, positions: [{ key: "p", stockId: sampleStocks[0]!.id, stockName: "삼성전자", accountId: "a", accountName: "Account A", currency: "KRW", quantity: 1, averagePrice: 0, investedAmount: 0, investedAmountKrw: 0, realizedProfit: 0, realizedProfitKrw: 0 }] };
+
+    render(<PortfolioPlanPageClient />);
+
+    expect(screen.getByText("현재 현금이 필요해 균형 맞추기 대신 저장된 기본 Plan 비율을 사용합니다.")).toBeInTheDocument();
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+
   it("uses optional Allocation stock targets to split the Plan stock amount", () => {
     seedActive();
     mocks.collections.set("portfolio-plan-state", [{ ...state, balancePolicy: { version: 1, mode: "fixed", targetWeightsBps: { savings: 0, stocks: 10000, bonds: 0 }, toleranceBps: 500, stockTargets: [{ stockId: sampleStocks[0]!.id, targetWeightBps: 7000 }, { stockId: sampleStocks[1]!.id, targetWeightBps: 3000 }], stockToleranceBps: 300, updatedAt: now } }]);

@@ -17,11 +17,13 @@ import { archiveAccount, mergeAccounts, withSingleDefault } from "./account-oper
 import { accountFeePolicyStatus, validateAccountFeePolicy, type AccountFeePolicyV1 } from "./account-fee-policy";
 import { AccountFeePolicyEditor } from "./account-fee-policy-editor";
 import { validateAccountCashTracking } from "./account-cash-tracking";
+import type { PortfolioAllocationTarget } from "@/features/portfolio-plan/types";
 
 export function AccountsPageClient() {
   const { t, localeTag, formatNumber } = useI18n();
   const accountStore = useLocalCollection<InvestmentAccount>("accounts", []);
   const tradeStore = useLocalCollection<Trade>("trades", []);
+  const portfolioTargetStore = useLocalCollection<PortfolioAllocationTarget>("portfolio-allocation-targets", []);
   const { allItems: stocks } = useLocalCollection<Stock>("stocks", []);
   const accounts = accountStore.allItems;
   const trades = tradeStore.allItems;
@@ -50,11 +52,16 @@ export function AccountsPageClient() {
   }
 
   async function merge(target: string) {
+    if (portfolioTargetStore.ready === false || portfolioTargetStore.loadError) {
+      setMessage(t("Portfolio 연결 정보를 불러온 뒤 다시 시도해 주세요."));
+      return;
+    }
     if (!window.confirm(t("알려진 추적 현금은 병합 시점 기준으로 다시 설정됩니다. 미추적 현금은 임의로 계산하지 않습니다. 기존 매매 기록과 손익은 유지됩니다. 계속할까요?"))) return;
     try {
-      const merged = await mergeAccounts(accounts, trades, mergeSource, target);
+      const merged = await mergeAccounts(accounts, trades, mergeSource, target, portfolioTargetStore.allItems);
       accountStore.applyCommitted(merged.accounts);
       tradeStore.applyCommitted(merged.trades);
+      portfolioTargetStore.applyCommitted(merged.portfolioTargets);
       setMergeSource("");
       setMessage(t("계좌를 병합하고 전체 원장을 다시 계산했습니다."));
     } catch (error) {

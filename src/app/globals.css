@@ -480,6 +480,7 @@ thead { letter-spacing: 0.015em; }
 .allocation-table-legend i.target { width: 0.125rem; height: 0.85rem; background: var(--color-ink); }
 .allocation-panel-note { display: flex; align-items: flex-start; gap: var(--space-xs); margin-inline: var(--space-md); padding-block: var(--space-sm); border-block-start: var(--rule-thin) solid var(--color-rule); color: var(--color-muted); font-size: 0.6875rem; line-height: 1.5; }
 .allocation-panel-note svg { flex: none; margin-block-start: 0.05rem; }
+.allocation-panel-note button { flex: none; margin-inline-start: auto; border: var(--rule-thin) solid var(--color-rule); border-radius: var(--radius-control); padding: 0.35rem 0.65rem; color: var(--color-ink); font-weight: 700; }
 .allocation-validation { margin: 0 var(--space-md) var(--space-md); padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-control); font-size: 0.6875rem; }
 .allocation-validation.is-valid { background: var(--color-accent-soft); color: var(--color-accent); }
 .allocation-validation.is-invalid { background: color-mix(in srgb, var(--color-amber) 12%, var(--color-surface)); color: color-mix(in srgb, var(--color-amber) 72%, var(--color-ink)); }
@@ -645,6 +646,7 @@ thead { letter-spacing: 0.015em; }
 .portfolio-overview-unavailable strong, .portfolio-overview-unavailable small { display: block; font-size: var(--text-xs); }
 .portfolio-overview-unavailable p { margin: var(--space-xs) 0; color: var(--color-muted); font-size: var(--text-xs); line-height: 1.5; }
 .portfolio-overview-unavailable small { color: var(--color-accent); }
+.portfolio-overview-unavailable button { margin-block-start: var(--space-sm); border-radius: var(--radius-control); background: var(--color-ink); padding: 0.5rem 0.75rem; color: var(--color-surface); font-size: var(--text-xs); font-weight: 700; }
 .portfolio-overview-stock-plan { margin-block-start: var(--space-md); }
 .portfolio-overview-stock-table { min-width: 0; padding-inline: var(--space-md); }
 .portfolio-overview-stock-head, .portfolio-overview-stock-table article { display: grid; min-width: 0; grid-template-columns: minmax(11rem,1fr) minmax(10rem,1.45fr) 7rem 8.5rem; align-items: center; gap: var(--space-md); }

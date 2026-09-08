@@ -52,6 +52,23 @@ describe("Sync Contract v1", () => {
     expect(() => validateSyncCandidate({ ...collections(), accounts: [{ ...account, cashTracking: { version: 1, baselines: [cashTracking.baselines[0], { ...cashTracking.baselines[0], balance: "1" }] } }] as InvestmentAccount[] })).toThrow("중복");
   });
 
+  it("applies add, update, and removal of a baseline through whole-record LWW while preserving Account metadata", () => {
+    const metadata = { ...account, name: "Long-term", institution: "Broker", memo: "keep", isDefault: true };
+    const added = { ...metadata, cashTracking, updatedAt: "2026-08-11T00:00:00.000Z" };
+    const addResult = mergeSyncCollections({ ...collections(), accounts: [metadata] }, [toSyncEnvelope("accounts", added)], at);
+    expect(addResult.collections.accounts[0]).toMatchObject({ name: "Long-term", institution: "Broker", memo: "keep", isDefault: true, cashTracking });
+
+    const updatedTracking = { version: 1 as const, baselines: [{ ...cashTracking.baselines[0], balance: "777.5", updatedAt: "2026-08-12T00:00:00.000Z" }] };
+    const updated = { ...addResult.collections.accounts[0]!, cashTracking: updatedTracking, updatedAt: "2026-08-12T00:00:00.000Z" };
+    const updateResult = mergeSyncCollections(addResult.collections, [toSyncEnvelope("accounts", updated)], at);
+    expect(updateResult.collections.accounts[0]).toMatchObject({ name: "Long-term", memo: "keep", isDefault: true, cashTracking: updatedTracking });
+
+    const removed = { ...updateResult.collections.accounts[0]!, cashTracking: { version: 1 as const, baselines: [] }, updatedAt: "2026-08-13T00:00:00.000Z" };
+    const removeResult = mergeSyncCollections(updateResult.collections, [toSyncEnvelope("accounts", removed)], at);
+    expect(removeResult.collections.accounts[0]).toMatchObject({ name: "Long-term", institution: "Broker", memo: "keep", isDefault: true, cashTracking: { version: 1, baselines: [] } });
+    expect(removeResult.collections.trades).toEqual(updateResult.collections.trades);
+  });
+
   it("fails closed for malformed and future fee policies in Sync V1", () => {
     expect(() => validateSyncCandidate({ ...collections(), accounts: [{ ...account, feePolicy: { ...feePolicy, version: 2 } }] as unknown as InvestmentAccount[] })).toThrow("수수료 정책 버전");
     expect(() => validateSyncCandidate({ ...collections(), accounts: [{ ...account, feePolicy: { ...feePolicy, rules: [{ ...feePolicy.rules[0], ratePercent: "1e2" }] } }] as unknown as InvestmentAccount[] })).toThrow("수수료율");

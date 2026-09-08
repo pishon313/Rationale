@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fallbackRatesToKrw } from "./currency";
-import { buildPortfolioBalanceSnapshot, suggestContributionBalance } from "./portfolio-balance";
+import { buildPortfolioBalanceSnapshot, detectPortfolioCashRequirements, suggestContributionBalance } from "./portfolio-balance";
 import type { TradingLedger } from "./trading-ledger";
 import { sampleStocks } from "@/features/stocks/sample-data";
 import type { PortfolioBalancePolicy } from "@/features/portfolio-plan/types";
@@ -20,6 +20,7 @@ describe("portfolio balance snapshot", () => {
       stocks: [stock, bond],
       ratesToKrw: fallbackRatesToKrw,
       bondStockIds: new Set(["bond"]),
+      cashRequirements: [{ targetId: "cash", accountId: "a", currency: "KRW" }],
     });
     expect(snapshot).toMatchObject({ available: true, totalValueKrw: 1000 });
     expect(snapshot.categories).toEqual([
@@ -39,7 +40,54 @@ describe("portfolio balance snapshot", () => {
 
   it("fails closed when prices or cash reconciliation are unavailable", () => {
     expect(buildPortfolioBalanceSnapshot({ ledger: ledger([position("stock", 1)]), stocks: [{ ...stock, currentPrice: 0 }], ratesToKrw: fallbackRatesToKrw }).unavailableReason).toBe("missingPrice");
-    expect(buildPortfolioBalanceSnapshot({ ledger: ledger([], [{ accountId: "a", accountName: "A", currency: "KRW", baselineBalance: 1, baselineAsOf: "2026-01-01T00:00:00.000Z", balance: 1, isNegative: false, isReconciled: false }]), stocks: [], ratesToKrw: fallbackRatesToKrw }).unavailableReason).toBe("unreconciledCash");
+    expect(buildPortfolioBalanceSnapshot({ ledger: ledger([], [{ accountId: "a", accountName: "A", currency: "KRW", baselineBalance: 1, baselineAsOf: "2026-01-01T00:00:00.000Z", balance: 1, isNegative: false, isReconciled: false }]), stocks: [], ratesToKrw: fallbackRatesToKrw, cashRequirements: [{ targetId: "cash", accountId: "a", currency: "KRW" }] }).unavailableReason).toBe("unreconciledCash");
+  });
+
+  it("uses a positions-only denominator when no selected Cash target requires cash", () => {
+    const snapshot = buildPortfolioBalanceSnapshot({
+      ledger: ledger([position("stock", 2)], [{ accountId: "tracked", accountName: "Tracked", currency: "KRW", baselineBalance: 500, baselineAsOf: "2026-01-01T00:00:00.000Z", balance: 500, isNegative: false, isReconciled: true }]),
+      stocks: [stock],
+      ratesToKrw: fallbackRatesToKrw,
+    });
+    expect(snapshot).toMatchObject({ available: true, cashScope: "positionsOnly", totalValueKrw: 200, outsideCurrentPlanCashValueKrw: 500, outsideCurrentPlanCashUnavailable: false });
+    expect(snapshot.categories).toEqual([
+      expect.objectContaining({ category: "savings", currentValueKrw: null, currentWeightBps: null }),
+      expect.objectContaining({ category: "stocks", currentValueKrw: 200, currentWeightBps: 10000 }),
+      expect.objectContaining({ category: "bonds", currentValueKrw: 0, currentWeightBps: 0 }),
+    ]);
+  });
+
+  it("fails all current values closed when required cash is untracked and recovers for zero", () => {
+    const requirement = [{ targetId: "cash", accountId: "a", currency: "KRW" as const }];
+    const unavailable = buildPortfolioBalanceSnapshot({ ledger: ledger([position("stock", 2)]), stocks: [stock], ratesToKrw: fallbackRatesToKrw, cashRequirements: requirement });
+    expect(unavailable).toMatchObject({ available: false, unavailableReason: "missingCashBaseline", totalValueKrw: null, missingCashRequirements: requirement });
+    expect(unavailable.categories.every((row) => row.currentValueKrw === null && row.currentWeightBps === null)).toBe(true);
+
+    const trackedZero = buildPortfolioBalanceSnapshot({ ledger: ledger([position("stock", 2)], [{ accountId: "a", accountName: "A", currency: "KRW", baselineBalance: 0, baselineAsOf: "2026-01-01T00:00:00.000Z", balance: 0, isNegative: false, isReconciled: true }]), stocks: [stock], ratesToKrw: fallbackRatesToKrw, cashRequirements: requirement });
+    expect(trackedZero).toMatchObject({ available: true, totalValueKrw: 200, missingCashRequirements: [] });
+    expect(trackedZero.categories.find((row) => row.category === "savings")).toMatchObject({ currentValueKrw: 0, currentWeightBps: 0 });
+  });
+
+  it("fails required negative cash safely without letting unrelated untracked cash block positions-only valuation", () => {
+    const negative = { accountId: "a", accountName: "A", currency: "KRW" as const, baselineBalance: 10, baselineAsOf: "2026-01-01T00:00:00.000Z", balance: -1, isNegative: true, isReconciled: true };
+    expect(buildPortfolioBalanceSnapshot({ ledger: ledger([position("stock", 1)], [negative]), stocks: [stock], ratesToKrw: fallbackRatesToKrw })).toMatchObject({ available: true, outsideCurrentPlanCashValueKrw: null, outsideCurrentPlanCashUnavailable: true });
+    expect(buildPortfolioBalanceSnapshot({ ledger: ledger([position("stock", 1)], [negative]), stocks: [stock], ratesToKrw: fallbackRatesToKrw, cashRequirements: [{ targetId: "cash", accountId: "a", currency: "KRW" }] }).unavailableReason).toBe("negativeCash");
+  });
+
+  it("detects only positive active Cash targets with selected Accounts", () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const state = { id: "default" as const, activeRevisionId: "r1", contributionAmountMinor: 100, contributionCurrency: "USD" as const, updatedAt: now };
+    const revision = { id: "r1", revisionNumber: 1, basedOnRevisionId: null, thesis: "", changeNote: "", createdAt: now, activatedAt: now, updatedAt: now };
+    const groups = [
+      { id: "active", revisionId: "r1", name: "Cash", targetWeightBps: 3000, sortOrder: 0, updatedAt: now },
+      { id: "zero", revisionId: "r1", name: "Zero", targetWeightBps: 0, sortOrder: 1, updatedAt: now },
+    ];
+    const targets = [
+      { id: "required", revisionId: "r1", groupId: "active", accountId: "a", targetType: "cash" as const, stockId: null, weightWithinGroupBps: 10000, sortOrder: 0, updatedAt: now },
+      { id: "optional", revisionId: "r1", groupId: "active", accountId: null, targetType: "cash" as const, stockId: null, weightWithinGroupBps: 10000, sortOrder: 1, updatedAt: now },
+      { id: "zero", revisionId: "r1", groupId: "zero", accountId: "b", targetType: "cash" as const, stockId: null, weightWithinGroupBps: 10000, sortOrder: 0, updatedAt: now },
+    ];
+    expect(detectPortfolioCashRequirements({ state, revision, groups, targets })).toEqual([{ targetId: "required", accountId: "a", currency: "USD" }]);
   });
 });
 
@@ -47,6 +95,12 @@ describe("new-cash balance assistance", () => {
   it("keeps the base Plan when current allocation is within tolerance", () => {
     const suggestion = suggestContributionBalance({ snapshot: snapshot(300, 600, 100), policy: { ...policy, toleranceBps: 1 }, baseWeightsBps: base, contributionAmountMinor: 100, contributionCurrency: "KRW", ratesToKrw: fallbackRatesToKrw });
     expect(suggestion).toMatchObject({ source: "withinTolerance", weightsBps: base });
+  });
+
+  it("treats the tolerance boundary as inside and one basis point beyond as outside", () => {
+    const boundaryPolicy = { ...policy, toleranceBps: 100 };
+    expect(suggestContributionBalance({ snapshot: snapshot(290, 610, 100), policy: boundaryPolicy, baseWeightsBps: base, contributionAmountMinor: 100, contributionCurrency: "KRW", ratesToKrw: fallbackRatesToKrw }).source).toBe("withinTolerance");
+    expect(suggestContributionBalance({ snapshot: snapshot(289.9, 610.1, 100), policy: boundaryPolicy, baseWeightsBps: base, contributionAmountMinor: 100, contributionCurrency: "KRW", ratesToKrw: fallbackRatesToKrw }).source).toBe("balanced");
   });
 
   it("directs limited new cash toward underweight categories without selling", () => {
@@ -68,6 +122,14 @@ describe("new-cash balance assistance", () => {
     const unavailable = buildPortfolioBalanceSnapshot({ ledger: { ...ledger(), errors: [{ tradeId: "t", message: "broken" }] }, stocks: [], ratesToKrw: fallbackRatesToKrw });
     expect(suggestContributionBalance({ snapshot: unavailable, policy, baseWeightsBps: base, contributionAmountMinor: 100, contributionCurrency: "KRW", ratesToKrw: fallbackRatesToKrw })).toMatchObject({ source: "unavailable", weightsBps: base });
   });
+
+  it("runs from valid positions only but falls back when a required cash baseline is unavailable", () => {
+    const positionsOnly = buildPortfolioBalanceSnapshot({ ledger: ledger([position("stock", 10)]), stocks: [stock], ratesToKrw: fallbackRatesToKrw });
+    expect(suggestContributionBalance({ snapshot: positionsOnly, policy, baseWeightsBps: base, contributionAmountMinor: 100, contributionCurrency: "KRW", ratesToKrw: fallbackRatesToKrw }).source).toBe("balanced");
+
+    const cashUnavailable = buildPortfolioBalanceSnapshot({ ledger: ledger([position("stock", 10)]), stocks: [stock], ratesToKrw: fallbackRatesToKrw, cashRequirements: [{ targetId: "cash", accountId: "a", currency: "KRW" }] });
+    expect(suggestContributionBalance({ snapshot: cashUnavailable, policy, baseWeightsBps: base, contributionAmountMinor: 100, contributionCurrency: "KRW", ratesToKrw: fallbackRatesToKrw })).toMatchObject({ source: "unavailable", weightsBps: base });
+  });
 });
 
 function snapshot(savings: number, stocks: number, bonds: number) {
@@ -76,7 +138,7 @@ function snapshot(savings: number, stocks: number, bonds: number) {
     { category: "savings" as const, currentValueKrw: savings, currentWeightBps: savings / total * 10000 },
     { category: "stocks" as const, currentValueKrw: stocks, currentWeightBps: stocks / total * 10000 },
     { category: "bonds" as const, currentValueKrw: bonds, currentWeightBps: bonds / total * 10000 },
-  ] };
+  ], cashScope: "required" as const, cashRequirements: [], missingCashRequirements: [], outsideCurrentPlanCashValueKrw: 0, outsideCurrentPlanCashUnavailable: false };
 }
 
 function ledger(positions: TradingLedger["positions"] = [], cashBalances: TradingLedger["cashBalances"] = []): TradingLedger {

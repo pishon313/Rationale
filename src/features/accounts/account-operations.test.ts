@@ -5,6 +5,7 @@ import type { InvestmentAccount } from "./types";
 import { archiveAccount, buildAccountMerge, ledgerEconomicSnapshot, mergeAccounts, withSingleDefault } from "./account-operations";
 import type { AccountFeePolicyV1 } from "./account-fee-policy";
 import type { AccountFeeCalculationSnapshotV1, Trade } from "@/features/trades/types";
+import type { PortfolioAllocationTarget } from "@/features/portfolio-plan/types";
 
 const repository = vi.hoisted(() => ({ save: vi.fn() }));
 vi.mock("@/lib/local-repository", () => ({ saveCollectionsAtomically: repository.save }));
@@ -118,7 +119,29 @@ describe("account operations", () => {
     expect(nextAccounts.find((item) => item.id === "b")?.cashTracking?.baselines[0].balance).toBe("100");
     expect(buildTradingLedger(nextTrades, nextAccounts).cashBalances.find((item) => item.accountId === "b")?.balance).toBe(125);
   });
+
+  it("rewrites Portfolio Account references atomically and clears a duplicate Cash execution hint", () => {
+    const targets: PortfolioAllocationTarget[] = [
+      { id: "source-stock", revisionId: "r1", groupId: "stocks", accountId: "a", targetType: "stock", stockId: "AAPL", weightWithinGroupBps: 10000, sortOrder: 0, updatedAt: beforeDate() },
+      { id: "source-cash", revisionId: "r1", groupId: "cash-a", accountId: "a", targetType: "cash", stockId: null, weightWithinGroupBps: 5000, sortOrder: 0, updatedAt: beforeDate() },
+      { id: "target-cash", revisionId: "r1", groupId: "cash-b", accountId: "b", targetType: "cash", stockId: null, weightWithinGroupBps: 5000, sortOrder: 0, updatedAt: beforeDate() },
+    ];
+    const writes = buildAccountMerge([account("a", "A"), account("b", "B")], [], "a", "b", now, targets);
+    expect(writes.map((write) => write.collection)).toEqual(["accounts", "trades", "portfolio-allocation-targets"]);
+    const nextTargets = writes[2]!.values as PortfolioAllocationTarget[];
+    expect(nextTargets.find((item) => item.id === "source-stock")).toMatchObject({ accountId: "b", updatedAt: now });
+    expect(nextTargets.find((item) => item.id === "source-cash")).toMatchObject({ accountId: null, updatedAt: now });
+    expect(nextTargets.find((item) => item.id === "target-cash")).toBe(targets[2]);
+  });
+
+  it("keeps all writes uncommitted when atomic account merge persistence fails", async () => {
+    repository.save.mockRejectedValueOnce(new Error("disk full"));
+    await expect(mergeAccounts([account("a", "A"), account("b", "B")], [], "a", "b")).rejects.toThrow("disk full");
+    expect(repository.save).toHaveBeenCalledTimes(1);
+  });
 });
+
+function beforeDate() { return "2025-12-31T00:00:00.000Z"; }
 
 function security(id: string, accountId: string, stockId: string, tradeType: "매수" | "매도", quantity: number, price: number, tradedAt: string) {
   return { ...sampleTrades[0], id, accountId, accountName: accountId.toUpperCase(), stockId, stockName: stockId, tradeType, quantity, price, tradedAt, createdAt: tradedAt, updatedAt: tradedAt };

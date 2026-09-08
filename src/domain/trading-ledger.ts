@@ -13,7 +13,7 @@ export type TradeCapitalBalance = { accountId: string; accountName: string; curr
 export type CashBalance = {
   accountId: string; accountName: string; currency: Trade["currency"];
   baselineBalance: number; baselineAsOf: string; balance: number; isNegative: boolean;
-  /** Temporary compile adapter until the Portfolio cash contract is updated in Phase 3. */
+  /** Compatibility flag retained for older Portfolio reconciliation readers. Baseline-driven balances are reconciled by definition. */
   isReconciled: boolean;
 };
 export type PositionCycle = {

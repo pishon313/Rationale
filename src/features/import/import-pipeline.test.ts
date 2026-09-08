@@ -9,6 +9,7 @@ import type { ImportContext, ImportMappingProfile, ParsedTabularFile } from "./i
 import { parseDelimitedImport, parseExcelImport } from "./tabular-parser";
 import { buildTradeLedgerReset } from "@/features/trades/trade-ledger-reset";
 import { sampleStocks } from "@/features/stocks/sample-data";
+import { buildTradingLedger } from "@/domain/trading-ledger";
 
 const now = "2026-08-12T00:00:00.000Z";
 const accounts: InvestmentAccount[] = [{ id: "a1", name: "기본 계좌", institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault: true, archivedAt: null, memo: "", createdAt: now, updatedAt: now }];
@@ -269,6 +270,29 @@ describe("Import Pipeline v1", () => {
   it("stores imported executions as unreviewed file imports", async () => {
     const result = await preview(["2026-08-12T10:00:01,005930,매수,1,70000,0,0,exec-1,"]);
     expect(result.candidates[0].trade).toMatchObject({ journalStatus: "unreviewed", memo: "", origin: { kind: "fileImport", provider: "broker", externalExecutionId: "exec-1", importedAt: now } });
+  });
+
+  it("applies imported Trades only after the exclusive current-cash baseline boundary", async () => {
+    const result = await preview([
+      "2026-08-12T10:00:00,005930,매수,1,10,0,0,before,",
+      "2026-08-12T10:00:01,005930,매수,1,10,0,0,equal,",
+      "2026-08-12T10:00:02,005930,매수,1,10,0,0,after,",
+    ]);
+    const imported = result.candidates.map((candidate) => candidate.trade as Trade);
+    const untracked = buildTradingLedger(imported, accounts);
+    expect(untracked.positions[0]).toMatchObject({ quantity: 3, investedAmount: 30 });
+    expect(untracked.totalNetTradeCapitalKrw).toBe(30);
+    expect(untracked.cashBalances).toEqual([]);
+    expect(imported.every((trade) => trade.origin?.kind === "fileImport")).toBe(true);
+    expect(accounts[0]).not.toHaveProperty("cashTracking");
+
+    const baselineAt = imported[1]!.tradedAt;
+    const trackedAccounts: InvestmentAccount[] = [{ ...accounts[0]!, cashTracking: { version: 1, baselines: [{ currency: "KRW", balance: "100", asOf: baselineAt, createdAt: now, updatedAt: now }] } }];
+    const tracked = buildTradingLedger(imported, trackedAccounts);
+    expect(tracked.cashBalances[0]).toMatchObject({ baselineBalance: 100, balance: 90 });
+    expect(tracked.calculations[imported[0]!.id].cashEffect).toBeNull();
+    expect(tracked.calculations[imported[1]!.id].cashEffect).toBeNull();
+    expect(tracked.calculations[imported[2]!.id].cashEffect).toBe(-10);
   });
 
   it("classifies a deleted exact import as an explicit restore and preserves its journal data", async () => {

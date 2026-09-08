@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import { currencies, type Currency } from "@/domain/currency";
 import { useI18n } from "@/i18n/i18n-provider";
 import { localDateTimeValue } from "@/lib/local-date";
@@ -11,13 +11,14 @@ type Props = {
   accounts: readonly InvestmentAccount[];
   initialAccountId?: string;
   initialCurrency?: Currency;
-  returnFocus?: HTMLElement | null;
+  lockIdentity?: boolean;
+  returnFocus?: HTMLElement | null | RefObject<HTMLElement | null>;
   onClose: () => void;
   onSave: (input: AccountCashBaselineInput) => Promise<void>;
   onSaved?: () => void;
 };
 
-export function AccountCashBaselineDialog({ accounts, initialAccountId, initialCurrency, returnFocus, onClose, onSave, onSaved }: Props) {
+export function AccountCashBaselineDialog({ accounts, initialAccountId, initialCurrency, lockIdentity = false, returnFocus, onClose, onSave, onSaved }: Props) {
   const { t } = useI18n();
   const active = accounts.filter((account) => !account.archivedAt);
   const initialAccount = active.find((account) => account.id === initialAccountId)
@@ -39,7 +40,12 @@ export function AccountCashBaselineDialog({ accounts, initialAccountId, initialC
 
   useEffect(() => {
     firstField.current?.focus();
-    return () => { window.setTimeout(() => returnFocus?.focus(), 0); };
+    const target = returnFocus && "current" in returnFocus ? returnFocus.current : returnFocus;
+    return () => {
+      window.setTimeout(() => {
+        target?.focus();
+      }, 0);
+    };
   }, [returnFocus]);
 
   useEffect(() => {
@@ -85,13 +91,13 @@ export function AccountCashBaselineDialog({ accounts, initialAccountId, initialC
       <p id={descriptionId} className="mt-2 text-sm leading-6 text-[var(--muted)]">{t("현금까지 보고 싶을 때만 현재 금액을 입력하세요. 매매 기록과 손익은 현금 추적 없이도 계산됩니다.")}</p>
       {error && <p role="alert" className="mt-4 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">{error}</p>}
       <label className="mt-5 block text-sm font-medium">{t("계좌")}
-        <select ref={updateMode ? undefined : firstField as React.RefObject<HTMLSelectElement>} required disabled={updateMode || saving} className="mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3 disabled:opacity-70" value={accountId} onChange={(event) => { const next = event.target.value; setAccountId(next); const account = active.find((item) => item.id === next); if (account) setCurrency(account.baseCurrency); }}>
+        <select ref={updateMode ? undefined : firstField as React.RefObject<HTMLSelectElement>} required disabled={updateMode || lockIdentity || saving} className="mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3 disabled:opacity-70" value={accountId} onChange={(event) => { const next = event.target.value; setAccountId(next); const account = active.find((item) => item.id === next); if (account) setCurrency(account.baseCurrency); }}>
           <option value="">{t("계좌 추가 필요")}</option>
           {active.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
         </select>
       </label>
       <label className="mt-4 block text-sm font-medium">{t("통화")}
-        <select required disabled={updateMode || saving} className="mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3 disabled:opacity-70" value={currency} onChange={(event) => setCurrency(event.target.value as Currency)}>{currencies.map((item) => <option key={item}>{item}</option>)}</select>
+        <select required disabled={updateMode || lockIdentity || saving} className="mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3 disabled:opacity-70" value={currency} onChange={(event) => setCurrency(event.target.value as Currency)}>{currencies.map((item) => <option key={item}>{item}</option>)}</select>
       </label>
       <label className="mt-4 block text-sm font-medium">{t("현재 현금")}
         <input ref={updateMode ? firstField as React.RefObject<HTMLInputElement> : undefined} required inputMode="decimal" autoComplete="off" className="mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3" value={balance} onChange={(event) => setBalance(event.target.value)} placeholder="0" />

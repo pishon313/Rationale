@@ -4,13 +4,15 @@ import { ArrowRight, CheckCircle2, CircleDollarSign, Info, Scale, Target } from 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { minorUnitsToMajor } from "@/domain/currency";
-import { buildPortfolioBalanceSnapshot, portfolioBalanceCategories, suggestContributionBalance, type PortfolioBalanceUnavailableReason } from "@/domain/portfolio-balance";
+import { buildPortfolioBalanceSnapshot, detectPortfolioCashRequirements, portfolioBalanceCategories, suggestContributionBalance, type PortfolioBalanceUnavailableReason } from "@/domain/portfolio-balance";
 import { formatCurrency } from "@/domain/money";
 import { buildPortfolioStockAllocationSnapshot, invalidPortfolioStockTargetIds, suggestStockContributionBalance } from "@/domain/portfolio-stock-allocation";
 import { useStockStore } from "@/features/stocks/use-stock-store";
 import { useI18n } from "@/i18n/i18n-provider";
 import { useExchangeRates } from "@/lib/use-exchange-rates";
 import { useLocalCollection } from "@/lib/use-local-collection";
+import { AccountCashBaselineDialog } from "@/features/accounts/account-cash-baseline-dialog";
+import { upsertAccountCashBaseline, type AccountCashBaselineInput } from "@/features/accounts/account-cash-actions";
 import { calculatePortfolioPlanDraft, parsePercentageToBps, portfolioPlanCategoryName, portfolioPlanCategoryWeights, portfolioPlanDraftFromActive, portfolioTargetAllocationCategoryName, withPortfolioPlanCategoryWeights, withPortfolioStockTargetWeights } from "./portfolio-plan-draft";
 import { buildPortfolioPlanRepairActivation, isLegacyPortfolioPlanV6Data, migratePortfolioPlanV6, persistPortfolioPlanRepairActivation, persistPortfolioPlanV6Migration } from "./portfolio-plan-migration";
 import type {
@@ -33,6 +35,8 @@ export function PortfolioPageClient() {
   const groupStore = useLocalCollection<PortfolioAllocationGroup>("portfolio-allocation-groups", []);
   const targetStore = useLocalCollection<PortfolioAllocationTarget | LegacyPortfolioAllocationTargetV6>("portfolio-allocation-targets", []);
   const [migrationError, setMigrationError] = useState("");
+  const [cashDialogOpen, setCashDialogOpen] = useState(false);
+  const cashAction = useRef<HTMLButtonElement>(null);
   const migrationStarted = useRef(false);
   const repairUpgradeStarted = useRef(false);
   const legacy = isLegacyPortfolioPlanV6Data({ states: stateStore.allItems, revisions: revisionStore.allItems, targets: targetStore.allItems });
@@ -75,7 +79,8 @@ export function PortfolioPageClient() {
   const draft = useMemo(() => portfolioPlanDraftFromActive({ state, revision: activeRevision, groups: groupStore.allItems, targets, fallbackCurrency: "KRW" }), [activeRevision, groupStore.allItems, state, targets]);
   const baseWeights = useMemo(() => activeRevision ? portfolioPlanCategoryWeights(draft) : null, [activeRevision, draft]);
   const bondStockIds = useMemo(() => new Set(draft.groups.find((group) => group.category === "bonds")?.targets.flatMap((target) => target.stockId ? [target.stockId] : []) ?? []), [draft]);
-  const balanceSnapshot = useMemo(() => buildPortfolioBalanceSnapshot({ ledger: stockStore.ledger, stocks: stockStore.allStocks, ratesToKrw: exchangeRates.snapshot.ratesToKrw, bondStockIds }), [bondStockIds, exchangeRates.snapshot.ratesToKrw, stockStore.allStocks, stockStore.ledger]);
+  const cashRequirements = useMemo(() => detectPortfolioCashRequirements({ state, revision: activeRevision, groups: groupStore.allItems, targets }), [activeRevision, groupStore.allItems, state, targets]);
+  const balanceSnapshot = useMemo(() => buildPortfolioBalanceSnapshot({ ledger: stockStore.ledger, stocks: stockStore.allStocks, ratesToKrw: exchangeRates.snapshot.ratesToKrw, bondStockIds, cashRequirements }), [bondStockIds, cashRequirements, exchangeRates.snapshot.ratesToKrw, stockStore.allStocks, stockStore.ledger]);
   const stockSnapshot = useMemo(() => buildPortfolioStockAllocationSnapshot({ ledger: stockStore.ledger, stocks: stockStore.allStocks, ratesToKrw: exchangeRates.snapshot.ratesToKrw, bondStockIds }), [bondStockIds, exchangeRates.snapshot.ratesToKrw, stockStore.allStocks, stockStore.ledger]);
   const suggestion = useMemo(() => state && baseWeights ? suggestContributionBalance({ snapshot: balanceSnapshot, policy: state.balancePolicy, baseWeightsBps: baseWeights, contributionAmountMinor: state.contributionAmountMinor, contributionCurrency: state.contributionCurrency, ratesToKrw: exchangeRates.snapshot.ratesToKrw }) : null, [balanceSnapshot, baseWeights, exchangeRates.snapshot.ratesToKrw, state]);
   const categoryExecutionDraft = useMemo(() => suggestion && state?.balancePolicy?.mode === "balanceAssist" ? withPortfolioPlanCategoryWeights(draft, suggestion.weightsBps) : draft, [draft, state?.balancePolicy?.mode, suggestion]);
@@ -119,6 +124,10 @@ export function PortfolioPageClient() {
   const stockCurrentById = new Map(stockSnapshot.rows.map((row) => [row.stockId, row.currentWeightBps]));
   const executionAmountByStockId = new Map<string, number>();
   for (const target of calculation?.targets ?? []) if (target.stockId) executionAmountByStockId.set(target.stockId, (executionAmountByStockId.get(target.stockId) ?? 0) + target.amountMinor);
+  const missingCash = balanceSnapshot.missingCashRequirements[0] ?? null;
+  async function saveCash(input: AccountCashBaselineInput) {
+    await stockStore.replaceAccountsAsync(upsertAccountCashBaseline(stockStore.accounts, input));
+  }
   return <div className="portfolio-overview">
     <header className="portfolio-plan-heading">
       <div><p>{t("Portfolio Overview")}</p><h1>{t("현재 자산과 다음 저축 계획을 한눈에 보세요.")}</h1><span>{t("실제 보유 자산과 Contribution Plan은 서로 다른 기준으로 분리해 보여줍니다.")}</span></div>
@@ -128,18 +137,21 @@ export function PortfolioPageClient() {
     <PortfolioExchangeRateStatus snapshot={exchangeRates.snapshot} refreshing={exchangeRates.refreshing} onlineError={exchangeRates.onlineError} onRefresh={() => void exchangeRates.refresh()} />
 
     <section aria-label={t("포트폴리오 요약")} className="portfolio-overview-kpis">
-      <OverviewMetric label={t("현재 포트폴리오")} value={portfolioValue} help={balanceSnapshot.available ? t("현금과 보유 포지션의 평가 금액") : t("현재 평가 불가")} />
+      <OverviewMetric label={t("현재 포트폴리오")} value={portfolioValue} help={balanceSnapshot.available ? t(balanceSnapshot.cashScope === "positionsOnly" ? "보유 포지션만 포함한 평가 금액" : "필수 현금과 보유 포지션의 평가 금액") : t("현재 평가 불가")} />
       <OverviewMetric label={t("다음 전체 저축액")} value={contributionValue} help={activeRevision ? t("저장된 Contribution Plan 기준") : t("Plan을 만들면 계산됩니다.")} />
       <OverviewMetric label={t("Allocation 상태")} value={allocationStatus} help={allocationStatusHelp} tone={outsideAllocation ? "warning" : state?.balancePolicy && comparableAllocationRows.length ? "positive" : "neutral"} />
       <OverviewMetric label={t("가장 부족한 자산군")} value={priorityValue} help={priorityHelp} tone={priorityRow && priorityRow.drift < 0 ? "warning" : "neutral"} />
     </section>
 
     {invalidStockTargetIds.length > 0 && <section role="alert" className="portfolio-overview-neutral-note"><Info size={16} aria-hidden="true" /><p>{t("사용할 수 없는 주식 세부 목표가 {count}개 있습니다. Allocation에서 종목을 교체하거나 삭제해 주세요.", { count: invalidStockTargetIds.length })} <Link href="/portfolio/allocation">{t("Allocation에서 수정")}</Link></p></section>}
+    {balanceSnapshot.cashScope === "positionsOnly" && <section className="portfolio-overview-neutral-note" role="status"><Info size={16} aria-hidden="true" /><p>{t("현금은 추적되지 않아 현재 구성에 포함되지 않았습니다.")}</p></section>}
+    {balanceSnapshot.outsideCurrentPlanCashValueKrw !== null && balanceSnapshot.outsideCurrentPlanCashValueKrw > 0 && <section className="portfolio-overview-neutral-note"><Info size={16} aria-hidden="true" /><p>{t("현재 계획 밖 추적 현금: {amount}", { amount: formatCurrency(balanceSnapshot.outsideCurrentPlanCashValueKrw, "KRW", localeTag) })}</p></section>}
+    {balanceSnapshot.outsideCurrentPlanCashUnavailable && <section className="portfolio-overview-neutral-note" role="alert"><Info size={16} aria-hidden="true" /><p>{t("현재 계획 밖 추적 현금에 음수 또는 평가 오류가 있어 구성에서 제외했습니다.")}</p></section>}
 
     <div className="portfolio-overview-grid">
       <section aria-labelledby="current-allocation-title" className="portfolio-overview-card">
-        <div className="portfolio-overview-card-header"><div><p>{t("CURRENT ASSETS")}</p><h2 id="current-allocation-title">{t("현재 자산 배분")}</h2><span>{t("실제 거래와 현금 기록으로 계산합니다.")}</span></div><Link href="/portfolio/allocation">{state?.balancePolicy ? t("Allocation에서 수정") : t("Allocation 설정")}<ArrowRight size={14} aria-hidden="true" /></Link></div>
-        {!balanceSnapshot.available ? <OverviewUnavailable reason={balanceSnapshot.unavailableReason} /> : balanceSnapshot.totalValueKrw === 0 && !state?.balancePolicy ? <OverviewEmpty icon={<CircleDollarSign size={22} aria-hidden="true" />} title={t("아직 평가할 자산이 없습니다.")} description={t("계좌나 매매 기록이 없어도 Contribution Plan은 독립적으로 사용할 수 있습니다.")} /> : <>
+        <div className="portfolio-overview-card-header"><div><p>{t("CURRENT ASSETS")}</p><h2 id="current-allocation-title">{t("현재 자산 배분")}</h2><span>{t(balanceSnapshot.cashScope === "positionsOnly" ? "실제 보유 포지션으로 계산합니다." : "실제 거래와 필수 현금 기록으로 계산합니다.")}</span></div><Link href="/portfolio/allocation">{state?.balancePolicy ? t("Allocation에서 수정") : t("Allocation 설정")}<ArrowRight size={14} aria-hidden="true" /></Link></div>
+        {!balanceSnapshot.available ? <OverviewUnavailable reason={balanceSnapshot.unavailableReason} action={missingCash ? <button ref={cashAction} type="button" onClick={() => setCashDialogOpen(true)}>{t("현재 현금 입력")}</button> : null} /> : balanceSnapshot.totalValueKrw === 0 && !state?.balancePolicy ? <OverviewEmpty icon={<CircleDollarSign size={22} aria-hidden="true" />} title={t("아직 평가할 자산이 없습니다.")} description={t("계좌나 매매 기록이 없어도 Contribution Plan은 독립적으로 사용할 수 있습니다.")} /> : <>
           {balanceSnapshot.totalValueKrw === 0 && <p className="portfolio-overview-neutral-note"><Info size={15} aria-hidden="true" />{t("현재 자산은 없지만 저장된 Allocation 목표는 확인할 수 있습니다.")}</p>}
           <div className="portfolio-overview-allocation-dashboard">
             <OverviewDonut weights={currentWeights} empty={!comparableAllocationRows.length} value={portfolioValue} />
@@ -194,6 +206,7 @@ export function PortfolioPageClient() {
     {!activeRevision && !state?.balancePolicy && <section className="portfolio-overview-start"><div><b>{t("처음 시작하시나요?")}</b><p>{t("Plan으로 월 저축액을 만들고, 필요할 때 Allocation에서 전체 자산 목표를 추가하세요.")}</p></div><div><Link href="/portfolio/plan">{t("Plan 만들기")}</Link><Link href="/portfolio/allocation">{t("Allocation 설정")}</Link></div></section>}
 
     <section className="portfolio-overview-disclaimer"><CheckCircle2 size={17} aria-hidden="true" /><p>{t("균형 맞추기는 매도를 제안하지 않으며, 저장된 기본 Plan을 자동으로 변경하지 않습니다. 모든 계산은 사용자가 직접 검토하고 수정할 수 있습니다.")}</p></section>
+    {cashDialogOpen && missingCash && <AccountCashBaselineDialog accounts={stockStore.accounts} initialAccountId={missingCash.accountId} initialCurrency={missingCash.currency} lockIdentity returnFocus={cashAction} onClose={() => setCashDialogOpen(false)} onSave={saveCash} />}
   </div>;
 }
 
@@ -229,15 +242,17 @@ function OverviewRangeBar({ currentBps, targetBps, toleranceBps }: { currentBps:
   return <div className="portfolio-overview-range" style={style} role="cell" aria-label={label}><i className="range" aria-hidden="true" /><i className="current" aria-hidden="true" /><i className="target" aria-hidden="true" /></div>;
 }
 
-function OverviewUnavailable({ reason }: { reason: PortfolioBalanceUnavailableReason }) {
+function OverviewUnavailable({ reason, action }: { reason: PortfolioBalanceUnavailableReason; action?: ReactNode }) {
   const { t } = useI18n();
   const message = reason === "missingPrice" ? "하나 이상의 보유 종목에 유효한 현재가가 없습니다."
     : reason === "invalidFx" ? "필요한 환율이 없거나 올바르지 않습니다."
-      : reason === "unreconciledCash" ? "조정되지 않은 현금 기록이 있어 전체 배분을 확정할 수 없습니다."
+      : reason === "missingCashBaseline" ? "Cash target에 연결된 계좌의 현재 현금이 필요합니다."
+        : reason === "unreconciledCash" ? "조정되지 않은 현금 기록이 있어 전체 배분을 확정할 수 없습니다."
+          : reason === "negativeCash" ? "Cash target에 연결된 추적 현금이 음수여서 현재 배분을 확정할 수 없습니다."
         : reason === "missingStock" ? "보유 포지션에 연결된 종목을 찾을 수 없습니다."
           : reason === "ledgerError" ? "매매 원장 오류가 있어 현재 포트폴리오를 확정할 수 없습니다."
             : "현재 포트폴리오 값을 안전하게 계산할 수 없습니다.";
-  return <div className="portfolio-overview-unavailable" role="status"><strong>{t("현재 자산 평가를 사용할 수 없습니다.")}</strong><p>{t(message)}</p><small>{t("다음 저축 계획은 저장된 기본 Plan 비율로 계속 계산합니다.")}</small></div>;
+  return <div className="portfolio-overview-unavailable" role="status"><strong>{t("현재 자산 평가를 사용할 수 없습니다.")}</strong><p>{t(message)}</p><small>{t("다음 저축 계획은 저장된 기본 Plan 비율로 계속 계산합니다.")}</small>{action}</div>;
 }
 
 function overviewAccent(category: (typeof portfolioBalanceCategories)[number]) { return category === "savings" ? "#c9953f" : category === "stocks" ? "#238769" : "#5d85b2"; }

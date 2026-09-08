@@ -4,7 +4,7 @@ import { ArrowRight, ChevronDown, ChevronRight, Info, Plus, RotateCcw, Save, Tra
 import Link from "next/link";
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { currencies, minorUnitsToMajor, type Currency, type RatesToKrw } from "@/domain/currency";
-import { buildPortfolioBalanceSnapshot, suggestContributionBalance, type PortfolioContributionBalanceSuggestion } from "@/domain/portfolio-balance";
+import { buildPortfolioBalanceSnapshot, detectPortfolioCashRequirements, suggestContributionBalance, type PortfolioContributionBalanceSuggestion } from "@/domain/portfolio-balance";
 import type { ContributionPlanCalculation } from "@/domain/portfolio-contribution";
 import { buildPortfolioStockAllocationSnapshot, invalidPortfolioStockTargetIds, suggestStockContributionBalance, type PortfolioStockContributionSuggestion } from "@/domain/portfolio-stock-allocation";
 import type { TradingLedger } from "@/domain/trading-ledger";
@@ -168,7 +168,8 @@ function PortfolioPlanEditor({ state, activeRevision, revisions, groups, targets
   const changeKind = useMemo(() => classifyPortfolioPlanChanges({ draft, saved: savedDraft, hasActiveRevision: Boolean(activeRevision) }), [activeRevision, draft, savedDraft]);
   const baseWeights = useMemo(() => portfolioPlanCategoryWeights(draft), [draft]);
   const bondStockIds = useMemo(() => new Set(savedDraft.groups.find((group) => group.category === "bonds")?.targets.flatMap((target) => target.stockId ? [target.stockId] : []) ?? []), [savedDraft]);
-  const balanceSnapshot = useMemo(() => buildPortfolioBalanceSnapshot({ ledger, stocks, ratesToKrw, bondStockIds }), [bondStockIds, ledger, ratesToKrw, stocks]);
+  const cashRequirements = useMemo(() => detectPortfolioCashRequirements({ state, revision: activeRevision, groups, targets }), [activeRevision, groups, state, targets]);
+  const balanceSnapshot = useMemo(() => buildPortfolioBalanceSnapshot({ ledger, stocks, ratesToKrw, bondStockIds, cashRequirements }), [bondStockIds, cashRequirements, ledger, ratesToKrw, stocks]);
   const stockSnapshot = useMemo(() => buildPortfolioStockAllocationSnapshot({ ledger, stocks, ratesToKrw, bondStockIds }), [bondStockIds, ledger, ratesToKrw, stocks]);
   const contributionAmountMinor = parseMajorAmountToMinor(draft.contributionAmountInput, draft.contributionCurrency);
   const balanceSuggestion = useMemo(() => baseWeights && contributionAmountMinor !== null ? suggestContributionBalance({ snapshot: balanceSnapshot, policy: state?.balancePolicy, baseWeightsBps: baseWeights, contributionAmountMinor, contributionCurrency: draft.contributionCurrency, ratesToKrw }) : null, [balanceSnapshot, baseWeights, contributionAmountMinor, draft.contributionCurrency, ratesToKrw, state?.balancePolicy]);
@@ -378,7 +379,8 @@ function AllocationPlanBridge({ policy, snapshot, suggestion, stockSuggestion, i
   const currentByCategory = new Map(snapshot.categories.map((row) => [row.category, row.currentWeightBps]));
   const suggestionLabel = suggestion?.source === "balanced" ? t("현재 자산의 차이를 줄이도록 이번 저축 비율을 제안했습니다.")
     : suggestion?.source === "withinTolerance" ? t("허용 오차 안에 있어 저장된 기본 Plan 비율을 그대로 사용합니다.")
-      : suggestion?.source === "unavailable" ? t("현재 자산 평가를 사용할 수 없어 저장된 기본 Plan 비율을 그대로 사용합니다.")
+      : suggestion?.source === "unavailable" && snapshot.unavailableReason === "missingCashBaseline" ? t("현재 현금이 필요해 균형 맞추기 대신 저장된 기본 Plan 비율을 사용합니다.")
+        : suggestion?.source === "unavailable" ? t("현재 자산 평가를 사용할 수 없어 저장된 기본 Plan 비율을 그대로 사용합니다.")
         : t("저장된 기본 Plan 비율을 사용합니다.");
   const stockSuggestionLabel = stockSuggestion?.source === "balanced" ? t("주식 안에서도 부족한 종목을 우선하도록 금액을 나눴습니다.")
     : stockSuggestion?.source === "withinTolerance" ? t("종목별 비중이 허용 오차 안에 있어 저장된 목표 비율을 유지합니다.")

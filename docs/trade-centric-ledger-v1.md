@@ -1,4 +1,4 @@
-# Trade-Centric Ledger v1 — Phase 1 + Phase 2
+# Trade-Centric Ledger v1 — Phase 1 + Phase 2 + Phase 3
 
 Trade-Centric Ledger makes security Trades the independent source for positions, invested cost, realized profit and Net Trade Capital. Cash is optional Account metadata. A Buy does not require a Deposit or a positive cash balance.
 
@@ -58,13 +58,24 @@ Net external contributions, full-account profit/return, XIRR, and an equity curv
 - Cash tracking can be stopped for one Account + Currency after confirmation without deleting Trades or changing position, capital, or P&L history.
 - Account screens keep fee-policy status, positions, recent Trades, and Trade-derived performance available independently of cash. A cash-inclusive figure is labeled only as `Holdings + tracked cash` and discloses partial Currency coverage.
 
-Rationale has no production users or distributed production data. Neither Phase 1 nor Phase 2 performs cash migration, infers cash intent from old Trades, converts old balances into baselines, or rewrites Accounts at startup.
+Rationale has no production users or distributed production data. No phase performs cash migration, infers cash intent from old Trades, converts old balances into baselines, reconstructs historical cash, or rewrites Accounts at startup.
+
+## Phase 3 Portfolio scope
+
+Portfolio detects cash requirements from positive active Cash targets that have a selected Account. The target uses the Plan contribution Currency as its cash contract.
+
+- Without a required Cash target, Portfolio values valid Stock and Bond positions only. Unknown cash is omitted, never substituted with zero, and the UI explicitly says that cash is not included.
+- Tracked cash without a matching active target stays outside the current Plan and is not folded into target weights.
+- With a required Cash target, a matching Account-and-Currency baseline is mandatory. Missing, unreconciled, or negative required cash makes the current total, every current weight, and every drift unavailable together while target intent remains visible.
+- A tracked zero is valid and distinct from unavailable cash. A valid baseline includes only cash events strictly after its `asOf` boundary and uses the existing FX validation.
+- Portfolio offers a direct current-cash action. Saving it updates only Account metadata; it creates no Portfolio Revision and changes no target or policy.
+- Balance Assist can use a position-only snapshot when cash is not required. If required cash is unavailable, it returns saved fixed contribution weights with an explanation. Stock-level assistance remains independent when stock valuation is valid.
 
 ## Account merge
 
 Merge calculates known balances at the merge timestamp, moves Trades through the existing atomic Accounts-plus-Trades write, and creates fresh target baselines at that timestamp. Known source and target amounts are summed by Currency. If only one side is tracked, only its known amount is preserved. A Currency unknown on both sides remains untracked. Future-dated records are excluded from the anchor and apply once after it.
 
-The source Account is archived with its metadata preserved. Archived baselines are not replayed. Fee-policy provenance and the existing position/realized-P&L economic safety check remain intact. Because baseline storage is non-negative, a negative combined amount fails closed instead of storing invalid metadata.
+The source Account is archived with its metadata preserved. Archived baselines are not replayed. Portfolio execution Account references move to the target in the same atomic write; a duplicate Cash execution hint is cleared instead of creating two references to one balance. Fee-policy provenance and the existing position/realized-P&L economic safety check remain intact. Because baseline storage is non-negative, a negative combined amount fails closed instead of storing invalid metadata.
 
 ## Backup, Sync, Import, and reset
 
@@ -72,8 +83,9 @@ The source Account is archived with its metadata preserved. Archived baselines a
 - Sync remains V1 and carries optional Account cash metadata through existing whole-record LWW. `isDefault` stays device-local; no new entity or schema version is introduced.
 - Stored browser and SQLite Account collections use the shared validator and existing quarantine policy.
 - Imported Buy/Sell records need no Deposit; Trade-derived position, capital, and P&L values calculate immediately.
-- Trade-ledger reset behavior and its device-local undo contract are unchanged. Baselines are Account metadata and are not migrated from reset or historical Trade data.
+- Imported records obey the same exclusive cash-baseline boundary: before/equal records do not affect current cash and later records do. Import creates neither Deposits nor baselines.
+- Trade-ledger reset soft-deletes active Trades and preserves Account baselines. Cash returns to its baseline after reset; undo restores Trades and recalculates their post-baseline effects without rewriting the baseline.
 
 ## Deferred work
 
-Portfolio cash behavior, Reports changes, Windows work, Sync V2, and broad schema cleanup remain deferred. The temporary Portfolio reconciliation adapter remains until the Portfolio phase owns the new cash-availability contract. Phase 2 preserves read compatibility with historical reconciliation records but the normal UI no longer creates them.
+Reports changes, Equity Curve, broker APIs, Windows work, Sync V2, cash migration, and broad schema cleanup remain deferred. Read compatibility with historical reconciliation records remains, but the normal UI does not create them.

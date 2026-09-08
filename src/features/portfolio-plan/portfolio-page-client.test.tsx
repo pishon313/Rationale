@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fallbackRatesToKrw } from "@/domain/currency";
 import type { TradingLedger } from "@/domain/trading-ledger";
@@ -10,11 +10,13 @@ const mocks = vi.hoisted(() => ({
   collections: new Map<string, unknown[]>(),
   ledger: { positions: [], tradeCapitalBalances: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalNetTradeCapitalKrw: 0, totalRealizedKrw: 0 } as TradingLedger,
   stocks: [] as typeof sampleStocks,
+  accounts: [] as Array<Record<string, unknown>>,
+  replaceAccounts: vi.fn(),
   save: vi.fn(),
 }));
 vi.mock("@/lib/local-repository", () => ({ saveCollectionsAtomically: mocks.save }));
 vi.mock("@/lib/use-local-collection", () => ({ useLocalCollection: (name: string) => ({ items: mocks.collections.get(name) ?? [], allItems: mocks.collections.get(name) ?? [], ready: true, applyCommitted: vi.fn() }) }));
-vi.mock("@/features/stocks/use-stock-store", () => ({ useStockStore: () => ({ ready: true, allStocks: mocks.stocks, accounts: [{ id: "a", name: "A", institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault: true, archivedAt: null, memo: "", createdAt: now, updatedAt: now }], trades: [], ledger: mocks.ledger }) }));
+vi.mock("@/features/stocks/use-stock-store", () => ({ useStockStore: () => ({ ready: true, allStocks: mocks.stocks, accounts: mocks.accounts, trades: [], ledger: mocks.ledger, replaceAccountsAsync: mocks.replaceAccounts }) }));
 vi.mock("@/lib/use-exchange-rates", () => ({ useExchangeRates: () => ({ ready: true, snapshot: { ratesToKrw: fallbackRatesToKrw } }) }));
 
 const now = "2026-08-18T00:00:00.000Z";
@@ -25,6 +27,8 @@ const target: PortfolioAllocationTarget = { id: "t1", revisionId: revision.id, g
 
 function reset(active = false) {
   mocks.save.mockReset().mockResolvedValue(undefined);
+  mocks.replaceAccounts.mockReset().mockResolvedValue(undefined);
+  mocks.accounts = [{ id: "a", name: "A", institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault: true, archivedAt: null, memo: "", createdAt: now, updatedAt: now }];
   mocks.stocks = sampleStocks.map((stock, index) => ({ ...stock, currentPrice: index === 0 ? 100 : 50 }));
   mocks.ledger = { positions: [], tradeCapitalBalances: [], cashBalances: [], cycles: [], calculations: {}, errors: [], totalNetTradeCapitalKrw: 0, totalRealizedKrw: 0 };
   mocks.collections = new Map([
@@ -54,6 +58,7 @@ describe("Portfolio Overview", () => {
     const nextContribution = screen.getByRole("region", { name: "다음 저축 계획" });
     expect(within(currentAllocation).getByRole("heading", { name: "현재 자산 배분" })).toBeInTheDocument();
     expect(within(currentAllocation).getByText("현금성 자산")).toBeInTheDocument();
+    expect(within(currentAllocation).getByRole("row", { name: /현금성 자산/ })).toHaveTextContent("—");
     expect(within(currentAllocation).queryByText("적금")).not.toBeInTheDocument();
     expect(within(nextContribution).getByRole("heading", { name: "다음 저축 계획" })).toBeInTheDocument();
     expect(within(nextContribution).getByText("적금")).toBeInTheDocument();
@@ -61,6 +66,30 @@ describe("Portfolio Overview", () => {
     expect(screen.getAllByText("₩1,800,000").length).toBeGreaterThan(0);
     expect(screen.getAllByText("₩200").length).toBeGreaterThan(0);
     expect(screen.getByText("리비전 1 · 현재 활성")).toBeInTheDocument();
+    expect(screen.getByText("현금은 추적되지 않아 현재 구성에 포함되지 않았습니다.")).toBeInTheDocument();
+  });
+
+  it("fails closed for a selected Cash target and enters current cash without changing Portfolio collections", async () => {
+    reset(true);
+    mocks.collections.set("portfolio-allocation-groups", [{ ...group, name: "Cash", targetWeightBps: 10000 }]);
+    mocks.collections.set("portfolio-allocation-targets", [{ ...target, targetType: "cash", stockId: null, accountId: "a" }]);
+    mocks.ledger = { ...mocks.ledger, positions: [{ key: "p", stockId: sampleStocks[0]!.id, stockName: "Samsung", accountId: "a", accountName: "A", currency: "KRW", quantity: 2, averagePrice: 0, investedAmount: 0, investedAmountKrw: 0, realizedProfit: 0, realizedProfitKrw: 0 }] };
+
+    render(<PortfolioPageClient />);
+    expect(screen.getByText("Cash target에 연결된 계좌의 현재 현금이 필요합니다.")).toBeInTheDocument();
+    expect(screen.getByText("현재 포트폴리오").closest("article")).toHaveTextContent("—");
+    fireEvent.click(screen.getByRole("button", { name: "현재 현금 입력" }));
+    const dialog = screen.getByRole("dialog", { name: "현재 현금 입력" });
+    expect(within(dialog).getByLabelText("계좌")).toHaveValue("a");
+    expect(within(dialog).getByLabelText("계좌")).toBeDisabled();
+    expect(within(dialog).getByLabelText("통화")).toHaveValue("KRW");
+    expect(within(dialog).getByLabelText("통화")).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("현재 현금"), { target: { value: "250000" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "저장" }));
+
+    await waitFor(() => expect(mocks.replaceAccounts).toHaveBeenCalledTimes(1));
+    expect(mocks.replaceAccounts.mock.calls[0][0][0]).toMatchObject({ id: "a", cashTracking: { version: 1, baselines: [expect.objectContaining({ currency: "KRW", balance: "250000" })] } });
+    expect(mocks.save).not.toHaveBeenCalled();
   });
 
   it("shows whole-portfolio drift and an editable-in-Plan new-cash balance suggestion", () => {
@@ -71,7 +100,7 @@ describe("Portfolio Overview", () => {
     expect(screen.getByText("균형 맞추기 제안")).toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "현재 자산 배분" })).getByText("현재 / 목표")).toBeInTheDocument();
     expect(screen.getByText("조정 필요")).toBeInTheDocument();
-    expect(screen.getByText("목표보다 30%p 부족")).toBeInTheDocument();
+    expect(screen.getByText("목표보다 10%p 부족")).toBeInTheDocument();
     expect(screen.getByText("₩1,350,000")).toBeInTheDocument();
     expect(screen.getByText("₩450,000")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Plan에서 금액과 비율 수정" })).toHaveAttribute("href", "/portfolio/plan");

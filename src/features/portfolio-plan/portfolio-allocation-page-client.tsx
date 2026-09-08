@@ -2,8 +2,8 @@
 
 import { AlertTriangle, ArrowRight, CheckCircle2, Info, Plus, RotateCcw, Save, Scale, Trash2 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
-import { buildPortfolioBalanceSnapshot } from "@/domain/portfolio-balance";
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
+import { buildPortfolioBalanceSnapshot, detectPortfolioCashRequirements } from "@/domain/portfolio-balance";
 import { buildPortfolioStockAllocationSnapshot, invalidPortfolioStockTargetIds } from "@/domain/portfolio-stock-allocation";
 import { formatCurrency } from "@/domain/money";
 import { usePortfolioShell } from "@/features/portfolio-shell/portfolio-shell";
@@ -12,6 +12,8 @@ import { isBondStock } from "@/features/stocks/asset-class";
 import { useI18n } from "@/i18n/i18n-provider";
 import { useExchangeRates } from "@/lib/use-exchange-rates";
 import { useLocalCollection } from "@/lib/use-local-collection";
+import { AccountCashBaselineDialog } from "@/features/accounts/account-cash-baseline-dialog";
+import { upsertAccountCashBaseline, type AccountCashBaselineInput } from "@/features/accounts/account-cash-actions";
 import {
   formatBpsInput,
   parsePercentageToBps,
@@ -49,6 +51,8 @@ export function PortfolioAllocationPageClient() {
   const groupStore = useLocalCollection<PortfolioAllocationGroup>("portfolio-allocation-groups", []);
   const targetStore = useLocalCollection<PortfolioAllocationTarget | LegacyPortfolioAllocationTargetV6>("portfolio-allocation-targets", []);
   const [migrationError, setMigrationError] = useState("");
+  const [cashDialogOpen, setCashDialogOpen] = useState(false);
+  const cashAction = useRef<HTMLButtonElement>(null);
   const migrationStarted = useRef(false);
   const repairUpgradeStarted = useRef(false);
   const legacy = isLegacyPortfolioPlanV6Data({ states: stateStore.allItems, revisions: revisionStore.allItems, targets: targetStore.allItems });
@@ -62,7 +66,8 @@ export function PortfolioAllocationPageClient() {
   const fallbackCurrency = shellSnapshot.status === "ready" ? shellSnapshot.portfolio.baseCurrency : "KRW";
   const planDraft = useMemo(() => portfolioPlanDraftFromActive({ state, revision: activeRevision, groups: groupStore.allItems, targets, fallbackCurrency }), [activeRevision, fallbackCurrency, groupStore.allItems, state, targets]);
   const bondStockIds = useMemo(() => new Set(planDraft.groups.find((group) => group.category === "bonds")?.targets.flatMap((target) => target.stockId ? [target.stockId] : []) ?? []), [planDraft]);
-  const balanceSnapshot = useMemo(() => buildPortfolioBalanceSnapshot({ ledger: stockStore.ledger, stocks: stockStore.allStocks, ratesToKrw: exchangeRates.snapshot.ratesToKrw, bondStockIds }), [bondStockIds, exchangeRates.snapshot.ratesToKrw, stockStore.allStocks, stockStore.ledger]);
+  const cashRequirements = useMemo(() => detectPortfolioCashRequirements({ state, revision: activeRevision, groups: groupStore.allItems, targets }), [activeRevision, groupStore.allItems, state, targets]);
+  const balanceSnapshot = useMemo(() => buildPortfolioBalanceSnapshot({ ledger: stockStore.ledger, stocks: stockStore.allStocks, ratesToKrw: exchangeRates.snapshot.ratesToKrw, bondStockIds, cashRequirements }), [bondStockIds, cashRequirements, exchangeRates.snapshot.ratesToKrw, stockStore.allStocks, stockStore.ledger]);
   const stockAllocationSnapshot = useMemo(() => buildPortfolioStockAllocationSnapshot({ ledger: stockStore.ledger, stocks: stockStore.allStocks, ratesToKrw: exchangeRates.snapshot.ratesToKrw, bondStockIds }), [bondStockIds, exchangeRates.snapshot.ratesToKrw, stockStore.allStocks, stockStore.ledger]);
   const allocationStocks = useMemo(() => stockStore.allStocks.filter((stock) => !bondStockIds.has(stock.id) && !isBondStock(stock)), [bondStockIds, stockStore.allStocks]);
 
@@ -112,6 +117,10 @@ export function PortfolioAllocationPageClient() {
   if (!ready || (legacy || repairState) && !loadError) return <p className="py-20 text-center text-sm text-[var(--muted)]">{t("Allocation을 불러오는 중입니다.")}</p>;
   if (loadError) return <section role="alert" className="rounded-xl border border-red-300 bg-red-50 p-6 text-center text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-100"><h1 className="font-semibold">{t("Allocation을 불러오지 못했습니다.")}</h1><p className="mt-2">{loadError}</p></section>;
 
+  const missingCash = balanceSnapshot.missingCashRequirements[0] ?? null;
+  async function saveCash(input: AccountCashBaselineInput) {
+    await stockStore.replaceAccountsAsync(upsertAccountCashBaseline(stockStore.accounts, input));
+  }
   return <><PortfolioExchangeRateStatus snapshot={exchangeRates.snapshot} refreshing={exchangeRates.refreshing} onlineError={exchangeRates.onlineError} onRefresh={() => void exchangeRates.refresh()} /><PortfolioAllocationEditor
     state={state}
     fallbackCurrency={fallbackCurrency}
@@ -119,7 +128,12 @@ export function PortfolioAllocationPageClient() {
     stockSnapshot={stockAllocationSnapshot}
     stocks={allocationStocks}
     applyStates={(values) => stateStore.applyCommitted(values)}
-  /></>;
+    cashScope={balanceSnapshot.cashScope}
+    missingCash={Boolean(missingCash)}
+    outsideCashUnavailable={balanceSnapshot.outsideCurrentPlanCashUnavailable}
+    cashActionRef={cashAction}
+    onEnterCash={() => setCashDialogOpen(true)}
+  />{cashDialogOpen && missingCash && <AccountCashBaselineDialog accounts={stockStore.accounts} initialAccountId={missingCash.accountId} initialCurrency={missingCash.currency} lockIdentity returnFocus={cashAction} onClose={() => setCashDialogOpen(false)} onSave={saveCash} />}</>;
 }
 
 type StockTargetDraft = { id: string; stockId: string; weightInput: string };
@@ -134,13 +148,18 @@ type AllocationDraft = {
 
 const allocationColors = { savings: "#b38337", stocks: "#238769", bonds: "#5d85b2" } as const;
 
-function PortfolioAllocationEditor({ state, fallbackCurrency, snapshot, stockSnapshot, stocks, applyStates }: {
+function PortfolioAllocationEditor({ state, fallbackCurrency, snapshot, stockSnapshot, stocks, applyStates, cashScope, missingCash, outsideCashUnavailable, cashActionRef, onEnterCash }: {
   state: PortfolioPlanState | null;
   fallbackCurrency: PortfolioPlanState["contributionCurrency"];
   snapshot: ReturnType<typeof buildPortfolioBalanceSnapshot>;
   stockSnapshot: ReturnType<typeof buildPortfolioStockAllocationSnapshot>;
   stocks: ReturnType<typeof useStockStore>["allStocks"];
   applyStates: (states: PortfolioPlanState[]) => void;
+  cashScope: ReturnType<typeof buildPortfolioBalanceSnapshot>["cashScope"];
+  missingCash: boolean;
+  outsideCashUnavailable: boolean;
+  cashActionRef: RefObject<HTMLButtonElement | null>;
+  onEnterCash: () => void;
 }) {
   const { t, formatNumber, localeTag } = useI18n();
   const [stored, setStored] = useState<PortfolioBalancePolicy | null>(state?.balancePolicy ?? null);
@@ -243,6 +262,9 @@ function PortfolioAllocationEditor({ state, fallbackCurrency, snapshot, stockSna
         <button type="button" disabled={saving || !saveablePolicy || !dirty} onClick={() => void save()} className="allocation-primary-action"><Save size={16} aria-hidden="true" />{saving ? t("저장 중...") : t("Allocation 저장")}</button>
       </div>
     </header>
+    {cashScope === "positionsOnly" && <div className="allocation-panel-note"><Info size={16} aria-hidden="true" /><p>{t("현금은 추적되지 않아 현재 구성에 포함되지 않았습니다.")}</p></div>}
+    {outsideCashUnavailable && <div className="allocation-panel-note" role="alert"><AlertTriangle size={16} aria-hidden="true" /><p>{t("현재 계획 밖 추적 현금에 음수 또는 평가 오류가 있어 구성에서 제외했습니다.")}</p></div>}
+    {missingCash && <div className="allocation-panel-note" role="status"><AlertTriangle size={16} aria-hidden="true" /><p>{t("Cash target의 현재 비중을 계산하려면 연결된 계좌의 현재 현금이 필요합니다.")}</p><button ref={cashActionRef} type="button" onClick={onEnterCash}>{t("현재 현금 입력")}</button></div>}
     {notice && <p role="status" className="mt-5 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">{notice}</p>}
     {error && <p role="alert" className="mt-5 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-100">{error}</p>}
     {invalidStockTargetIds.length > 0 && <p role="alert" className="mt-5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">{t("삭제되었거나 사용할 수 없는 주식 세부 목표가 있습니다. 종목을 교체하거나 해당 행을 삭제해 주세요.")}</p>}

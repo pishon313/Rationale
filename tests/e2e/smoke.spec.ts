@@ -124,6 +124,68 @@ test("Allocation 저장이 Plan 계산과 Overview에 반영되고 새로고침 
   await expect(page.getByLabel("주식 투자 전체 목표 (%)")).toHaveValue("70");
 });
 
+test("Trade-only Portfolio는 포지션만 평가하고 Cash target은 명시적 현재 현금을 요구한다", async ({ page }) => {
+  const now = "2026-09-01T00:00:00.000Z";
+  const account = e2eAccount("phase3-account", "Phase 3 계좌");
+  const stock = e2eStock("phase3-stock", "Phase 3 종목", "Core", { ticker: "P3", market: "한국", currency: "KRW", status: "보유", currentPrice: 100, ledgerInitializedAt: now });
+  const trade = {
+    id: "phase3-buy", stockId: stock.id, stockName: stock.name, planId: null, tradeType: "매수", tradedAt: "2026-09-02T00:00:00.000Z",
+    quantity: 1, price: 80, currency: "KRW", exchangeRate: 1, fee: 0, tax: 0, accountId: account.id, accountName: account.name,
+    memo: "Deposit 없이 매수", emotion: "평온", emotionIntensity: 1, confidenceScore: 3, ruleComplianceScore: 3, ruleViolations: [],
+    journalStatus: "recorded", origin: { kind: "manual" }, createdAt: now, updatedAt: now, deletedAt: null,
+  };
+  const state = { id: "default", activeRevisionId: "phase3-r1", contributionAmountMinor: 100, contributionCurrency: "KRW", updatedAt: now, balancePolicy: { version: 1, mode: "balanceAssist", targetWeightsBps: { savings: 2000, stocks: 8000, bonds: 0 }, toleranceBps: 0, updatedAt: now } };
+  const revision = { id: "phase3-r1", revisionNumber: 1, basedOnRevisionId: null, thesis: "", changeNote: "", createdAt: now, activatedAt: now, updatedAt: now };
+  const positionOnlyGroups = [
+    { id: "phase3-cash", revisionId: revision.id, name: "Cash", targetWeightBps: 0, sortOrder: 0, updatedAt: now },
+    { id: "phase3-stocks", revisionId: revision.id, name: "Stocks", targetWeightBps: 10000, sortOrder: 1, updatedAt: now },
+    { id: "phase3-bonds", revisionId: revision.id, name: "Bonds", targetWeightBps: 0, sortOrder: 2, updatedAt: now },
+  ];
+  const positionOnlyTargets = [{ id: "phase3-stock-target", revisionId: revision.id, groupId: "phase3-stocks", accountId: account.id, targetType: "stock", stockId: stock.id, weightWithinGroupBps: 10000, sortOrder: 0, updatedAt: now }];
+  await page.addInitScript((seed) => {
+    for (const [collection, values] of Object.entries(seed)) {
+      const key = `tradejournal.${collection}.v1`;
+      if (localStorage.getItem(key) === null) localStorage.setItem(key, JSON.stringify(values));
+    }
+  }, { accounts: [account], stocks: [stock], trades: [trade], "portfolio-plan-state": [state], "portfolio-plan-revisions": [revision], "portfolio-allocation-groups": positionOnlyGroups, "portfolio-allocation-targets": positionOnlyTargets });
+
+  await page.goto("/portfolio");
+  await expect(page.getByText("현금은 추적되지 않아 현재 구성에 포함되지 않았습니다.")).toBeVisible();
+  await expect(page.getByText("보유 포지션만 포함한 평가 금액")).toBeVisible();
+  await expect(page.getByRole("region", { name: "현재 자산 배분" })).toContainText("₩100");
+  await expect(page.getByText("현재 자산 평가를 사용할 수 없습니다.")).toHaveCount(0);
+
+  await page.evaluate(({ groups, targets, accountId, timestamp }) => {
+    const nextGroups = groups.map((group) => group.id === "phase3-cash" ? { ...group, targetWeightBps: 2000 } : group.id === "phase3-stocks" ? { ...group, targetWeightBps: 8000 } : group);
+    const nextTargets = [...targets, { id: "phase3-cash-target", revisionId: "phase3-r1", groupId: "phase3-cash", accountId, targetType: "cash", stockId: null, weightWithinGroupBps: 10000, sortOrder: 0, updatedAt: timestamp }];
+    localStorage.setItem("tradejournal.portfolio-allocation-groups.v1", JSON.stringify(nextGroups));
+    localStorage.setItem("tradejournal.portfolio-allocation-targets.v1", JSON.stringify(nextTargets));
+  }, { groups: positionOnlyGroups, targets: positionOnlyTargets, accountId: account.id, timestamp: now });
+  await page.reload();
+
+  await expect(page.getByText("Cash target에 연결된 계좌의 현재 현금이 필요합니다.")).toBeVisible();
+  await expect(page.getByRole("region", { name: "현재 자산 배분" })).toContainText("현재 자산 평가를 사용할 수 없습니다.");
+  await page.getByRole("button", { name: "현재 현금 입력" }).click();
+  const cashDialog = page.getByRole("dialog", { name: "현재 현금 입력" });
+  await expect(cashDialog.getByLabel("계좌")).toHaveValue(account.id);
+  await expect(cashDialog.getByLabel("계좌")).toBeDisabled();
+  await expect(cashDialog.getByLabel("통화")).toHaveValue("KRW");
+  await expect(cashDialog.getByLabel("통화")).toBeDisabled();
+  await cashDialog.getByLabel("현재 현금").fill("100");
+  await cashDialog.getByRole("button", { name: "저장", exact: true }).click();
+
+  await expect(page.getByText("현재 자산 평가를 사용할 수 없습니다.")).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "현재 자산 배분" })).toContainText("₩200");
+  const stored = await page.evaluate(() => ({
+    accounts: JSON.parse(localStorage.getItem("tradejournal.accounts.v1") ?? "[]"),
+    revisions: JSON.parse(localStorage.getItem("tradejournal.portfolio-plan-revisions.v1") ?? "[]"),
+    trades: JSON.parse(localStorage.getItem("tradejournal.trades.v1") ?? "[]"),
+  }));
+  expect(stored.accounts[0].cashTracking.baselines[0]).toMatchObject({ currency: "KRW", balance: "100" });
+  expect(stored.revisions).toEqual([revision]);
+  expect(stored.trades).toEqual([trade]);
+});
+
 test("대시보드 자산을 내 분류와 시장 섹터로 전환하고 보기·색상·비중을 안정적으로 유지한다", async ({ page }) => {
   const stocks = [
     e2eStock("core-tech", "코어 기술", "Core", { marketSector: "information-technology", status: "보유", quantity: 6, averagePrice: 80, currentPrice: 100, ledgerInitializedAt: null }),
@@ -1515,7 +1577,8 @@ test("계좌 병합은 대상 정책을 유지하고 원본 정책과 기존 거
   const rule = (id: string, ratePercent: string) => ({ version: 1, enabled: true, rules: [{ id, name: id, market: "all", currency: "KRW", side: "both", ratePercent, fixedFee: "0", minimumFee: null, maximumFee: null, grossAmountFrom: null, grossAmountTo: null, effectiveFrom: "2026-01-01", effectiveTo: null, roundingMode: "floor", roundingUnit: "1" }] });
   const source = { ...e2eAccount("merge-source", "병합 원본"), feePolicy: rule("source-rule", "0.1") };
   const target = { ...e2eAccount("merge-target", "병합 대상", false), feePolicy: rule("target-rule", "0.2") };
-  await page.addInitScript((accounts) => { if (localStorage.getItem("tradejournal.accounts.v1") === null) localStorage.setItem("tradejournal.accounts.v1", JSON.stringify(accounts)); if (localStorage.getItem("tradejournal.trades.v1") === null) localStorage.setItem("tradejournal.trades.v1", "[]"); if (localStorage.getItem("tradejournal.stocks.v1") === null) localStorage.setItem("tradejournal.stocks.v1", "[]"); }, [source, target]);
+  const portfolioTarget = { id: "merge-portfolio-target", revisionId: "merge-r1", groupId: "merge-group", accountId: source.id, targetType: "cash", stockId: null, weightWithinGroupBps: 10000, sortOrder: 0, updatedAt: source.updatedAt };
+  await page.addInitScript(({ accounts, portfolioTarget }) => { if (localStorage.getItem("tradejournal.accounts.v1") === null) localStorage.setItem("tradejournal.accounts.v1", JSON.stringify(accounts)); if (localStorage.getItem("tradejournal.trades.v1") === null) localStorage.setItem("tradejournal.trades.v1", "[]"); if (localStorage.getItem("tradejournal.stocks.v1") === null) localStorage.setItem("tradejournal.stocks.v1", "[]"); if (localStorage.getItem("tradejournal.portfolio-allocation-targets.v1") === null) localStorage.setItem("tradejournal.portfolio-allocation-targets.v1", JSON.stringify([portfolioTarget])); }, { accounts: [source, target], portfolioTarget });
   await page.goto("/accounts");
   const sourceCard = page.locator("article").filter({ hasText: "병합 원본" });
   await sourceCard.getByRole("button", { name: "다른 계좌로 병합" }).click();
@@ -1523,9 +1586,10 @@ test("계좌 병합은 대상 정책을 유지하고 원본 정책과 기존 거
   await sourceCard.getByLabel("병합 대상 계좌").selectOption("merge-target");
   await expect(page.getByText("계좌를 병합하고 전체 원장을 다시 계산했습니다.")).toBeVisible();
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.accounts.v1") ?? "[]").find((item: { id: string }) => item.id === "merge-source")?.archivedAt ?? null)).not.toBeNull();
-  const accounts = await page.evaluate(() => JSON.parse(localStorage.getItem("tradejournal.accounts.v1") ?? "[]"));
-  expect(accounts.find((item: { id: string }) => item.id === "merge-source")).toMatchObject({ feePolicy: source.feePolicy, archivedAt: expect.any(String) });
-  expect(accounts.find((item: { id: string }) => item.id === "merge-target")).toMatchObject({ feePolicy: target.feePolicy });
+  const merged = await page.evaluate(() => ({ accounts: JSON.parse(localStorage.getItem("tradejournal.accounts.v1") ?? "[]"), portfolioTargets: JSON.parse(localStorage.getItem("tradejournal.portfolio-allocation-targets.v1") ?? "[]") }));
+  expect(merged.accounts.find((item: { id: string }) => item.id === "merge-source")).toMatchObject({ feePolicy: source.feePolicy, archivedAt: expect.any(String) });
+  expect(merged.accounts.find((item: { id: string }) => item.id === "merge-target")).toMatchObject({ feePolicy: target.feePolicy });
+  expect(merged.portfolioTargets[0]).toMatchObject({ id: portfolioTarget.id, accountId: target.id });
 });
 
 test("현금 기준점이 없어도 분석에서 현금 독립 매매 성과를 표시한다", async ({ page }) => {
@@ -1688,7 +1752,7 @@ test("계좌가 없으면 종목 상세에서 계좌 추가를 안내한다", as
 
 test("설정에서 전체 매매 원장을 soft-delete하고 최근 1회를 같은 ID로 되돌린다", async ({ page }) => {
   const timestamp = "2026-08-20T00:00:00.000Z";
-  const accounts = [e2eAccount("reset-a1", "초기화 계좌", true), e2eAccount("reset-a2", "이체 계좌", false)];
+  const accounts = [{ ...e2eAccount("reset-a1", "초기화 계좌", true), cashTracking: { version: 1, baselines: [{ currency: "USD", balance: "1000", asOf: timestamp, createdAt: timestamp, updatedAt: timestamp }] } }, e2eAccount("reset-a2", "이체 계좌", false)];
   const stock = e2eStock("reset-stock", "초기화 종목", "Core", { ticker: "RST", status: "보유", currency: "USD", quantity: 0, averagePrice: 0, currentPrice: 150, ledgerInitializedAt: timestamp });
   const baseTrade = {
     stockId: stock.id, stockName: stock.name, planId: null, tradeType: "매수", tradedAt: "2026-08-20T09:00:00.000Z",
@@ -1762,6 +1826,8 @@ test("설정에서 전체 매매 원장을 soft-delete하고 최근 1회를 같�
   await expect(page.getByText("아직 원장 기록이 없습니다.")).toBeVisible();
   await expect(page.locator("article").filter({ hasText: "열린 포지션" })).toContainText("0개");
   await expect(page.getByText("현금 미추적")).toHaveCount(2);
+  await expect(page.getByText("US$1,000.00", { exact: true })).toBeVisible();
+  await expect(page.getByText("2026. 8. 20. 09:00부터 추적", { exact: true })).toBeVisible();
 
   await page.goto("/settings");
   await page.getByRole("button", { name: "마지막 매매 기록 삭제 되돌리기" }).click();
