@@ -137,7 +137,7 @@ export function PortfolioPageClient() {
     <PortfolioExchangeRateStatus snapshot={exchangeRates.snapshot} refreshing={exchangeRates.refreshing} onlineError={exchangeRates.onlineError} onRefresh={() => void exchangeRates.refresh()} />
 
     <section aria-label={t("포트폴리오 요약")} className="portfolio-overview-kpis">
-      <OverviewMetric label={t("현재 포트폴리오")} value={portfolioValue} help={balanceSnapshot.available ? t(balanceSnapshot.cashScope === "positionsOnly" ? "보유 포지션만 포함한 평가 금액" : "필수 현금과 보유 포지션의 평가 금액") : t("현재 평가 불가")} />
+      <OverviewMetric label={t("현재 포트폴리오")} value={portfolioValue} help={balanceSnapshot.available ? t(balanceSnapshot.cashScope === "positionsOnly" ? "보유 포지션만 포함한 평가 금액" : "현금과 보유 포지션의 평가 금액") : t("현재 평가 불가")} />
       <OverviewMetric label={t("다음 전체 저축액")} value={contributionValue} help={activeRevision ? t("저장된 Contribution Plan 기준") : t("Plan을 만들면 계산됩니다.")} />
       <OverviewMetric label={t("Allocation 상태")} value={allocationStatus} help={allocationStatusHelp} tone={outsideAllocation ? "warning" : state?.balancePolicy && comparableAllocationRows.length ? "positive" : "neutral"} />
       <OverviewMetric label={t("가장 부족한 자산군")} value={priorityValue} help={priorityHelp} tone={priorityRow && priorityRow.drift < 0 ? "warning" : "neutral"} />
@@ -145,8 +145,8 @@ export function PortfolioPageClient() {
 
     {invalidStockTargetIds.length > 0 && <section role="alert" className="portfolio-overview-neutral-note"><Info size={16} aria-hidden="true" /><p>{t("사용할 수 없는 주식 세부 목표가 {count}개 있습니다. Allocation에서 종목을 교체하거나 삭제해 주세요.", { count: invalidStockTargetIds.length })} <Link href="/portfolio/allocation">{t("Allocation에서 수정")}</Link></p></section>}
     {balanceSnapshot.cashScope === "positionsOnly" && <section className="portfolio-overview-neutral-note" role="status"><Info size={16} aria-hidden="true" /><p>{t("현금은 추적되지 않아 현재 구성에 포함되지 않았습니다.")}</p></section>}
-    {balanceSnapshot.outsideCurrentPlanCashValueKrw !== null && balanceSnapshot.outsideCurrentPlanCashValueKrw > 0 && <section className="portfolio-overview-neutral-note"><Info size={16} aria-hidden="true" /><p>{t("현재 계획 밖 추적 현금: {amount}", { amount: formatCurrency(balanceSnapshot.outsideCurrentPlanCashValueKrw, "KRW", localeTag) })}</p></section>}
-    {balanceSnapshot.outsideCurrentPlanCashUnavailable && <section className="portfolio-overview-neutral-note" role="alert"><Info size={16} aria-hidden="true" /><p>{t("현재 계획 밖 추적 현금에 음수 또는 평가 오류가 있어 구성에서 제외했습니다.")}</p></section>}
+    {balanceSnapshot.outsideCurrentPlanCashCount > 0 && balanceSnapshot.outsideCurrentPlanCashValueKrw !== null && <section className="portfolio-overview-neutral-note"><Info size={16} aria-hidden="true" /><p>{balanceSnapshot.outsideCurrentPlanCashWeightBps === null ? t("현재 계획 밖 추적 현금: {amount}", { amount: formatCurrency(balanceSnapshot.outsideCurrentPlanCashValueKrw, "KRW", localeTag) }) : t("현재 계획 밖 추적 현금: {amount} · 전체의 {share}%", { amount: formatCurrency(balanceSnapshot.outsideCurrentPlanCashValueKrw, "KRW", localeTag), share: formatBps(balanceSnapshot.outsideCurrentPlanCashWeightBps, formatNumber) })}</p></section>}
+    {balanceSnapshot.outsideCurrentPlanCashUnavailable && <section className="portfolio-overview-neutral-note" role="alert"><Info size={16} aria-hidden="true" /><p>{t(balanceSnapshot.cashScope === "required" ? "현재 계획 밖 추적 현금에 음수 또는 평가 오류가 있어 전체 구성을 계산할 수 없습니다." : "현재 계획 밖 추적 현금에 음수 또는 평가 오류가 있어 구성에서 제외했습니다.")}</p></section>}
 
     <div className="portfolio-overview-grid">
       <section aria-labelledby="current-allocation-title" className="portfolio-overview-card">
@@ -154,7 +154,7 @@ export function PortfolioPageClient() {
         {!balanceSnapshot.available ? <OverviewUnavailable reason={balanceSnapshot.unavailableReason} action={missingCash ? <button ref={cashAction} type="button" onClick={() => setCashDialogOpen(true)}>{t("현재 현금 입력")}</button> : null} /> : balanceSnapshot.totalValueKrw === 0 && !state?.balancePolicy ? <OverviewEmpty icon={<CircleDollarSign size={22} aria-hidden="true" />} title={t("아직 평가할 자산이 없습니다.")} description={t("계좌나 매매 기록이 없어도 Contribution Plan은 독립적으로 사용할 수 있습니다.")} /> : <>
           {balanceSnapshot.totalValueKrw === 0 && <p className="portfolio-overview-neutral-note"><Info size={15} aria-hidden="true" />{t("현재 자산은 없지만 저장된 Allocation 목표는 확인할 수 있습니다.")}</p>}
           <div className="portfolio-overview-allocation-dashboard">
-            <OverviewDonut weights={currentWeights} empty={!comparableAllocationRows.length} value={portfolioValue} />
+            <OverviewDonut weights={currentWeights} outsideWeightBps={balanceSnapshot.outsideCurrentPlanCashWeightBps ?? 0} empty={!comparableAllocationRows.length} value={portfolioValue} />
             <div className="portfolio-overview-allocation-table" role="table" aria-label={t("자산 배분 목표 표")}>
               <div className="portfolio-overview-allocation-head" role="row"><span role="columnheader">{t("자산군")}</span><span role="columnheader">{t("현재와 허용 범위")}</span><span role="columnheader">{t("현재 / 목표")}</span><span role="columnheader">{t("차이")}</span></div>
               {allocationRows.map((row) => <article key={row.category} role="row" style={{ "--portfolio-group-accent": overviewAccent(row.category) } as CSSProperties}>
@@ -218,12 +218,16 @@ function OverviewEmpty({ icon, title, description, action }: { icon: ReactNode; 
   return <div className="portfolio-overview-empty"><span>{icon}</span><h3>{title}</h3><p>{description}</p>{action}</div>;
 }
 
-function OverviewDonut({ weights, empty, value }: { weights: Record<(typeof portfolioBalanceCategories)[number], number>; empty: boolean; value: string }) {
+function OverviewDonut({ weights, outsideWeightBps, empty, value }: { weights: Record<(typeof portfolioBalanceCategories)[number], number>; outsideWeightBps: number; empty: boolean; value: string }) {
   const { t, formatNumber } = useI18n();
   const savings = weights.savings / 100;
   const stocks = weights.stocks / 100;
-  const background = empty ? "var(--color-surface-muted)" : `conic-gradient(${overviewAccent("savings")} 0 ${savings}%, ${overviewAccent("stocks")} ${savings}% ${savings + stocks}%, ${overviewAccent("bonds")} ${savings + stocks}% 100%)`;
-  const label = empty ? `${t("현재 자산 배분")}: —` : `${t("현재 자산 배분")}: ${portfolioBalanceCategories.map((category) => `${t(portfolioTargetAllocationCategoryName(category))} ${formatBps(weights[category], formatNumber)}%`).join(", ")}`;
+  const bonds = weights.bonds / 100;
+  const plannedEnd = Math.min(100, savings + stocks + bonds);
+  const background = empty ? "var(--color-surface-muted)" : `conic-gradient(${overviewAccent("savings")} 0 ${savings}%, ${overviewAccent("stocks")} ${savings}% ${savings + stocks}%, ${overviewAccent("bonds")} ${savings + stocks}% ${plannedEnd}%, ${overviewOutsideAccent} ${plannedEnd}% 100%)`;
+  const parts = portfolioBalanceCategories.map((category) => `${t(portfolioTargetAllocationCategoryName(category))} ${formatBps(weights[category], formatNumber)}%`);
+  if (outsideWeightBps > 0) parts.push(`${t("현재 계획 밖")} ${formatBps(outsideWeightBps, formatNumber)}%`);
+  const label = empty ? `${t("현재 자산 배분")}: —` : `${t("현재 자산 배분")}: ${parts.join(", ")}`;
   return <div className="portfolio-overview-donut-wrap"><div className="portfolio-overview-donut" style={{ background }} role="img" aria-label={label}><div aria-hidden="true"><b>{empty ? "—" : value}</b><span>{t("현재 평가 금액")}</span></div></div><p>{t("현금성 자산 · 주식 · 채권")}</p></div>;
 }
 
@@ -249,6 +253,7 @@ function OverviewUnavailable({ reason, action }: { reason: PortfolioBalanceUnava
       : reason === "missingCashBaseline" ? "Cash target에 연결된 계좌의 현재 현금이 필요합니다."
         : reason === "unreconciledCash" ? "조정되지 않은 현금 기록이 있어 전체 배분을 확정할 수 없습니다."
           : reason === "negativeCash" ? "Cash target에 연결된 추적 현금이 음수여서 현재 배분을 확정할 수 없습니다."
+            : reason === "invalidOutsideCash" ? "현재 계획 밖 추적 현금에 음수 또는 평가 오류가 있어 전체 구성을 계산할 수 없습니다."
         : reason === "missingStock" ? "보유 포지션에 연결된 종목을 찾을 수 없습니다."
           : reason === "ledgerError" ? "매매 원장 오류가 있어 현재 포트폴리오를 확정할 수 없습니다."
             : "현재 포트폴리오 값을 안전하게 계산할 수 없습니다.";
@@ -256,6 +261,7 @@ function OverviewUnavailable({ reason, action }: { reason: PortfolioBalanceUnava
 }
 
 function overviewAccent(category: (typeof portfolioBalanceCategories)[number]) { return category === "savings" ? "#c9953f" : category === "stocks" ? "#238769" : "#5d85b2"; }
+const overviewOutsideAccent = "#7b8986";
 function formatBps(value: number, formatNumber: (value: number, options?: Intl.NumberFormatOptions) => string) { return formatNumber(value / 100, { maximumFractionDigits: 2 }); }
 function signedBps(value: number, formatNumber: (value: number, options?: Intl.NumberFormatOptions) => string) { return `${value > 0 ? "+" : ""}${formatNumber(value / 100, { maximumFractionDigits: 2 })}%p`; }
 function clampBps(value: number) { return Math.max(0, Math.min(10000, value)); }

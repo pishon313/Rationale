@@ -147,6 +147,7 @@ type AllocationDraft = {
 };
 
 const allocationColors = { savings: "#b38337", stocks: "#238769", bonds: "#5d85b2" } as const;
+const allocationOutsideColor = "#7b8986";
 
 function PortfolioAllocationEditor({ state, fallbackCurrency, snapshot, stockSnapshot, stocks, applyStates, cashScope, missingCash, outsideCashUnavailable, cashActionRef, onEnterCash }: {
   state: PortfolioPlanState | null;
@@ -263,7 +264,8 @@ function PortfolioAllocationEditor({ state, fallbackCurrency, snapshot, stockSna
       </div>
     </header>
     {cashScope === "positionsOnly" && <div className="allocation-panel-note"><Info size={16} aria-hidden="true" /><p>{t("현금은 추적되지 않아 현재 구성에 포함되지 않았습니다.")}</p></div>}
-    {outsideCashUnavailable && <div className="allocation-panel-note" role="alert"><AlertTriangle size={16} aria-hidden="true" /><p>{t("현재 계획 밖 추적 현금에 음수 또는 평가 오류가 있어 구성에서 제외했습니다.")}</p></div>}
+    {snapshot.outsideCurrentPlanCashCount > 0 && snapshot.outsideCurrentPlanCashValueKrw !== null && <div className="allocation-panel-note"><Info size={16} aria-hidden="true" /><p>{snapshot.outsideCurrentPlanCashWeightBps === null ? t("현재 계획 밖 추적 현금: {amount}", { amount: formatCurrency(snapshot.outsideCurrentPlanCashValueKrw, "KRW", localeTag) }) : t("현재 계획 밖 추적 현금: {amount} · 전체의 {share}%", { amount: formatCurrency(snapshot.outsideCurrentPlanCashValueKrw, "KRW", localeTag), share: formatBps(snapshot.outsideCurrentPlanCashWeightBps) })}</p></div>}
+    {outsideCashUnavailable && <div className="allocation-panel-note" role="alert"><AlertTriangle size={16} aria-hidden="true" /><p>{t(cashScope === "required" ? "현재 계획 밖 추적 현금에 음수 또는 평가 오류가 있어 전체 구성을 계산할 수 없습니다." : "현재 계획 밖 추적 현금에 음수 또는 평가 오류가 있어 구성에서 제외했습니다.")}</p></div>}
     {missingCash && <div className="allocation-panel-note" role="status"><AlertTriangle size={16} aria-hidden="true" /><p>{t("Cash target의 현재 비중을 계산하려면 연결된 계좌의 현재 현금이 필요합니다.")}</p><button ref={cashActionRef} type="button" onClick={onEnterCash}>{t("현재 현금 입력")}</button></div>}
     {notice && <p role="status" className="mt-5 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">{notice}</p>}
     {error && <p role="alert" className="mt-5 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-100">{error}</p>}
@@ -295,7 +297,7 @@ function PortfolioAllocationEditor({ state, fallbackCurrency, snapshot, stockSna
       </section>
 
       <aside className="allocation-side-stack">
-        <section className="allocation-panel allocation-mix-panel" aria-labelledby="current-mix-title"><header className="allocation-panel-header"><div><h2 id="current-mix-title">{t("현재 구성")}</h2><p>{snapshot.totalValueKrw === null ? t("평가 불가") : formatCurrency(snapshot.totalValueKrw, "KRW", localeTag)}</p></div></header><AllocationDonut weights={currentMix} empty={!comparableRows.length} /><div className="allocation-mix-legend">{portfolioPlanCategories.map((category) => <div key={category}><i style={{ background: allocationColors[category] }} /><span>{t(portfolioTargetAllocationCategoryName(category))}</span><b>{currentByCategory.get(category) === null || currentByCategory.get(category) === undefined ? "—" : `${formatBps(currentByCategory.get(category)!)}%`}</b></div>)}</div></section>
+        <section className="allocation-panel allocation-mix-panel" aria-labelledby="current-mix-title"><header className="allocation-panel-header"><div><h2 id="current-mix-title">{t("현재 구성")}</h2><p>{snapshot.totalValueKrw === null ? t("평가 불가") : formatCurrency(snapshot.totalValueKrw, "KRW", localeTag)}</p></div></header><AllocationDonut weights={currentMix} outsideWeightBps={snapshot.outsideCurrentPlanCashWeightBps ?? 0} empty={!comparableRows.length} /><div className="allocation-mix-legend">{portfolioPlanCategories.map((category) => <div key={category}><i style={{ background: allocationColors[category] }} /><span>{t(portfolioTargetAllocationCategoryName(category))}</span><b>{currentByCategory.get(category) === null || currentByCategory.get(category) === undefined ? "—" : `${formatBps(currentByCategory.get(category)!)}%`}</b></div>)}{snapshot.outsideCurrentPlanCashWeightBps !== null && snapshot.outsideCurrentPlanCashCount > 0 && <div><i style={{ background: allocationOutsideColor }} /><span>{t("현재 계획 밖")}</span><b>{formatBps(snapshot.outsideCurrentPlanCashWeightBps)}%</b></div>}</div></section>
         <section className="allocation-panel allocation-drift-panel" aria-labelledby="drift-monitor-title"><header className="allocation-panel-header"><div><h2 id="drift-monitor-title">{t("차이 모니터")}</h2><p className={outsideRows.length ? "is-warning" : "is-healthy"}>{t(outsideRows.length ? "확인 필요" : "안정")}</p></div></header><DriftItem label={t("가장 높은 초과") } name={highestOver ? t(portfolioTargetAllocationCategoryName(highestOver.category)) : "—"} value={highestOver ? signedBps(highestOver.drift, formatNumber) : "—"} tone="up" /><DriftItem label={t("가장 높은 부족")} name={highestUnder ? t(portfolioTargetAllocationCategoryName(highestUnder.category)) : "—"} value={highestUnder ? signedBps(highestUnder.drift, formatNumber) : "—"} tone="down" /><DriftItem label={t("주식 집중도")} name={stockSnapshot.rows[0] ? stockById.get(stockSnapshot.rows[0].stockId)?.name ?? t("알 수 없는 종목") : "—"} value={stockSnapshot.rows[0] ? `${formatBps(stockSnapshot.rows[0].currentWeightBps)}%` : "—"} tone="neutral" /></section>
       </aside>
     </div>
@@ -343,12 +345,16 @@ function AllocationRangeBar({ currentBps, targetBps, toleranceBps, color }: { cu
   return <div className="allocation-range-bar" style={style} role="cell" aria-label={label}><span className="track" aria-hidden="true"><i className="permitted" /><i className="current" /><i className="target" /></span></div>;
 }
 
-function AllocationDonut({ weights, empty }: { weights: Record<(typeof portfolioPlanCategories)[number], number>; empty: boolean }) {
+function AllocationDonut({ weights, outsideWeightBps, empty }: { weights: Record<(typeof portfolioPlanCategories)[number], number>; outsideWeightBps: number; empty: boolean }) {
   const { t } = useI18n();
   const savings = weights.savings / 100;
   const stocks = weights.stocks / 100;
-  const background = empty ? "var(--color-surface-muted)" : `conic-gradient(${allocationColors.savings} 0 ${savings}%, ${allocationColors.stocks} ${savings}% ${savings + stocks}%, ${allocationColors.bonds} ${savings + stocks}% 100%)`;
-  return <div className="allocation-donut" style={{ background }}><div><b>{empty ? "—" : `${formatBps(Math.max(weights.savings, weights.stocks, weights.bonds))}%`}</b><span>{empty ? "" : t(portfolioTargetAllocationCategoryName(portfolioPlanCategories.slice().sort((left, right) => weights[right] - weights[left])[0]!))}</span></div></div>;
+  const bonds = weights.bonds / 100;
+  const plannedEnd = Math.min(100, savings + stocks + bonds);
+  const largestCategory = portfolioPlanCategories.slice().sort((left, right) => weights[right] - weights[left])[0]!;
+  const outsideIsLargest = outsideWeightBps > weights[largestCategory];
+  const background = empty ? "var(--color-surface-muted)" : `conic-gradient(${allocationColors.savings} 0 ${savings}%, ${allocationColors.stocks} ${savings}% ${savings + stocks}%, ${allocationColors.bonds} ${savings + stocks}% ${plannedEnd}%, ${allocationOutsideColor} ${plannedEnd}% 100%)`;
+  return <div className="allocation-donut" style={{ background }}><div><b>{empty ? "—" : `${formatBps(outsideIsLargest ? outsideWeightBps : weights[largestCategory])}%`}</b><span>{empty ? "" : t(outsideIsLargest ? "현재 계획 밖" : portfolioTargetAllocationCategoryName(largestCategory))}</span></div></div>;
 }
 
 function DriftItem({ label, name, value, tone }: { label: string; name: string; value: string; tone: "up" | "down" | "neutral" }) {

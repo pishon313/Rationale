@@ -91,12 +91,13 @@ Overview compares Target and current values at Group level with nested Target de
 - Stock current value aggregates that Stock's open positions across every Account.
 - A positive Cash Target with a selected Account requires a matching baseline in the Plan contribution Currency.
 - Without a required Cash target, the denominator contains valid open Stock and Bond positions only; unknown cash is omitted and disclosed, never treated as zero.
-- With required Cash targets, the denominator includes valid positions plus only their matching tracked Cash balances.
-- unplanned Stocks preserve their existing outside-plan behavior; tracked Cash without a matching target remains outside the current Plan and is excluded from target weights;
+- With required Cash targets, the denominator includes valid positions plus every valid tracked Cash balance.
+- matching tracked Cash contributes to the planned Cash category, while other tracked Cash is reported as an independent Outside Current Plan value and share without being folded into the planned Cash target;
+- unplanned Stocks preserve their existing outside-plan behavior;
 - known assets are never renormalized to hide unknown or outside values;
 - Target Value is current total Portfolio value multiplied by Target Weight, never Contribution Amount.
 
-Valuation fails closed for a ledger error, missing held Stock reference, invalid/missing price, invalid FX, missing/unreconciled/negative required Cash, or invalid numeric result. In that state, all Current Weights and Drift values are unavailable together, while Target Allocation remains visible. When required Cash is unavailable, Balance Assist uses the saved fixed Contribution Plan instead of inventing a cash-aware recommendation.
+Valuation fails closed for a ledger error, missing held Stock reference, invalid/missing price, invalid FX, missing/unreconciled/negative required Cash, invalid outside tracked Cash while Cash is in scope, or an invalid numeric result. In that state, all Current Weights and Drift values are unavailable together, while Target Allocation remains visible. When required Cash is unavailable, Balance Assist uses the saved fixed Contribution Plan instead of inventing a cash-aware recommendation.
 
 ## Backup V7 and V6 migration
 

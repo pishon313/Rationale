@@ -39,6 +39,8 @@ const trade: Trade = { id: "buy", stockId: "stock", stockName: "Stock", planId: 
 const stock = { id: "stock", name: "Stock", currentPrice: 120, currency: "KRW", deletedAt: null } as Stock;
 
 beforeEach(() => {
+  collectionState.replaceAsync.mockClear();
+  collectionState.applyCommitted.mockClear();
   collectionState.data = { accounts: [account], trades: [trade], stocks: [stock] };
   window.history.replaceState(null, "", "/accounts");
 });
@@ -97,5 +99,21 @@ describe("Account screens", () => {
     await waitFor(() => expect(mergeConfirm).toHaveBeenCalledWith(expect.stringContaining("미추적 현금은 임의로 계산하지 않습니다")));
     view.unmount();
     mergeConfirm.mockRestore();
+  });
+
+  it("blocks Account merge when the source is referenced by the active Portfolio Revision", async () => {
+    const second: InvestmentAccount = { ...account, id: "b", name: "Second", isDefault: false };
+    collectionState.data = {
+      accounts: [account, second], trades: [], stocks: [],
+      "portfolio-plan-state": [{ id: "default", activeRevisionId: "active-r1", contributionAmountMinor: 0, contributionCurrency: "KRW", updatedAt: at }],
+      "portfolio-allocation-targets": [{ id: "cash", revisionId: "active-r1", groupId: "cash", accountId: "a", targetType: "cash", stockId: null, weightWithinGroupBps: 10000, sortOrder: 0, updatedAt: at }],
+    };
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<AccountsPageClient />);
+    fireEvent.click(screen.getAllByRole("button", { name: "다른 계좌로 병합" })[0]);
+    fireEvent.change(screen.getByRole("combobox", { name: "병합 대상 계좌" }), { target: { value: "b" } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("현재 Portfolio 계획에서 이 계좌를 사용 중입니다");
+    expect(collectionState.applyCommitted).not.toHaveBeenCalled();
+    confirm.mockRestore();
   });
 });

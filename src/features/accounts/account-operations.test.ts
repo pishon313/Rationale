@@ -120,18 +120,36 @@ describe("account operations", () => {
     expect(buildTradingLedger(nextTrades, nextAccounts).cashBalances.find((item) => item.accountId === "b")?.balance).toBe(125);
   });
 
-  it("rewrites Portfolio Account references atomically and clears a duplicate Cash execution hint", () => {
-    const targets: PortfolioAllocationTarget[] = [
-      { id: "source-stock", revisionId: "r1", groupId: "stocks", accountId: "a", targetType: "stock", stockId: "AAPL", weightWithinGroupBps: 10000, sortOrder: 0, updatedAt: beforeDate() },
-      { id: "source-cash", revisionId: "r1", groupId: "cash-a", accountId: "a", targetType: "cash", stockId: null, weightWithinGroupBps: 5000, sortOrder: 0, updatedAt: beforeDate() },
-      { id: "target-cash", revisionId: "r1", groupId: "cash-b", accountId: "b", targetType: "cash", stockId: null, weightWithinGroupBps: 5000, sortOrder: 0, updatedAt: beforeDate() },
-    ];
-    const writes = buildAccountMerge([account("a", "A"), account("b", "B")], [], "a", "b", now, targets);
-    expect(writes.map((write) => write.collection)).toEqual(["accounts", "trades", "portfolio-allocation-targets"]);
-    const nextTargets = writes[2]!.values as PortfolioAllocationTarget[];
-    expect(nextTargets.find((item) => item.id === "source-stock")).toMatchObject({ accountId: "b", updatedAt: now });
-    expect(nextTargets.find((item) => item.id === "source-cash")).toMatchObject({ accountId: null, updatedAt: now });
-    expect(nextTargets.find((item) => item.id === "target-cash")).toBe(targets[2]);
+  it("allows a historical Portfolio reference and leaves the immutable Target byte-for-byte unchanged", () => {
+    const targets = [portfolioTarget("historical", "history-r1", "a")];
+    const original = structuredClone(targets);
+    const writes = buildAccountMerge([account("a", "A"), account("b", "B")], [], "a", "b", now, { activeRevisionId: "active-r2", targets });
+    expect(writes.map((write) => write.collection)).toEqual(["accounts", "trades"]);
+    expect(targets).toEqual(original);
+    expect(targets[0]?.updatedAt).toBe(beforeDate());
+  });
+
+  it("blocks merge when the active Portfolio Revision references the source and changes no collection", async () => {
+    const entities = [account("a", "A"), account("b", "B")];
+    const trades = [security("a-buy", "a", "AAPL", "매수", 1, 100, "2026-01-01")];
+    const targets = [portfolioTarget("active", "active-r1", "a")];
+    const original = structuredClone({ entities, trades, targets });
+    await expect(mergeAccounts(entities, trades, "a", "b", { activeRevisionId: "active-r1", targets })).rejects.toThrow("현재 Portfolio 계획에서 이 계좌를 사용 중입니다");
+    expect({ entities, trades, targets }).toEqual(original);
+    expect(repository.save).not.toHaveBeenCalled();
+  });
+
+  it("merges normally when the active Portfolio Revision does not reference the source", () => {
+    const targets = [portfolioTarget("active", "active-r1", "b")];
+    const writes = buildAccountMerge([account("a", "A"), account("b", "B")], [], "a", "b", now, { activeRevisionId: "active-r1", targets });
+    expect(writes.map((write) => write.collection)).toEqual(["accounts", "trades"]);
+    expect(targets[0]?.accountId).toBe("b");
+  });
+
+  it("keeps the existing merge behavior when no Portfolio exists", () => {
+    const writes = buildAccountMerge([account("a", "A"), account("b", "B")], [], "a", "b", now);
+    expect(writes.map((write) => write.collection)).toEqual(["accounts", "trades"]);
+    expect((writes[0]!.values as InvestmentAccount[]).find((item) => item.id === "a")?.archivedAt).toBe(now);
   });
 
   it("keeps all writes uncommitted when atomic account merge persistence fails", async () => {
@@ -142,6 +160,10 @@ describe("account operations", () => {
 });
 
 function beforeDate() { return "2025-12-31T00:00:00.000Z"; }
+
+function portfolioTarget(id: string, revisionId: string, accountId: string): PortfolioAllocationTarget {
+  return { id, revisionId, groupId: "cash", accountId, targetType: "cash", stockId: null, weightWithinGroupBps: 10000, sortOrder: 0, updatedAt: beforeDate() };
+}
 
 function security(id: string, accountId: string, stockId: string, tradeType: "매수" | "매도", quantity: number, price: number, tradedAt: string) {
   return { ...sampleTrades[0], id, accountId, accountName: accountId.toUpperCase(), stockId, stockName: stockId, tradeType, quantity, price, tradedAt, createdAt: tradedAt, updatedAt: tradedAt };

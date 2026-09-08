@@ -6,7 +6,7 @@ import { isBondStock } from "@/features/stocks/asset-class";
 
 export const portfolioBalanceCategories = ["savings", "stocks", "bonds"] as const;
 export type PortfolioBalanceCategory = (typeof portfolioBalanceCategories)[number];
-export type PortfolioBalanceUnavailableReason = "ledgerError" | "missingStock" | "missingPrice" | "invalidFx" | "missingCashBaseline" | "unreconciledCash" | "negativeCash" | "invalidValue" | null;
+export type PortfolioBalanceUnavailableReason = "ledgerError" | "missingStock" | "missingPrice" | "invalidFx" | "missingCashBaseline" | "unreconciledCash" | "negativeCash" | "invalidOutsideCash" | "invalidValue" | null;
 
 export type PortfolioCashRequirement = {
   targetId: string;
@@ -28,8 +28,11 @@ export type PortfolioBalanceSnapshot = {
   cashScope: "positionsOnly" | "required";
   cashRequirements: PortfolioCashRequirement[];
   missingCashRequirements: PortfolioCashRequirement[];
-  /** Known tracked cash that is not represented by an active Cash target. It is excluded from current weights. */
+  /** Known tracked cash that is not represented by an active Cash target. It remains distinct from planned Cash. */
   outsideCurrentPlanCashValueKrw: number | null;
+  outsideCurrentPlanCashCount: number;
+  /** Share of the complete denominator when Cash is in scope; otherwise unavailable because valuation is positions-only. */
+  outsideCurrentPlanCashWeightBps: number | null;
   outsideCurrentPlanCashUnavailable: boolean;
 };
 
@@ -84,8 +87,9 @@ export function buildPortfolioBalanceSnapshot(input: {
   }
 
   const outsideCash = outsideCashValue(input.ledger.cashBalances.filter((cash) => !requiredCashKeys.has(cashKey(cash.accountId, cash.currency))), input.ratesToKrw);
+  if (!reason && cashRequirements.length && outsideCash.unavailable) reason = "invalidOutsideCash";
 
-  const total = reason ? null : portfolioBalanceCategories.reduce((sum, category) => sum + values[category], 0);
+  const total = reason ? null : portfolioBalanceCategories.reduce((sum, category) => sum + values[category], cashRequirements.length ? outsideCash.value ?? 0 : 0);
   if (total !== null && (!Number.isFinite(total) || total < 0)) reason = "invalidValue";
   if (reason) return unavailableSnapshot(reason, cashRequirements, missingCashRequirements, outsideCash);
   const safeTotal = total ?? 0;
@@ -105,6 +109,8 @@ export function buildPortfolioBalanceSnapshot(input: {
     cashRequirements,
     missingCashRequirements: [],
     outsideCurrentPlanCashValueKrw: outsideCash.value,
+    outsideCurrentPlanCashCount: outsideCash.count,
+    outsideCurrentPlanCashWeightBps: cashRequirements.length && safeTotal > 0 ? (outsideCash.value ?? 0) / safeTotal * 10000 : null,
     outsideCurrentPlanCashUnavailable: outsideCash.unavailable,
   };
 }
@@ -223,7 +229,7 @@ function unavailableSnapshot(
   reason: Exclude<PortfolioBalanceUnavailableReason, null>,
   cashRequirements: PortfolioCashRequirement[],
   missingCashRequirements: PortfolioCashRequirement[],
-  outsideCash: { value: number | null; unavailable: boolean },
+  outsideCash: { value: number | null; count: number; unavailable: boolean },
 ): PortfolioBalanceSnapshot {
   return {
     available: false,
@@ -234,6 +240,8 @@ function unavailableSnapshot(
     cashRequirements,
     missingCashRequirements,
     outsideCurrentPlanCashValueKrw: outsideCash.value,
+    outsideCurrentPlanCashCount: outsideCash.count,
+    outsideCurrentPlanCashWeightBps: null,
     outsideCurrentPlanCashUnavailable: outsideCash.unavailable,
   };
 }
@@ -245,16 +253,16 @@ function uniqueCashRequirements(requirements: readonly PortfolioCashRequirement[
 }
 
 function outsideCashValue(cashBalances: TradingLedger["cashBalances"], ratesToKrw: RatesToKrw) {
-  if (!cashBalances.length) return { value: 0, unavailable: false };
+  if (!cashBalances.length) return { value: 0, count: 0, unavailable: false };
   let total = 0;
   for (const cash of cashBalances) {
     const rate = ratesToKrw[cash.currency];
-    if (!cash.isReconciled || cash.isNegative || cash.balance < 0 || !Number.isFinite(rate) || rate <= 0) return { value: null, unavailable: true };
+    if (!cash.isReconciled || cash.isNegative || cash.balance < 0 || !Number.isFinite(rate) || rate <= 0) return { value: null, count: cashBalances.length, unavailable: true };
     const value = cash.balance * rate;
-    if (!Number.isFinite(value) || value < 0) return { value: null, unavailable: true };
+    if (!Number.isFinite(value) || value < 0) return { value: null, count: cashBalances.length, unavailable: true };
     total += value;
   }
-  return { value: total, unavailable: false };
+  return { value: total, count: cashBalances.length, unavailable: false };
 }
 
 function cashKey(accountId: string, currency: Currency) {

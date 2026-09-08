@@ -65,7 +65,7 @@ Rationale has no production users or distributed production data. No phase perfo
 Portfolio detects cash requirements from positive active Cash targets that have a selected Account. The target uses the Plan contribution Currency as its cash contract.
 
 - Without a required Cash target, Portfolio values valid Stock and Bond positions only. Unknown cash is omitted, never substituted with zero, and the UI explicitly says that cash is not included.
-- Tracked cash without a matching active target stays outside the current Plan and is not folded into target weights.
+- When Cash is in active scope, tracked cash without a matching target stays outside the current Plan, participates in the complete denominator as a separately reported value/share, and is never folded into the planned Cash target.
 - With a required Cash target, a matching Account-and-Currency baseline is mandatory. Missing, unreconciled, or negative required cash makes the current total, every current weight, and every drift unavailable together while target intent remains visible.
 - A tracked zero is valid and distinct from unavailable cash. A valid baseline includes only cash events strictly after its `asOf` boundary and uses the existing FX validation.
 - Portfolio offers a direct current-cash action. Saving it updates only Account metadata; it creates no Portfolio Revision and changes no target or policy.
@@ -75,7 +75,7 @@ Portfolio detects cash requirements from positive active Cash targets that have 
 
 Merge calculates known balances at the merge timestamp, moves Trades through the existing atomic Accounts-plus-Trades write, and creates fresh target baselines at that timestamp. Known source and target amounts are summed by Currency. If only one side is tracked, only its known amount is preserved. A Currency unknown on both sides remains untracked. Future-dated records are excluded from the anchor and apply once after it.
 
-The source Account is archived with its metadata preserved. Archived baselines are not replayed. Portfolio execution Account references move to the target in the same atomic write; a duplicate Cash execution hint is cleared instead of creating two references to one balance. Fee-policy provenance and the existing position/realized-P&L economic safety check remain intact. Because baseline storage is non-negative, a negative combined amount fails closed instead of storing invalid metadata.
+The source Account is archived with its metadata preserved. Archived baselines are not replayed. Portfolio Revisions, Groups, and Targets are immutable: historical references remain byte-for-byte unchanged, and an active Revision reference blocks the merge until the user creates a new Plan Revision with another Account. The hotfix never rewrites Portfolio history or creates a Revision automatically. Fee-policy provenance and the existing position/realized-P&L economic safety check remain intact. Because baseline storage is non-negative, a negative combined amount fails closed instead of storing invalid metadata.
 
 ## Backup, Sync, Import, and reset
 

@@ -127,6 +127,7 @@ test("Allocation 저장이 Plan 계산과 Overview에 반영되고 새로고침 
 test("Trade-only Portfolio는 포지션만 평가하고 Cash target은 명시적 현재 현금을 요구한다", async ({ page }) => {
   const now = "2026-09-01T00:00:00.000Z";
   const account = e2eAccount("phase3-account", "Phase 3 계좌");
+  const outsideAccount = { ...e2eAccount("phase3-outside", "계획 밖 현금", false), cashTracking: { version: 1, baselines: [{ currency: "KRW", balance: "50", asOf: now, createdAt: now, updatedAt: now }] } };
   const stock = e2eStock("phase3-stock", "Phase 3 종목", "Core", { ticker: "P3", market: "한국", currency: "KRW", status: "보유", currentPrice: 100, ledgerInitializedAt: now });
   const trade = {
     id: "phase3-buy", stockId: stock.id, stockName: stock.name, planId: null, tradeType: "매수", tradedAt: "2026-09-02T00:00:00.000Z",
@@ -147,12 +148,13 @@ test("Trade-only Portfolio는 포지션만 평가하고 Cash target은 명시적
       const key = `tradejournal.${collection}.v1`;
       if (localStorage.getItem(key) === null) localStorage.setItem(key, JSON.stringify(values));
     }
-  }, { accounts: [account], stocks: [stock], trades: [trade], "portfolio-plan-state": [state], "portfolio-plan-revisions": [revision], "portfolio-allocation-groups": positionOnlyGroups, "portfolio-allocation-targets": positionOnlyTargets });
+  }, { accounts: [account, outsideAccount], stocks: [stock], trades: [trade], "portfolio-plan-state": [state], "portfolio-plan-revisions": [revision], "portfolio-allocation-groups": positionOnlyGroups, "portfolio-allocation-targets": positionOnlyTargets });
 
   await page.goto("/portfolio");
   await expect(page.getByText("현금은 추적되지 않아 현재 구성에 포함되지 않았습니다.")).toBeVisible();
   await expect(page.getByText("보유 포지션만 포함한 평가 금액")).toBeVisible();
   await expect(page.getByRole("region", { name: "현재 자산 배분" })).toContainText("₩100");
+  await expect(page.getByText("현재 계획 밖 추적 현금: ₩50", { exact: true })).toBeVisible();
   await expect(page.getByText("현재 자산 평가를 사용할 수 없습니다.")).toHaveCount(0);
 
   await page.evaluate(({ groups, targets, accountId, timestamp }) => {
@@ -175,7 +177,8 @@ test("Trade-only Portfolio는 포지션만 평가하고 Cash target은 명시적
   await cashDialog.getByRole("button", { name: "저장", exact: true }).click();
 
   await expect(page.getByText("현재 자산 평가를 사용할 수 없습니다.")).toHaveCount(0);
-  await expect(page.getByRole("region", { name: "현재 자산 배분" })).toContainText("₩200");
+  await expect(page.getByRole("region", { name: "현재 자산 배분" })).toContainText("₩250");
+  await expect(page.getByText("현재 계획 밖 추적 현금: ₩50 · 전체의 20%", { exact: true })).toBeVisible();
   const stored = await page.evaluate(() => ({
     accounts: JSON.parse(localStorage.getItem("tradejournal.accounts.v1") ?? "[]"),
     revisions: JSON.parse(localStorage.getItem("tradejournal.portfolio-plan-revisions.v1") ?? "[]"),
@@ -1573,12 +1576,13 @@ test("새 매매 수수료를 계좌 정책으로 계산하고 직접 입력 전
   expect(manual).toMatchObject({ fee: 7, tax: 4, feeMode: "manual", feeCalculation: null });
 });
 
-test("계좌 병합은 대상 정책을 유지하고 원본 정책과 기존 거래 수수료를 보존한다", async ({ page }) => {
+test("계좌 병합은 대상 정책과 불변 Portfolio 이력을 보존한다", async ({ page }) => {
   const rule = (id: string, ratePercent: string) => ({ version: 1, enabled: true, rules: [{ id, name: id, market: "all", currency: "KRW", side: "both", ratePercent, fixedFee: "0", minimumFee: null, maximumFee: null, grossAmountFrom: null, grossAmountTo: null, effectiveFrom: "2026-01-01", effectiveTo: null, roundingMode: "floor", roundingUnit: "1" }] });
   const source = { ...e2eAccount("merge-source", "병합 원본"), feePolicy: rule("source-rule", "0.1") };
   const target = { ...e2eAccount("merge-target", "병합 대상", false), feePolicy: rule("target-rule", "0.2") };
   const portfolioTarget = { id: "merge-portfolio-target", revisionId: "merge-r1", groupId: "merge-group", accountId: source.id, targetType: "cash", stockId: null, weightWithinGroupBps: 10000, sortOrder: 0, updatedAt: source.updatedAt };
-  await page.addInitScript(({ accounts, portfolioTarget }) => { if (localStorage.getItem("tradejournal.accounts.v1") === null) localStorage.setItem("tradejournal.accounts.v1", JSON.stringify(accounts)); if (localStorage.getItem("tradejournal.trades.v1") === null) localStorage.setItem("tradejournal.trades.v1", "[]"); if (localStorage.getItem("tradejournal.stocks.v1") === null) localStorage.setItem("tradejournal.stocks.v1", "[]"); if (localStorage.getItem("tradejournal.portfolio-allocation-targets.v1") === null) localStorage.setItem("tradejournal.portfolio-allocation-targets.v1", JSON.stringify([portfolioTarget])); }, { accounts: [source, target], portfolioTarget });
+  const portfolioState = { id: "default", activeRevisionId: "merge-active-r2", contributionAmountMinor: 0, contributionCurrency: "KRW", updatedAt: source.updatedAt };
+  await page.addInitScript(({ accounts, portfolioTarget, portfolioState }) => { if (localStorage.getItem("tradejournal.accounts.v1") === null) localStorage.setItem("tradejournal.accounts.v1", JSON.stringify(accounts)); if (localStorage.getItem("tradejournal.trades.v1") === null) localStorage.setItem("tradejournal.trades.v1", "[]"); if (localStorage.getItem("tradejournal.stocks.v1") === null) localStorage.setItem("tradejournal.stocks.v1", "[]"); if (localStorage.getItem("tradejournal.portfolio-plan-state.v1") === null) localStorage.setItem("tradejournal.portfolio-plan-state.v1", JSON.stringify([portfolioState])); if (localStorage.getItem("tradejournal.portfolio-allocation-targets.v1") === null) localStorage.setItem("tradejournal.portfolio-allocation-targets.v1", JSON.stringify([portfolioTarget])); }, { accounts: [source, target], portfolioTarget, portfolioState });
   await page.goto("/accounts");
   const sourceCard = page.locator("article").filter({ hasText: "병합 원본" });
   await sourceCard.getByRole("button", { name: "다른 계좌로 병합" }).click();
@@ -1589,7 +1593,7 @@ test("계좌 병합은 대상 정책을 유지하고 원본 정책과 기존 거
   const merged = await page.evaluate(() => ({ accounts: JSON.parse(localStorage.getItem("tradejournal.accounts.v1") ?? "[]"), portfolioTargets: JSON.parse(localStorage.getItem("tradejournal.portfolio-allocation-targets.v1") ?? "[]") }));
   expect(merged.accounts.find((item: { id: string }) => item.id === "merge-source")).toMatchObject({ feePolicy: source.feePolicy, archivedAt: expect.any(String) });
   expect(merged.accounts.find((item: { id: string }) => item.id === "merge-target")).toMatchObject({ feePolicy: target.feePolicy });
-  expect(merged.portfolioTargets[0]).toMatchObject({ id: portfolioTarget.id, accountId: target.id });
+  expect(merged.portfolioTargets).toEqual([portfolioTarget]);
 });
 
 test("현금 기준점이 없어도 분석에서 현금 독립 매매 성과를 표시한다", async ({ page }) => {

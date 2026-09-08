@@ -22,7 +22,7 @@ describe("portfolio balance snapshot", () => {
       bondStockIds: new Set(["bond"]),
       cashRequirements: [{ targetId: "cash", accountId: "a", currency: "KRW" }],
     });
-    expect(snapshot).toMatchObject({ available: true, totalValueKrw: 1000 });
+    expect(snapshot).toMatchObject({ available: true, totalValueKrw: 1000, outsideCurrentPlanCashValueKrw: 0, outsideCurrentPlanCashWeightBps: 0 });
     expect(snapshot.categories).toEqual([
       expect.objectContaining({ category: "savings", currentValueKrw: 300, currentWeightBps: 3000 }),
       expect.objectContaining({ category: "stocks", currentValueKrw: 600, currentWeightBps: 6000 }),
@@ -49,12 +49,66 @@ describe("portfolio balance snapshot", () => {
       stocks: [stock],
       ratesToKrw: fallbackRatesToKrw,
     });
-    expect(snapshot).toMatchObject({ available: true, cashScope: "positionsOnly", totalValueKrw: 200, outsideCurrentPlanCashValueKrw: 500, outsideCurrentPlanCashUnavailable: false });
+    expect(snapshot).toMatchObject({ available: true, cashScope: "positionsOnly", totalValueKrw: 200, outsideCurrentPlanCashValueKrw: 500, outsideCurrentPlanCashCount: 1, outsideCurrentPlanCashWeightBps: null, outsideCurrentPlanCashUnavailable: false });
     expect(snapshot.categories).toEqual([
       expect.objectContaining({ category: "savings", currentValueKrw: null, currentWeightBps: null }),
       expect.objectContaining({ category: "stocks", currentValueKrw: 200, currentWeightBps: 10000 }),
       expect.objectContaining({ category: "bonds", currentValueKrw: 0, currentWeightBps: 0 }),
     ]);
+  });
+
+  it("includes valid Outside Current Plan cash in the denominator without folding it into planned Cash", () => {
+    const snapshot = buildPortfolioBalanceSnapshot({
+      ledger: ledger([position("stock", 8)], [cashBalance("required", 200), cashBalance("outside", 500)]),
+      stocks: [stock], ratesToKrw: fallbackRatesToKrw,
+      cashRequirements: [{ targetId: "cash", accountId: "required", currency: "KRW" }],
+    });
+    expect(snapshot).toMatchObject({ available: true, totalValueKrw: 1500, outsideCurrentPlanCashValueKrw: 500 });
+    expect(snapshot.categories.find((row) => row.category === "savings")).toMatchObject({ currentValueKrw: 200 });
+    expect(snapshot.categories.find((row) => row.category === "savings")?.currentWeightBps).toBeCloseTo(200 / 1500 * 10000, 8);
+    expect(snapshot.categories.find((row) => row.category === "stocks")?.currentWeightBps).toBeCloseTo(800 / 1500 * 10000, 8);
+    expect(snapshot.outsideCurrentPlanCashWeightBps).toBeCloseTo(500 / 1500 * 10000, 8);
+    expect(snapshot.categories.reduce((sum, row) => sum + (row.currentWeightBps ?? 0), snapshot.outsideCurrentPlanCashWeightBps ?? 0)).toBeCloseTo(10000, 8);
+  });
+
+  it("aggregates multiple outside tracked Cash Accounts and Currencies in the complete denominator", () => {
+    const outsideValue = 300 + fallbackRatesToKrw.USD;
+    const snapshot = buildPortfolioBalanceSnapshot({
+      ledger: ledger([position("stock", 8)], [cashBalance("required", 200), cashBalance("outside-krw", 300), cashBalance("outside-usd", 1, "USD")]),
+      stocks: [stock], ratesToKrw: fallbackRatesToKrw,
+      cashRequirements: [{ targetId: "cash", accountId: "required", currency: "KRW" }],
+    });
+    expect(snapshot).toMatchObject({ available: true, totalValueKrw: 1000 + outsideValue, outsideCurrentPlanCashValueKrw: outsideValue });
+    expect(snapshot.outsideCurrentPlanCashWeightBps).toBeCloseTo(outsideValue / (1000 + outsideValue) * 10000, 8);
+  });
+
+  it("keeps an actual tracked zero outside Cash balance visible as a zero share", () => {
+    const snapshot = buildPortfolioBalanceSnapshot({
+      ledger: ledger([position("stock", 8)], [cashBalance("required", 200), cashBalance("outside", 0)]),
+      stocks: [stock], ratesToKrw: fallbackRatesToKrw,
+      cashRequirements: [{ targetId: "cash", accountId: "required", currency: "KRW" }],
+    });
+    expect(snapshot).toMatchObject({ available: true, totalValueKrw: 1000, outsideCurrentPlanCashValueKrw: 0, outsideCurrentPlanCashCount: 1, outsideCurrentPlanCashWeightBps: 0, outsideCurrentPlanCashUnavailable: false });
+  });
+
+  it("fails closed for invalid outside Cash when Cash is in scope", () => {
+    const negativeOutside = { ...cashBalance("outside", -1), isNegative: true };
+    const snapshot = buildPortfolioBalanceSnapshot({
+      ledger: ledger([position("stock", 8)], [cashBalance("required", 200), negativeOutside]),
+      stocks: [stock], ratesToKrw: fallbackRatesToKrw,
+      cashRequirements: [{ targetId: "cash", accountId: "required", currency: "KRW" }],
+    });
+    expect(snapshot).toMatchObject({ available: false, unavailableReason: "invalidOutsideCash", totalValueKrw: null, outsideCurrentPlanCashValueKrw: null, outsideCurrentPlanCashWeightBps: null, outsideCurrentPlanCashUnavailable: true });
+    expect(snapshot.categories.every((row) => row.currentValueKrw === null && row.currentWeightBps === null)).toBe(true);
+  });
+
+  it("preserves known outside Cash details while missing required Cash fails closed", () => {
+    const snapshot = buildPortfolioBalanceSnapshot({
+      ledger: ledger([position("stock", 8)], [cashBalance("outside", 500)]),
+      stocks: [stock], ratesToKrw: fallbackRatesToKrw,
+      cashRequirements: [{ targetId: "cash", accountId: "required", currency: "KRW" }],
+    });
+    expect(snapshot).toMatchObject({ available: false, unavailableReason: "missingCashBaseline", totalValueKrw: null, outsideCurrentPlanCashValueKrw: 500, outsideCurrentPlanCashWeightBps: null, outsideCurrentPlanCashUnavailable: false });
   });
 
   it("fails all current values closed when required cash is untracked and recovers for zero", () => {
@@ -138,7 +192,7 @@ function snapshot(savings: number, stocks: number, bonds: number) {
     { category: "savings" as const, currentValueKrw: savings, currentWeightBps: savings / total * 10000 },
     { category: "stocks" as const, currentValueKrw: stocks, currentWeightBps: stocks / total * 10000 },
     { category: "bonds" as const, currentValueKrw: bonds, currentWeightBps: bonds / total * 10000 },
-  ], cashScope: "required" as const, cashRequirements: [], missingCashRequirements: [], outsideCurrentPlanCashValueKrw: 0, outsideCurrentPlanCashUnavailable: false };
+  ], cashScope: "required" as const, cashRequirements: [], missingCashRequirements: [], outsideCurrentPlanCashValueKrw: 0, outsideCurrentPlanCashCount: 0, outsideCurrentPlanCashWeightBps: 0, outsideCurrentPlanCashUnavailable: false };
 }
 
 function ledger(positions: TradingLedger["positions"] = [], cashBalances: TradingLedger["cashBalances"] = []): TradingLedger {
@@ -147,4 +201,8 @@ function ledger(positions: TradingLedger["positions"] = [], cashBalances: Tradin
 
 function position(stockId: string, quantity: number): TradingLedger["positions"][number] {
   return { key: stockId, stockId, stockName: stockId, accountId: "a", accountName: "A", currency: "KRW", quantity, averagePrice: 0, investedAmount: 0, investedAmountKrw: 0, realizedProfit: 0, realizedProfitKrw: 0 };
+}
+
+function cashBalance(accountId: string, balance: number, currency: "KRW" | "USD" = "KRW"): TradingLedger["cashBalances"][number] {
+  return { accountId, accountName: accountId, currency, baselineBalance: balance, baselineAsOf: "2026-01-01T00:00:00.000Z", balance, isNegative: balance < 0, isReconciled: true };
 }

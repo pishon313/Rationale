@@ -6,6 +6,11 @@ import { saveCollectionsAtomically, type CollectionWrite } from "@/lib/local-rep
 import type { InvestmentAccount } from "./types";
 import type { PortfolioAllocationTarget } from "@/features/portfolio-plan/types";
 
+export type AccountMergePortfolioContext = {
+  activeRevisionId: string | null;
+  targets: readonly PortfolioAllocationTarget[];
+};
+
 export function withSingleDefault(accounts: InvestmentAccount[], account: InvestmentAccount) {
   return [account, ...accounts.filter((item) => item.id !== account.id)].map((item) => ({
     ...item,
@@ -27,11 +32,14 @@ export function archiveAccount(accounts: InvestmentAccount[], accountId: string,
   return next;
 }
 
-export function buildAccountMerge(accounts: InvestmentAccount[], trades: Trade[], sourceAccountId: string, targetAccountId: string, now = new Date().toISOString(), portfolioTargets: readonly PortfolioAllocationTarget[] = []): CollectionWrite[] {
+export function buildAccountMerge(accounts: InvestmentAccount[], trades: Trade[], sourceAccountId: string, targetAccountId: string, now = new Date().toISOString(), portfolio?: AccountMergePortfolioContext): CollectionWrite[] {
   if (!sourceAccountId || sourceAccountId === targetAccountId) throw new Error("서로 다른 계좌를 선택해 주세요.");
   const source = accounts.find((account) => account.id === sourceAccountId && !account.archivedAt);
   const target = accounts.find((account) => account.id === targetAccountId && !account.archivedAt);
   if (!source || !target) throw new Error("병합할 활성 계좌를 찾을 수 없습니다.");
+  if (portfolio?.activeRevisionId && portfolio.targets.some((item) => item.revisionId === portfolio.activeRevisionId && item.accountId === sourceAccountId)) {
+    throw new Error("현재 Portfolio 계획에서 이 계좌를 사용 중입니다. 먼저 Portfolio Plan에서 다른 계좌로 변경한 뒤 다시 시도해 주세요.");
+  }
   const before = buildTradingLedger(trades, accounts);
   if (before.errors.length) throw new Error(`계좌 병합 전에 원장 오류를 먼저 해결해 주세요. ${before.errors[0].message}`);
   const mergeTime = Date.parse(now);
@@ -48,10 +56,7 @@ export function buildAccountMerge(accounts: InvestmentAccount[], trades: Trade[]
   const after = buildTradingLedger(nextTrades, nextAccounts);
   if (after.errors.length) throw new Error(after.errors[0].message);
   if (!sameLedgerEconomics(before, after)) throw new Error("같은 종목의 거래 이력이 두 계좌에 겹쳐 있어 병합 시 원장 계산 결과가 달라집니다.");
-  const nextPortfolioTargets = redirectPortfolioAccountReferences(portfolioTargets, sourceAccountId, targetAccountId, mergeTimestamp);
-  const writes: CollectionWrite[] = [{ collection: "accounts", values: nextAccounts }, { collection: "trades", values: nextTrades }];
-  if (nextPortfolioTargets.some((item, index) => item !== portfolioTargets[index])) writes.push({ collection: "portfolio-allocation-targets", values: nextPortfolioTargets });
-  return writes;
+  return [{ collection: "accounts", values: nextAccounts }, { collection: "trades", values: nextTrades }];
 }
 
 function mergedCashBaselines(ledger: TradingLedger, sourceAccountId: string, targetAccountId: string, now: string) {
@@ -68,24 +73,13 @@ function mergedCashBaselines(ledger: TradingLedger, sourceAccountId: string, tar
   });
 }
 
-export async function mergeAccounts(accounts: InvestmentAccount[], trades: Trade[], sourceAccountId: string, targetAccountId: string, portfolioTargets: readonly PortfolioAllocationTarget[] = []) {
-  const writes = buildAccountMerge(accounts, trades, sourceAccountId, targetAccountId, new Date().toISOString(), portfolioTargets);
+export async function mergeAccounts(accounts: InvestmentAccount[], trades: Trade[], sourceAccountId: string, targetAccountId: string, portfolio?: AccountMergePortfolioContext) {
+  const writes = buildAccountMerge(accounts, trades, sourceAccountId, targetAccountId, new Date().toISOString(), portfolio);
   await saveCollectionsAtomically(writes);
   return {
     accounts: writes.find((write) => write.collection === "accounts")!.values as InvestmentAccount[],
     trades: writes.find((write) => write.collection === "trades")!.values as Trade[],
-    portfolioTargets: (writes.find((write) => write.collection === "portfolio-allocation-targets")?.values as PortfolioAllocationTarget[] | undefined) ?? [...portfolioTargets],
   };
-}
-
-function redirectPortfolioAccountReferences(targets: readonly PortfolioAllocationTarget[], sourceAccountId: string, targetAccountId: string, updatedAt: string) {
-  const occupiedCashRevisions = new Set(targets.filter((target) => target.targetType === "cash" && target.accountId === targetAccountId).map((target) => target.revisionId));
-  return targets.map((target) => {
-    if (target.accountId !== sourceAccountId) return target;
-    const accountId = target.targetType === "cash" && occupiedCashRevisions.has(target.revisionId) ? null : targetAccountId;
-    if (target.targetType === "cash" && accountId === targetAccountId) occupiedCashRevisions.add(target.revisionId);
-    return { ...target, accountId, updatedAt };
-  });
 }
 
 type EconomicPosition = { stockId: string; currency: string; quantity: number; investedAmountKrw: number; averagePrice: number };

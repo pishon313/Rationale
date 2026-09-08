@@ -92,6 +92,34 @@ describe("Portfolio Overview", () => {
     expect(mocks.save).not.toHaveBeenCalled();
   });
 
+  it("includes valid outside tracked Cash in the complete denominator without folding it into planned Cash", () => {
+    reset(true);
+    mocks.collections.set("portfolio-plan-state", [{ ...state, balancePolicy: { version: 1, mode: "fixed", targetWeightsBps: { savings: 2000, stocks: 8000, bonds: 0 }, toleranceBps: 500, updatedAt: now } }]);
+    mocks.collections.set("portfolio-allocation-groups", [
+      { ...group, id: "cash-group", name: "Cash", targetWeightBps: 2000 },
+      { ...group, id: "stock-group", name: "Stocks", targetWeightBps: 8000, sortOrder: 1 },
+    ]);
+    mocks.collections.set("portfolio-allocation-targets", [
+      { ...target, id: "cash-target", groupId: "cash-group", targetType: "cash", stockId: null, accountId: "a" },
+      { ...target, id: "stock-target", groupId: "stock-group" },
+    ]);
+    mocks.ledger = {
+      ...mocks.ledger,
+      positions: [{ key: "p", stockId: sampleStocks[0]!.id, stockName: "Samsung", accountId: "a", accountName: "A", currency: "KRW", quantity: 8, averagePrice: 0, investedAmount: 0, investedAmountKrw: 0, realizedProfit: 0, realizedProfitKrw: 0 }],
+      cashBalances: [
+        { accountId: "a", accountName: "A", currency: "KRW", baselineBalance: 200, baselineAsOf: now, balance: 200, isNegative: false, isReconciled: true },
+        { accountId: "b", accountName: "B", currency: "KRW", baselineBalance: 500, baselineAsOf: now, balance: 500, isNegative: false, isReconciled: true },
+      ],
+    };
+    render(<PortfolioPageClient />);
+    expect(screen.getByText("현재 포트폴리오").closest("article")).toHaveTextContent("₩1,500");
+    expect(screen.getByText("현재 계획 밖 추적 현금: ₩500 · 전체의 33.33%")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /현재 계획 밖 33.33%/ })).toBeInTheDocument();
+    const current = screen.getByRole("region", { name: "현재 자산 배분" });
+    expect(within(current).getByRole("row", { name: /현금성 자산/ })).toHaveTextContent("₩200");
+    expect(within(current).getByRole("row", { name: /주식 투자/ })).toHaveTextContent("₩800");
+  });
+
   it("shows whole-portfolio drift and an editable-in-Plan new-cash balance suggestion", () => {
     reset(true);
     mocks.collections.set("portfolio-plan-state", [{ ...state, balancePolicy: { version: 1, mode: "balanceAssist", targetWeightsBps: { savings: 3000, stocks: 6000, bonds: 1000 }, toleranceBps: 100, updatedAt: now } }]);
