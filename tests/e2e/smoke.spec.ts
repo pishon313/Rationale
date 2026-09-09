@@ -1831,7 +1831,8 @@ test("설정에서 전체 매매 원장을 soft-delete하고 최근 1회를 같�
   await expect(page.locator("article").filter({ hasText: "열린 포지션" })).toContainText("0개");
   await expect(page.getByText("현금 미추적")).toHaveCount(2);
   await expect(page.getByText("US$1,000.00", { exact: true })).toBeVisible();
-  await expect(page.getByText("2026. 8. 20. 09:00부터 추적", { exact: true })).toBeVisible();
+  const trackedSince = await page.evaluate((value) => new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short", hourCycle: "h23" }).format(new Date(value)), timestamp);
+  await expect(page.getByText(`${trackedSince}부터 추적`, { exact: true })).toBeVisible();
 
   await page.goto("/settings");
   await page.getByRole("button", { name: "마지막 매매 기록 삭제 되돌리기" }).click();
