@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Trade } from "@/features/trades/types";
 import { migrateLegacyAccounts, persistLegacyAccountMigration } from "./migrate-accounts";
+import type { InvestmentAccount } from "./types";
 
 const trade = (id: string, accountName: string, accountId?: string | null): Trade => ({ id, stockId: null, stockName: "", planId: null, tradeType: "입금", tradedAt: "2026-01-01", quantity: 0, price: 0, amount: 100, currency: "KRW", exchangeRate: 1, fee: 0, tax: 0, accountId, accountName, memo: "", emotion: "평온", emotionIntensity: 1, confidenceScore: 3, ruleComplianceScore: 3, createdAt: "2026-01-01" });
 
@@ -31,5 +32,15 @@ describe("legacy account migration", () => {
     expect(accounts).toEqual([]);
     expect(trades[0].accountId).toBeUndefined();
     expect(save).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ collection: "accounts" }), expect.objectContaining({ collection: "trades" })]));
+  });
+
+  it("does not write or infer cash tracking while loading an already-linked Account", async () => {
+    const existing: InvestmentAccount = { id: "account-a", name: "A", institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault: true, archivedAt: null, memo: "", createdAt: "2026-01-01", updatedAt: "2026-01-01" };
+    const linked = trade("deposit", "A", existing.id);
+    const save = vi.fn();
+    const result = await persistLegacyAccountMigration([existing], [linked], save);
+    expect(result.changed).toBe(false);
+    expect(result.accounts[0]).not.toHaveProperty("cashTracking");
+    expect(save).not.toHaveBeenCalled();
   });
 });

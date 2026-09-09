@@ -16,6 +16,6 @@ Reusable category suggestions are derived from category values already assigned 
 
 `tags` remain user-authored, optional, and many-to-many. They represent overlapping themes or characteristics and are not used to produce additive asset-allocation totals, because one Stock can have several tags.
 
-Backup remains version 5 and Sync remains version 1. `marketSector` is an additive optional Stock field, so old Stocks, backups, and Sync payloads require no migration rewrite.
+Current backup is version 6 and Sync remains version 1. `marketSector` is an additive optional Stock field, so old Stocks, backups, and Sync payloads require no migration rewrite.
 
 The Phase 2 dashboard can switch between My category and Market sector without changing financial calculations. See [Dashboard classification views](./dashboard-classification-views.md).

@@ -2,7 +2,7 @@
 
 import { X } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { currencies, fallbackRatesToKrw, fetchHistoricalRateToKrw } from "@/domain/currency";
 import { planPriceDeviation } from "@/domain/portfolio";
 import { evaluateTradeRules } from "@/domain/rules";
@@ -17,6 +17,7 @@ import { useExchangeRates } from "@/lib/use-exchange-rates";
 import { translateTradeText } from "./trade-i18n";
 import { emotions, tradeTypes, type Trade } from "./types";
 import type { InvestmentAccount } from "@/features/accounts/types";
+import { hasCashBaseline } from "@/features/accounts/account-cash-actions";
 import { createAccountFeeCalculationSnapshot } from "./trade-fee";
 import {
   automaticFeeEligible,
@@ -44,6 +45,8 @@ type Props = {
   ledger: TradingLedger;
   accounts?: InvestmentAccount[];
   formError?: string;
+  escapeSuspended?: boolean;
+  onRequestCash?: (accountId: string, currency: Trade["currency"], trigger: HTMLElement) => void;
   onCancel: () => void;
   onSave: (trade: Trade) => Promise<void> | void;
 };
@@ -51,10 +54,11 @@ type Props = {
 type RateNote = { key: string; date?: string };
 
 const field = "mt-1 h-10 w-full rounded-lg border bg-[var(--surface)] px-3 text-sm";
+const cashBaselineRequiredMessage = "입출금을 현금에 반영하려면 이 계좌·통화의 현재 현금을 먼저 입력해 주세요.";
 // 계획 연결 데이터와 저장 로직은 유지하되, 당분간 원장 입력 UI에서는 숨깁니다.
 const showLinkedPlanField = false;
 
-export function TradeForm({ trade, initialType = "매수", initialStockId, lockedStockId, initialAccountId, lockedAccountId, allowedTypes, openingPosition: createOpeningPosition = false, stocks, plans, rules, ledger, accounts, formError = "", onCancel, onSave }: Props) {
+export function TradeForm({ trade, initialType = "매수", initialStockId, lockedStockId, initialAccountId, lockedAccountId, allowedTypes, openingPosition: createOpeningPosition = false, stocks, plans, rules, ledger, accounts, formError = "", escapeSuspended = false, onRequestCash, onCancel, onSave }: Props) {
   const { t, formatDate, formatNumber } = useI18n();
   const exchangeRates = useExchangeRates();
   const openingPosition = trade?.isOpeningPosition === true || createOpeningPosition;
@@ -92,6 +96,7 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, locke
   const [conditionMet, setConditionMet] = useState((trade?.ruleComplianceScore ?? 5) >= 4);
   const [localError, setLocalError] = useState("");
   const [saving, setSaving] = useState(false);
+  const saveButton = useRef<HTMLButtonElement>(null);
   const visibleTradeTypes = allowedTypes ?? tradeTypes;
 
   const stock = stocks.find((item) => item.id === stockId);
@@ -106,7 +111,8 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, locke
   const available = ledger.positions
     .filter((item) => item.stockId === stockId && item.accountId === accountId && item.currency === currency)
     .reduce((sum, item) => sum + item.quantity, 0);
-  const visibleError = localError || formError;
+  const cashEventNeedsBaseline = (type === "입금" || type === "출금") && Boolean(selectedAccount) && !hasCashBaseline(selectedAccount, currency);
+  const visibleError = localError === cashBaselineRequiredMessage && !cashEventNeedsBaseline ? formError : localError || formError;
   const translatedError = visibleError ? translateTradeText(visibleError, t, formatNumber) : "";
   const money = (value: number, moneyCurrency: Trade["currency"]) => formatNumber(value, {
     style: "currency",
@@ -149,10 +155,10 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, locke
   }, [currency, exchangeRates.snapshot.rateDate, exchangeRates.snapshot.ratesToKrw, trade, tradedAt]);
 
   useEffect(() => {
-    const close = (event: KeyboardEvent) => { if (event.key === "Escape" && !saving) onCancel(); };
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape" && !saving && !escapeSuspended) onCancel(); };
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [onCancel, saving]);
+  }, [escapeSuspended, onCancel, saving]);
 
   function syncStockCurrency(nextStock?: Stock) {
     if (!nextStock) return;
@@ -214,6 +220,10 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, locke
     }
     if (!isSecurity && amount <= 0) {
       setLocalError("금액은 0보다 커야 합니다.");
+      return;
+    }
+    if ((type === "입금" || type === "출금") && !hasCashBaseline(selectedAccount, currency)) {
+      setLocalError(cashBaselineRequiredMessage);
       return;
     }
 
@@ -312,7 +322,7 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, locke
         </div>
 
         <div className="grid gap-5 p-5 sm:grid-cols-2">
-          {translatedError && <div role="alert" className="sm:col-span-2 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">{translatedError}</div>}
+          {translatedError && <div role="alert" className="sm:col-span-2 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200"><p>{translatedError}</p>{cashEventNeedsBaseline && selectedAccount && onRequestCash && <button type="button" onClick={(event) => onRequestCash(selectedAccount.id, currency, saveButton.current ?? event.currentTarget)} className="mt-2 rounded-md border border-red-300 px-3 py-1.5 text-xs font-medium dark:border-red-800">{t("현재 현금 입력")}</button>}</div>}
 
           <div className="sm:col-span-2">
             <Label text={t("유형")} asGroup>
@@ -368,7 +378,7 @@ export function TradeForm({ trade, initialType = "매수", initialStockId, locke
 
         <div className="sticky bottom-0 flex justify-end gap-2 border-t bg-[var(--surface)] p-4">
           <button type="button" disabled={saving} onClick={onCancel} className="rounded-lg border px-4 py-2 text-sm disabled:opacity-50">{t("취소")}</button>
-          <button disabled={saving} className="rounded-lg bg-[var(--accent)] px-5 py-2 text-sm text-white disabled:opacity-60">{saving ? t("저장 중...") : openingPosition && !trade ? t("기초 포지션 저장") : trade ? t("변경 저장") : t("기록 저장")}</button>
+          <button ref={saveButton} disabled={saving} className="rounded-lg bg-[var(--accent)] px-5 py-2 text-sm text-white disabled:opacity-60">{saving ? t("저장 중...") : openingPosition && !trade ? t("기초 포지션 저장") : trade ? t("변경 저장") : t("기록 저장")}</button>
         </div>
       </form>
     </div>

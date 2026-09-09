@@ -4,15 +4,36 @@ import type { Currency } from "@/domain/currency";
 import { conditionTypes, planStatuses, scenarioTypes, type BuyPlan } from "@/features/plans/types";
 import { reviewEvaluations, type Review } from "@/features/reviews/types";
 import { ruleTypes, severities, type InvestmentRule } from "@/features/rules/types";
-import { currencies, investmentTypes, marketDataProviders, markets, priceStatuses, quoteFreshnessValues, quotePreferences, remoteMarketDataProviders, stockStatuses, stockViews, type Stock } from "@/features/stocks/types";
+import { currencies, investmentTypes, marketDataProviders, markets, priceStatuses, quoteFreshnessValues, quotePreferences, remoteMarketDataProviders, securityAssetClasses, stockStatuses, stockViews, type Stock } from "@/features/stocks/types";
 import { marketSectors } from "@/features/stocks/market-sectors";
 import { tradeJournalStatuses, tradeOriginKinds, tradeTypes, type Trade } from "@/features/trades/types";
 import { validateTradeFeeMetadata } from "@/features/trades/trade-fee";
 import { accountKinds } from "@/features/accounts/types";
 import type { InvestmentAccount } from "@/features/accounts/types";
 import { validateAccountFeePolicy } from "@/features/accounts/account-fee-policy";
+import { validateAccountCashTracking } from "@/features/accounts/account-cash-tracking";
 import { validateTransferPairs } from "@/features/accounts/account-transfer";
 import { isLocale, type Locale } from "@/i18n/types";
+import type {
+  LegacyPortfolioAllocationTargetV6,
+  LegacyPortfolioPlanRevisionV6,
+  LegacyPortfolioPlanStateV6,
+  PortfolioAllocationGroup,
+  PortfolioAllocationTarget,
+  PortfolioPlanRevision,
+  PortfolioPlanState,
+} from "@/features/portfolio-plan/types";
+import {
+  validateLegacyPortfolioAllocationTargetV6Record,
+  validateLegacyPortfolioPlanRevisionV6Record,
+  validateLegacyPortfolioPlanStateV6Record,
+  validateLegacyPortfolioPlanV6Collections,
+  validatePortfolioAllocationGroupRecord,
+  validatePortfolioAllocationTargetRecord,
+  validatePortfolioPlanCollections,
+  validatePortfolioPlanRevisionRecord,
+  validatePortfolioPlanStateRecord,
+} from "@/features/portfolio-plan/validation";
 
 export type DashboardNoteBackup = { id: string; content: string; updatedAt: string };
 export type EarningsEventBackup = { id: string; name: string; ticker: string; date: string; updatedAt: string; deletedAt: string | null };
@@ -54,9 +75,40 @@ export type ValidatedBackup =
       dashboardNotes: DashboardNoteBackup[];
       earningsEvents: EarningsEventBackup[];
       displayCurrency: Currency;
+    })
+  | (CoreBackup & {
+      version: 6;
+      accounts: InvestmentAccount[];
+      observations: Observation[];
+      reviews: Review[];
+      rules: InvestmentRule[];
+      notes: Note[];
+      language: Locale;
+      dashboardNotes: DashboardNoteBackup[];
+      earningsEvents: EarningsEventBackup[];
+      displayCurrency: Currency;
+      portfolioPlanState: LegacyPortfolioPlanStateV6[];
+      portfolioPlanRevisions: LegacyPortfolioPlanRevisionV6[];
+      portfolioAllocationTargets: LegacyPortfolioAllocationTargetV6[];
+    })
+  | (CoreBackup & {
+      version: 7;
+      accounts: InvestmentAccount[];
+      observations: Observation[];
+      reviews: Review[];
+      rules: InvestmentRule[];
+      notes: Note[];
+      language: Locale;
+      dashboardNotes: DashboardNoteBackup[];
+      earningsEvents: EarningsEventBackup[];
+      displayCurrency: Currency;
+      portfolioPlanState: PortfolioPlanState[];
+      portfolioPlanRevisions: PortfolioPlanRevision[];
+      portfolioAllocationGroups: PortfolioAllocationGroup[];
+      portfolioAllocationTargets: PortfolioAllocationTarget[];
     });
 
-const supportedVersions = new Set([1, 2, 3, 4, 5]);
+const supportedVersions = new Set([1, 2, 3, 4, 5, 6, 7]);
 const supportedTradeTypes = new Set<string>(tradeTypes);
 const supportedCurrencies = new Set<string>(currencies);
 
@@ -88,7 +140,7 @@ export function validateBackupPayload(value: unknown): ValidatedBackup {
   observations.forEach(validateObservationRecord);
   reviews.forEach(validateReviewRecord);
   rules.forEach(validateRuleRecord);
-  if (value.version === 4 || value.version === 5) {
+  if (value.version === 4 || value.version === 5 || value.version === 6 || value.version === 7) {
     const notes = validateRecords(value.notes, "Note");
     notes.forEach(validateNoteRecord);
     if (!isLocale(value.language)) throw new Error("언어 설정이 올바르지 않습니다.");
@@ -97,14 +149,14 @@ export function validateBackupPayload(value: unknown): ValidatedBackup {
     const earningsEvents = value.earningsEvents === undefined ? undefined : validateRecords(value.earningsEvents, "실적 발표 일정");
     earningsEvents?.forEach(validateEarningsEventRecord);
     if (value.displayCurrency !== undefined) requireEnum(value.displayCurrency, currencies, "통화 설정", "표시 통화");
-    if (value.version === 5) {
+    if (value.version === 5 || value.version === 6 || value.version === 7) {
       const accounts = validateRecords(value.accounts, "계좌");
       accounts.forEach(validateAccountRecord);
-      if (!dashboardNotes || !earningsEvents || value.displayCurrency === undefined) throw new Error("Version 5 백업의 설정 데이터가 완전하지 않습니다.");
+      if (!dashboardNotes || !earningsEvents || value.displayCurrency === undefined) throw new Error(`Version ${value.version} 백업의 설정 데이터가 완전하지 않습니다.`);
       validateAccountReferences(accounts, trades);
       validateTransferPairs(trades as Trade[]);
-      return {
-        version: 5,
+      const current = {
+        version: value.version,
         ...core,
         accounts: accounts as InvestmentAccount[],
         observations: observations as Observation[],
@@ -116,6 +168,31 @@ export function validateBackupPayload(value: unknown): ValidatedBackup {
         earningsEvents: earningsEvents as EarningsEventBackup[],
         displayCurrency: value.displayCurrency as Currency,
       };
+      if (value.version === 5) return current as Extract<ValidatedBackup, { version: 5 }>;
+      const portfolioPlanState = validateRecords(value.portfolioPlanState, "포트폴리오 계획 상태");
+      const portfolioPlanRevisions = validateRecords(value.portfolioPlanRevisions, "포트폴리오 계획 리비전");
+      const portfolioAllocationTargets = validateRecords(value.portfolioAllocationTargets, "포트폴리오 배분 대상");
+      if (value.version === 6) {
+        portfolioPlanState.forEach(validateLegacyPortfolioPlanStateV6Record);
+        portfolioPlanRevisions.forEach(validateLegacyPortfolioPlanRevisionV6Record);
+        portfolioAllocationTargets.forEach(validateLegacyPortfolioAllocationTargetV6Record);
+        validateLegacyPortfolioPlanV6Collections({ states: portfolioPlanState as LegacyPortfolioPlanStateV6[], revisions: portfolioPlanRevisions as LegacyPortfolioPlanRevisionV6[], targets: portfolioAllocationTargets as LegacyPortfolioAllocationTargetV6[], stocks: stocks as Stock[] });
+        return { ...current, version: 6, portfolioPlanState: portfolioPlanState as LegacyPortfolioPlanStateV6[], portfolioPlanRevisions: portfolioPlanRevisions as LegacyPortfolioPlanRevisionV6[], portfolioAllocationTargets: portfolioAllocationTargets as LegacyPortfolioAllocationTargetV6[] };
+      }
+      const portfolioAllocationGroups = validateRecords(value.portfolioAllocationGroups, "포트폴리오 Allocation Group");
+      portfolioPlanState.forEach(validatePortfolioPlanStateRecord);
+      portfolioPlanRevisions.forEach(validatePortfolioPlanRevisionRecord);
+      portfolioAllocationGroups.forEach(validatePortfolioAllocationGroupRecord);
+      portfolioAllocationTargets.forEach(validatePortfolioAllocationTargetRecord);
+      validatePortfolioPlanCollections({
+        states: portfolioPlanState as PortfolioPlanState[],
+        revisions: portfolioPlanRevisions as PortfolioPlanRevision[],
+        groups: portfolioAllocationGroups as PortfolioAllocationGroup[],
+        targets: portfolioAllocationTargets as PortfolioAllocationTarget[],
+        stocks: stocks as Stock[],
+        accounts: accounts as InvestmentAccount[],
+      });
+      return { ...current, version: 7, portfolioPlanState: portfolioPlanState as PortfolioPlanState[], portfolioPlanRevisions: portfolioPlanRevisions as PortfolioPlanRevision[], portfolioAllocationGroups: portfolioAllocationGroups as PortfolioAllocationGroup[], portfolioAllocationTargets: portfolioAllocationTargets as PortfolioAllocationTarget[] };
     }
     return {
       version: 4,
@@ -178,6 +255,7 @@ function validateStockRecord(stock: Record<string, unknown>, index: number) {
   requireEnum(stock.status, stockStatuses, label, "상태");
   requireEnum(stock.investmentType, investmentTypes, label, "투자 유형");
   requireEnum(stock.currentView, stockViews, label, "현재 판단");
+  if (stock.assetClass !== undefined) requireEnum(stock.assetClass, securityAssetClasses, label, "Allocation 자산군");
   if (stock.marketSector !== undefined && stock.marketSector !== null) requireEnum(stock.marketSector, marketSectors, label, "시장 섹터");
   if (stock.countryCode !== undefined && stock.countryCode !== null && (typeof stock.countryCode !== "string" || !/^[A-Z]{2}$/.test(stock.countryCode))) throw new Error(`${label}의 국가 코드가 올바르지 않습니다.`);
   if (stock.providerRefs !== undefined) { if (!Array.isArray(stock.providerRefs)) throw new Error(`${label}의 provider 연결이 올바르지 않습니다.`); for (const ref of stock.providerRefs) { if (!isRecord(ref) || !remoteMarketDataProviders.includes(ref.provider as typeof remoteMarketDataProviders[number]) || typeof ref.symbol !== "string" || !ref.symbol.trim()) throw new Error(`${label}의 provider 연결이 올바르지 않습니다.`); } }
@@ -405,7 +483,7 @@ function isTimestamp(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 && Number.isFinite(Date.parse(value));
 }
 
-export function validateBackupCollectionRecord(collection: string, value: unknown, index: number): void {
+export function validateBackupCollectionRecord(collection: string, value: unknown, index: number, options: { allowLegacyPortfolio?: boolean } = {}): void {
   if (!isRecord(value) || typeof value.id !== "string" || !value.id.trim()) {
     throw new Error(`${collection} ${index + 1}번째 항목의 ID가 올바르지 않습니다.`);
   }
@@ -420,6 +498,19 @@ export function validateBackupCollectionRecord(collection: string, value: unknow
     case "notes": validateNoteRecord(value, index); break;
     case "dashboard-notes": validateDashboardNoteRecord(value, index); break;
     case "earnings-events": validateEarningsEventRecord(value, index); break;
+    case "portfolio-plan-state":
+      if (options.allowLegacyPortfolio && !("contributionAmountMinor" in value)) validateLegacyPortfolioPlanStateV6Record(value);
+      else validatePortfolioPlanStateRecord(value);
+      break;
+    case "portfolio-plan-revisions":
+      if (options.allowLegacyPortfolio && "targetAmountKrw" in value) validateLegacyPortfolioPlanRevisionV6Record(value);
+      else validatePortfolioPlanRevisionRecord(value);
+      break;
+    case "portfolio-allocation-groups": validatePortfolioAllocationGroupRecord(value); break;
+    case "portfolio-allocation-targets":
+      if (options.allowLegacyPortfolio && !("weightWithinGroupBps" in value)) validateLegacyPortfolioAllocationTargetV6Record(value);
+      else validatePortfolioAllocationTargetRecord(value);
+      break;
   }
 }
 
@@ -437,5 +528,10 @@ function validateAccountRecord(account: Record<string, unknown>, index: number) 
     const result = validateAccountFeePolicy(account.feePolicy);
     if (!result.valid) throw new Error(`${label}의 ${result.issues[0]?.message ?? "수수료 정책이 올바르지 않습니다."}`);
     account.feePolicy = result.policy;
+  }
+  if (account.cashTracking !== undefined && account.cashTracking !== null) {
+    const result = validateAccountCashTracking(account.cashTracking);
+    if (!result.valid) throw new Error(`${label}의 ${result.issues[0]?.message ?? "현금 추적 설정이 올바르지 않습니다."}`);
+    account.cashTracking = result.tracking;
   }
 }

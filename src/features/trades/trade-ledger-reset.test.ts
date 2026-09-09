@@ -3,6 +3,7 @@ import type { InvestmentAccount } from "@/features/accounts/types";
 import { sampleStocks } from "@/features/stocks/sample-data";
 import type { Stock } from "@/features/stocks/types";
 import type { AccountFeeCalculationSnapshotV1, Trade } from "./types";
+import { buildTradingLedger } from "@/domain/trading-ledger";
 import {
   buildTradeLedgerReset,
   buildTradeLedgerResetUndo,
@@ -144,6 +145,24 @@ describe("Trade-ledger reset builder", () => {
     const result = buildTradeLedgerReset({ trades: [sample], stocks: [initializedStock], accounts, now: resetAt });
     expect(result.snapshot?.tradeIds).toEqual([sample.id]);
     expect(result.nextTrades[0]).toMatchObject({ id: sample.id, deletedAt: resetAt });
+  });
+
+  it("preserves Account cash baselines through reset and restores only post-baseline effects on undo", () => {
+    const baselineAt = "2026-08-19T00:00:00.000Z";
+    const trackedAccounts: InvestmentAccount[] = [{ ...accounts[0]!, cashTracking: { version: 1, baselines: [{ currency: "KRW", balance: "1000", asOf: baselineAt, createdAt: baselineAt, updatedAt: baselineAt }] } }, accounts[1]!];
+    const originalAccounts = structuredClone(trackedAccounts);
+    const buy = trade("tracked-buy");
+    expect(buildTradingLedger([buy], trackedAccounts).cashBalances[0]?.balance).toBe(796);
+
+    const reset = buildTradeLedgerReset({ trades: [buy], stocks: [initializedStock], accounts: trackedAccounts, now: resetAt });
+    expect(buildTradingLedger(reset.nextTrades, trackedAccounts).cashBalances[0]?.balance).toBe(1000);
+    expect(trackedAccounts).toEqual(originalAccounts);
+    expect(reset.writes.some((write) => write.collection === "accounts")).toBe(false);
+
+    const undo = buildTradeLedgerResetUndo({ currentTrades: reset.nextTrades, accounts: trackedAccounts, snapshot: reset.snapshot!, now: undoAt });
+    expect(buildTradingLedger(undo.nextTrades, trackedAccounts).cashBalances[0]?.balance).toBe(796);
+    expect(undo.writes.some((write) => write.collection === "accounts")).toBe(false);
+    expect(trackedAccounts).toEqual(originalAccounts);
   });
 });
 

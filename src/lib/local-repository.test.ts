@@ -92,6 +92,16 @@ describe("browser local repository", () => {
     expect(localStorage.getItem("tradejournal.accounts.v1")).toBe(raw);
   });
 
+  it("routes invalid Account cash tracking through the existing quarantine path", async () => {
+    const account: InvestmentAccount = { id: "account-1", name: "A", institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault: true, archivedAt: null, memo: "", createdAt: "2026-08-17T00:00:00Z", updatedAt: "2026-08-17T00:00:00Z" };
+    const invalid = { ...account, cashTracking: { version: 2, baselines: [] } };
+    const raw = JSON.stringify([invalid]);
+    localStorage.setItem("tradejournal.accounts.v1", raw);
+    await expect(loadCollection<InvestmentAccount>("accounts", [])).resolves.toEqual([]);
+    expect(getCorruptionSnapshot().collections[0]).toMatchObject({ collection: "accounts", source: "localStorage", errorType: "INVALID_RECORD", invalidIndexes: [0] });
+    expect(localStorage.getItem("tradejournal.accounts.v1")).toBe(raw);
+  });
+
   it("loads mixed legacy and valid Trade fee provenance without quarantine", async () => {
     const sourceProvided = { ...sampleTrades[1], feeMode: "sourceProvided" as const, feeCalculation: null };
     localStorage.setItem("tradejournal.trades.v1", JSON.stringify([sampleTrades[0], sourceProvided]));

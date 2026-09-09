@@ -4,6 +4,7 @@ import { sampleStocks } from "@/features/stocks/sample-data";
 import type { InvestmentAccount } from "@/features/accounts/types";
 import { sampleTrades } from "@/features/trades/sample-data";
 import type { TradeLedgerResetSnapshotV1 } from "@/features/trades/trade-ledger-reset";
+import type { PortfolioAllocationGroup, PortfolioAllocationTarget, PortfolioPlanRevision, PortfolioPlanState } from "@/features/portfolio-plan/types";
 
 describe("import mapping profile storage validation", () => {
   const profile = { id: "p1", name: "Broker", version: 1, bindings: { tradedAt: { normalizedHeader: "date", occurrence: 0 } }, headerSignature: "date#0", createdAt: "2026-08-12T00:00:00Z", updatedAt: "2026-08-12T00:00:00Z" };
@@ -53,7 +54,7 @@ describe("stock storage validation", () => {
   });
 });
 
-describe("account fee policy storage validation", () => {
+describe("Account metadata storage validation", () => {
   const account: InvestmentAccount = { id: "a", name: "A", institution: "", kind: "brokerage", subtype: "", baseCurrency: "KRW", isDefault: true, archivedAt: null, memo: "", createdAt: "2026-08-17T00:00:00Z", updatedAt: "2026-08-17T00:00:00Z" };
   const feePolicy = { version: 1 as const, enabled: true, rules: [{ id: "r1", name: "Fee", market: "all" as const, currency: "KRW" as const, side: "both" as const, ratePercent: "0.1", fixedFee: "0", minimumFee: null, maximumFee: null, grossAmountFrom: null, grossAmountTo: null, effectiveFrom: "2026-01-01", effectiveTo: null, roundingMode: "floor" as const, roundingUnit: "1" }] };
 
@@ -66,6 +67,14 @@ describe("account fee policy storage validation", () => {
   it("quarantines invalid and future policy records", () => {
     expect(validateStoredCollection("accounts", [{ ...account, feePolicy: { ...feePolicy, version: 2 } }])).toEqual({ valid: false, errorType: "INVALID_RECORD", index: 0 });
     expect(validateStoredCollection("accounts", [{ ...account, feePolicy: { ...feePolicy, rules: [{ ...feePolicy.rules[0], fixedFee: "-1" }] } }])).toEqual({ valid: false, errorType: "INVALID_RECORD", index: 0 });
+  });
+
+  it("accepts missing and valid cash tracking while rejecting malformed metadata", () => {
+    const baseline = { currency: "KRW" as const, balance: "0", asOf: account.updatedAt, createdAt: account.createdAt, updatedAt: account.updatedAt };
+    expect(validateStoredCollection("accounts", [account])).toEqual({ valid: true });
+    expect(validateStoredCollection("accounts", [{ ...account, cashTracking: { version: 1, baselines: [baseline] } }])).toEqual({ valid: true });
+    expect(validateStoredCollection("accounts", [{ ...account, cashTracking: { version: 2, baselines: [] } }])).toEqual({ valid: false, errorType: "INVALID_RECORD", index: 0 });
+    expect(validateStoredCollection("accounts", [{ ...account, cashTracking: { version: 1, baselines: [baseline, { ...baseline }] } }])).toEqual({ valid: false, errorType: "INVALID_RECORD", index: 0 });
   });
 });
 
@@ -102,5 +111,34 @@ describe("Trade-ledger reset snapshot storage validation", () => {
 
   it("rejects more than one snapshot record", () => {
     expect(validateStoredCollection("trade-ledger-reset-snapshots", [snapshot, { ...snapshot }])).toEqual({ valid: false, errorType: "INVALID_COLLECTION_SHAPE" });
+  });
+});
+
+describe("Portfolio Plan storage validation", () => {
+  const now = "2026-08-18T00:00:00Z";
+  const state: PortfolioPlanState = { id: "default", activeRevisionId: "r1", contributionAmountMinor: 1_800_000, contributionCurrency: "KRW", updatedAt: now };
+  const revision: PortfolioPlanRevision = { id: "r1", revisionNumber: 1, basedOnRevisionId: null, thesis: "", changeNote: "", createdAt: now, activatedAt: now, updatedAt: now };
+  const group: PortfolioAllocationGroup = { id: "g1", revisionId: "r1", name: "Stocks", targetWeightBps: 10000, sortOrder: 0, updatedAt: now };
+  const target: PortfolioAllocationTarget = { id: "t1", revisionId: "r1", groupId: "g1", accountId: "a", targetType: "stock", stockId: sampleStocks[0].id, weightWithinGroupBps: 10000, sortOrder: 0, updatedAt: now };
+
+  it("accepts valid state, revision, Group, and Target records", () => {
+    expect(validateStoredCollection("portfolio-plan-state", [state])).toEqual({ valid: true });
+    expect(validateStoredCollection("portfolio-plan-revisions", [revision])).toEqual({ valid: true });
+    expect(validateStoredCollection("portfolio-allocation-groups", [group])).toEqual({ valid: true });
+    expect(validateStoredCollection("portfolio-allocation-targets", [target])).toEqual({ valid: true });
+  });
+
+  it("rejects malformed Portfolio Plan records", () => {
+    expect(validateStoredCollection("portfolio-plan-state", [{ ...state, id: "other" }])).toMatchObject({ valid: false });
+    expect(validateStoredCollection("portfolio-plan-revisions", [{ ...revision, revisionNumber: 0 }])).toMatchObject({ valid: false });
+    expect(validateStoredCollection("portfolio-allocation-groups", [{ ...group, targetWeightBps: 100.5 }])).toMatchObject({ valid: false });
+    expect(validateStoredCollection("portfolio-allocation-targets", [{ ...target, weightWithinGroupBps: 100.5 }])).toMatchObject({ valid: false });
+    expect(validateStoredCollection("portfolio-allocation-targets", [{ ...target, targetType: "cash", stockId: sampleStocks[0].id }])).toMatchObject({ valid: false });
+  });
+
+  it("still accepts V6 records long enough for coordinated migration", () => {
+    expect(validateStoredCollection("portfolio-plan-state", [{ id: "default", activeRevisionId: "r1", updatedAt: now }])).toEqual({ valid: true });
+    expect(validateStoredCollection("portfolio-plan-revisions", [{ ...revision, targetAmountKrw: 1_800_000 }])).toEqual({ valid: true });
+    expect(validateStoredCollection("portfolio-allocation-targets", [{ id: "legacy", revisionId: "r1", targetType: "stock", stockId: sampleStocks[0].id, targetWeightBps: 10000, sortOrder: 0, updatedAt: now }])).toEqual({ valid: true });
   });
 });

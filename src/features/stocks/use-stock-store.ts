@@ -32,6 +32,7 @@ export function useStockStore() {
     ledger,
     accountHoldingsByStockId,
     ready: stockStore.ready && tradeStore.ready && accountStore.ready,
+    loadError: stockStore.loadError || tradeStore.loadError || accountStore.loadError,
     addStock: stockStore.add,
     updateStock: stockStore.update,
     replaceStocksAsync: stockStore.replaceAsync,
@@ -47,6 +48,7 @@ export function useStockStore() {
       return result;
     },
     replaceTradesAsync: tradeStore.replaceAsync,
+    replaceAccountsAsync: accountStore.replaceAsync,
     deleteStock: (id: string) => {
       if ((projectedStocks.find((stock) => stock.id === id)?.quantity ?? 0) > 0 || openStockIds.has(id)) return false;
       const stock = stocks.find((item) => item.id === id);

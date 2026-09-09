@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { stockFormSchema } from "./schema";
 
-const valid = { ticker: " tsla ", name: "Tesla", market: "미국", currency: "USD", countryCode: "", exchangeCode: "", providerSymbol: "", provider: "manual", assetType: "주식", marketSector: "consumer-discretionary", sector: "자동차", status: "관찰", investmentType: "중기 투자", currentPrice: "312.5", targetPrice: "350", averagePrice: "0", quantity: "0", thesisSummary: "관찰", currentView: "중립", currentViewMemo: "", nextReviewDate: "", reviewNote: "판매량 확인", nextEarningsDate: "2026-10-21", tagsText: "미국, 자동차" };
+const valid = { ticker: " tsla ", name: "Tesla", market: "미국", currency: "USD", countryCode: "", exchangeCode: "", providerSymbol: "", provider: "manual", assetType: "주식", assetClass: "equity", marketSector: "consumer-discretionary", sector: "자동차", status: "관찰", investmentType: "중기 투자", currentPrice: "312.5", targetPrice: "350", averagePrice: "0", quantity: "0", thesisSummary: "관찰", currentView: "중립", currentViewMemo: "", nextReviewDate: "", reviewNote: "판매량 확인", nextEarningsDate: "2026-10-21", tagsText: "미국, 자동차" };
 
 describe("stockFormSchema", () => {
   it("입력값을 정규화하고 숫자로 변환한다", () => {

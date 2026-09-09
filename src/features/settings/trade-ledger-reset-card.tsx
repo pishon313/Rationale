@@ -152,7 +152,7 @@ export function TradeLedgerResetCard() {
           <ScopeList title={t("그대로 보존")} values={["종목", "계좌", "매수 계획", "관찰 기록", "회고", "Note와 투자 원칙"].map((key) => t(key))} />
         </div>
         <div className="mt-4 rounded-lg bg-[var(--surface-muted)] p-3 text-xs leading-5 text-[var(--muted)]">
-          <p>{t("보유 수량, 평균단가, 현금잔액, 실현손익이 다시 계산되어 0 또는 빈 상태가 됩니다.")}</p>
+          <p>{t("보유 수량, 평균단가, 순투입액, 실현손익은 0 또는 빈 상태로 다시 계산됩니다. 현재 현금 기준선은 계좌에 보존됩니다.")}</p>
           <p className="mt-2">{t("계획과 회고는 삭제된 매매 기록을 참조하더라도 변경되지 않습니다.")}</p>
           <p className="mt-2">{t("동기화와 복구를 위해 삭제 기록은 보존됩니다. 같은 파일을 다시 가져오면 삭제된 기록으로 감지되어 복원 대상으로 표시될 수 있습니다.")}</p>
         </div>

@@ -5,6 +5,19 @@ import type { AccountFeePolicyV1 } from "./account-fee-policy";
 export const accountKinds = ["brokerage", "taxAdvantaged", "retirement", "cash", "other"] as const;
 export type AccountKind = (typeof accountKinds)[number];
 
+export type AccountCashBaselineV1 = {
+  currency: Currency;
+  balance: string;
+  asOf: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AccountCashTrackingV1 = {
+  version: 1;
+  baselines: AccountCashBaselineV1[];
+};
+
 export type InvestmentAccount = {
   id: string;
   name: string;
@@ -16,9 +29,14 @@ export type InvestmentAccount = {
   archivedAt: string | null;
   memo: string;
   feePolicy?: AccountFeePolicyV1 | null;
+  cashTracking?: AccountCashTrackingV1 | null;
   createdAt: string;
   updatedAt: string;
 };
+
+export function cashTrackingOf(account: Pick<InvestmentAccount, "cashTracking">): AccountCashTrackingV1 {
+  return account.cashTracking ?? { version: 1, baselines: [] };
+}
 
 export function normalizeLegacyAccountName(value: string | null | undefined) {
   return value?.trim() || "기본 계좌";

@@ -6,7 +6,7 @@ const navigation = vi.hoisted(() => ({ pathname: "/dashboard" }));
 vi.mock("next/navigation", () => ({ usePathname: () => navigation.pathname }));
 vi.mock("@/i18n/i18n-provider", () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 
-const desktopOrder = ["대시보드", "종목", "관찰 기록", "매수 계획", "매매", "회고", "분석", "계좌", "투자 원칙", "Note", "설정"];
+const desktopOrder = ["대시보드", "포트폴리오", "종목", "관찰 기록", "매수 계획", "매매", "회고", "분석", "계좌", "투자 원칙", "Note", "설정"];
 
 describe("AppSidebar", () => {
   beforeEach(() => { navigation.pathname = "/dashboard"; });
@@ -18,7 +18,7 @@ describe("AppSidebar", () => {
     const groups = nav.querySelectorAll(".app-nav-group");
     expect(groups).toHaveLength(3);
     expect([...groups].map((group) => within(group as HTMLElement).getAllByRole("link").map((link) => link.textContent))).toEqual([
-      ["대시보드", "종목"],
+      ["대시보드", "포트폴리오", "종목"],
       ["관찰 기록", "매수 계획", "매매", "회고", "분석"],
       ["계좌", "투자 원칙", "Note", "설정"],
     ]);
@@ -30,7 +30,7 @@ describe("AppSidebar", () => {
     expect(within(nav).getAllByRole("link").slice(0, 4).map((link) => link.textContent)).toEqual(["대시보드", "종목", "관찰 기록", "매수 계획"]);
     const more = nav.querySelector(".mobile-more-menu");
     expect(more).not.toBeNull();
-    expect(within(more as HTMLElement).getAllByRole("link").map((link) => link.textContent)).toEqual(["매매", "회고", "분석", "계좌", "투자 원칙", "Note", "설정"]);
+    expect(within(more as HTMLElement).getAllByRole("link").map((link) => link.textContent)).toEqual(["포트폴리오", "매매", "회고", "분석", "계좌", "투자 원칙", "Note", "설정"]);
   });
 
   it("preserves active state for nested routes", () => {

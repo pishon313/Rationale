@@ -1,11 +1,11 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, BookOpen, ChevronUp, ClipboardCheck, Eye, FileText, Gauge, Lightbulb, ListChecks, MoreHorizontal, Settings, Tags, WalletCards, Landmark } from "lucide-react";
+import { BarChart3, BookOpen, ChartPie, ChevronUp, ClipboardCheck, Eye, FileText, Gauge, Lightbulb, ListChecks, MoreHorizontal, Settings, Tags, WalletCards, Landmark } from "lucide-react";
 import { useI18n } from "@/i18n/i18n-provider";
 
 const navGroups = [
-  [["대시보드", "/dashboard", Gauge], ["종목", "/stocks", Tags]],
+  [["대시보드", "/dashboard", Gauge], ["포트폴리오", "/portfolio", ChartPie], ["종목", "/stocks", Tags]],
   [["관찰 기록", "/observations", Eye], ["매수 계획", "/plans", Lightbulb], ["매매", "/trades", WalletCards], ["회고", "/reviews", BookOpen], ["분석", "/analytics", BarChart3]],
   [["계좌", "/accounts", Landmark], ["투자 원칙", "/rules", ClipboardCheck], ["Note", "/notes", FileText], ["설정", "/settings", Settings]],
 ] as const;
