@@ -324,6 +324,10 @@ test("색상 테마를 즉시 적용하고 화면 이동과 새로고침 후에�
   await page.reload();
   await expect(root).toHaveAttribute("data-theme", "mint");
   await expect(root).toHaveClass(/dark/);
+
+  await page.getByText("로즈 퍼플", { exact: true }).click();
+  await expect(root).toHaveAttribute("data-theme", "rose-purple");
+  await expect(root).toHaveClass(/dark/);
 });
 
 test("지원하지 않는 Mac 언어는 English로 표시한다", async ({ page }) => {

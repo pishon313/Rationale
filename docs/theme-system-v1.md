@@ -22,9 +22,12 @@ Shared typography, spacing, motion, and shape tokens remain global. Light and da
 
 Palette preview swatches use preview-specific variables and never mutate the document theme.
 
-## Deferred to Phase 2
+## Phase 2 visual tuning
 
-- Rose Purple light tuning
-- Rose Purple dark tuning
-- Cross-screen visual QA
-- Contrast refinements
+Rose Purple now uses a warm-neutral, faintly rose page with near-white reading surfaces in light mode. Its deeper raspberry primary accent remains readable for normal-size text, while lilac is reserved for secondary brand moments and focus support. Muted surfaces and borders use restrained rose-gray and mauve-gray rather than turning every card pink.
+
+Dark mode is the stronger expression: a deep charcoal-plum page, progressively lifted plum surfaces and fields, warm off-white text, bright rose actions, and a restrained lilac secondary accent. The Portfolio workbench uses the same deep foundation with distinct navigation, field, hover, and active layers.
+
+Danger/loss remains red, success/profit remains green, and warning remains amber in both appearances. The palette does not replace those meanings. No exact third-party palette or brand asset was copied, and gradients were intentionally omitted so dense financial screens stay calm and scan-friendly.
+
+Phase 2 introduced no new semantic tokens. The existing palette, appearance, persistence, Backup/Sync, and financial-domain contracts remain unchanged. Further work is optional visual refinement based on user review.

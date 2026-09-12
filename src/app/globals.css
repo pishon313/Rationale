@@ -95,7 +95,7 @@ thead { letter-spacing: 0.015em; }
 .theme-preview i:nth-child(2) { background: var(--preview-soft); }
 .theme-preview i:nth-child(3) { background: var(--preview-ink); }
 .theme-preview[data-theme-preview="mint"] { --preview-paper: oklch(97.5% 0.012 170); --preview-accent: oklch(55% 0.145 168); --preview-soft: oklch(92.5% 0.045 169); --preview-ink: oklch(19% 0.025 245); }
-.theme-preview[data-theme-preview="rose-purple"] { --preview-paper: oklch(97.8% 0.012 330); --preview-accent: oklch(53% 0.19 350); --preview-soft: oklch(93% 0.05 345); --preview-ink: oklch(18% 0.025 300); }
+.theme-preview[data-theme-preview="rose-purple"] { --preview-paper: oklch(97.4% 0.009 340); --preview-accent: oklch(49% 0.19 356); --preview-soft: oklch(58% 0.15 295); --preview-ink: oklch(18% 0.028 300); }
 
 ::selection { background: var(--color-accent-soft); color: var(--color-ink); }
 

@@ -14,13 +14,14 @@ describe("AppearanceCard", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it("defaults to an accessible Mint selection", async () => {
-    render(<AppearanceCard />);
+    const { container } = render(<AppearanceCard />);
     const mint = screen.getByRole("radio", { name: "민트" });
     const rose = screen.getByRole("radio", { name: "로즈 퍼플" });
     await waitFor(() => expect(mint).toBeChecked());
     expect(rose).not.toBeChecked();
     expect(screen.getByText("현재 테마")).toBeInTheDocument();
     expect(document.documentElement).toHaveAttribute("data-theme", "mint");
+    expect(container.querySelector("fieldset > div")).toHaveClass("lg:grid-cols-1", "2xl:grid-cols-2");
   });
 
   it("applies and persists Rose Purple immediately, then switches back to Mint", async () => {

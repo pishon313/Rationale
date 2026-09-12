@@ -23,7 +23,7 @@ export function AppearanceCard() {
     <div className="flex items-center gap-2"><Palette size={19} className="text-[var(--accent)]" /><h2 id="appearance-title" className="font-semibold">{t("외관")}</h2></div>
     <fieldset className="mt-4">
       <legend className="text-sm font-medium">{t("색상 테마")}</legend>
-      <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+      <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-1 2xl:grid-cols-2">
         {themeIds.map((id) => {
           const copy = themeCopy[id];
           const selected = theme === id;
