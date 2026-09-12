@@ -3,6 +3,7 @@ import { Bricolage_Grotesque, Geist } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { I18nProvider } from "@/i18n/i18n-provider";
+import { defaultTheme, themeBootstrapScript } from "@/features/settings/theme-preference";
 
 export const metadata: Metadata = {
   title: { default: "Rationale", template: "%s · Rationale" },
@@ -14,7 +15,8 @@ const bricolage = Bricolage_Grotesque({ subsets: ["latin"], variable: "--font-br
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="ko" suppressHydrationWarning>
+    <html lang="ko" data-theme={defaultTheme} suppressHydrationWarning>
+      <head><script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} /></head>
       <body className={`${geist.variable} ${bricolage.variable}`}><ThemeProvider><I18nProvider>{children}</I18nProvider></ThemeProvider></body>
     </html>
   );

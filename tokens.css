@@ -1,5 +1,6 @@
 /* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V4 */
-:root {
+:root,
+:root[data-theme="mint"] {
   --color-paper: oklch(97.5% 0.012 170);
   --color-paper-2: oklch(95% 0.018 170);
   --color-paper-3: oklch(91.5% 0.024 172);
@@ -18,6 +19,28 @@
   --color-amber: oklch(72% 0.13 75);
   --color-danger: oklch(56% 0.19 25);
   --color-success: oklch(52% 0.13 155);
+
+  --color-workbench-border: oklch(38% 0.035 170);
+  --color-workbench-background: oklch(16.5% 0.025 180);
+  --color-workbench-ink: oklch(94% 0.012 170);
+  --color-workbench-brand-rule: oklch(75% 0.11 166 / 0.6);
+  --color-workbench-accent: oklch(76% 0.13 166);
+  --color-workbench-muted: oklch(72% 0.02 180);
+  --color-workbench-field-rule: oklch(43% 0.035 170);
+  --color-workbench-field: oklch(22% 0.028 178);
+  --color-workbench-nav: oklch(21% 0.035 174);
+  --color-workbench-nav-ink: oklch(73% 0.018 180);
+  --color-workbench-active-rule: oklch(48% 0.045 168);
+  --color-workbench-active: oklch(30% 0.065 168);
+  --color-workbench-active-ink: oklch(96% 0.012 170);
+  --color-workbench-hover: oklch(22% 0.028 178);
+  --color-workbench-active-hover: oklch(27% 0.055 168);
+  --shadow-whisper: 0 1px 2px oklch(19% 0.025 245 / 0.06);
+  --shadow-floating: 0 0.75rem 2rem oklch(19% 0.025 245 / 0.14);
+  --shadow-workbench: 0 0.5rem 1.5rem oklch(8% 0.02 190 / 0.12);
+}
+
+:root {
 
   --font-display: var(--font-geist), ui-sans-serif, sans-serif;
   --font-body: var(--font-geist), ui-sans-serif, sans-serif;
@@ -54,11 +77,10 @@
   --radius-panel: 1.125rem;
   --radius-pill: 999px;
   --rule-thin: 1px;
-  --shadow-whisper: 0 1px 2px oklch(19% 0.025 245 / 0.06);
-  --shadow-floating: 0 0.75rem 2rem oklch(19% 0.025 245 / 0.14);
 }
 
-.dark {
+:root.dark,
+:root.dark[data-theme="mint"] {
   --color-paper: oklch(14.5% 0.022 230);
   --color-paper-2: oklch(18% 0.025 225);
   --color-paper-3: oklch(22% 0.028 220);
@@ -79,4 +101,61 @@
   --color-success: oklch(74% 0.12 155);
   --shadow-whisper: 0 1px 2px oklch(5% 0.02 230 / 0.32);
   --shadow-floating: 0 0.75rem 2rem oklch(5% 0.02 230 / 0.42);
+}
+
+:root[data-theme="rose-purple"] {
+  --color-paper: oklch(97.4% 0.009 340);
+  --color-paper-2: oklch(94.9% 0.014 330);
+  --color-paper-3: oklch(91.5% 0.022 322);
+  --color-surface: oklch(99.1% 0.004 330);
+  --color-ink: oklch(18% 0.028 300);
+  --color-ink-2: oklch(33% 0.032 302);
+  --color-muted: oklch(45.5% 0.025 305);
+  --color-rule: oklch(87% 0.022 323);
+  --color-rule-strong: oklch(75% 0.04 318);
+  --color-accent: oklch(49% 0.19 356);
+  --color-accent-hover: oklch(44% 0.19 356);
+  --color-accent-soft: oklch(92.5% 0.04 350);
+  --color-accent-ink: oklch(98% 0.008 330);
+  --color-focus: oklch(54% 0.18 305);
+  --color-lilac: oklch(58% 0.15 295);
+
+  --color-workbench-border: oklch(37% 0.045 315);
+  --color-workbench-background: oklch(14.5% 0.028 305);
+  --color-workbench-ink: oklch(94% 0.012 335);
+  --color-workbench-brand-rule: oklch(70% 0.12 295 / 0.55);
+  --color-workbench-accent: oklch(72% 0.17 354);
+  --color-workbench-muted: oklch(72% 0.028 318);
+  --color-workbench-field-rule: oklch(39% 0.05 314);
+  --color-workbench-field: oklch(20% 0.035 310);
+  --color-workbench-nav: oklch(18.5% 0.035 310);
+  --color-workbench-nav-ink: oklch(72% 0.03 320);
+  --color-workbench-active-rule: oklch(55% 0.11 350);
+  --color-workbench-active: oklch(27% 0.07 342);
+  --color-workbench-active-ink: oklch(95% 0.012 335);
+  --color-workbench-hover: oklch(23% 0.04 310);
+  --color-workbench-active-hover: oklch(31% 0.08 342);
+  --shadow-whisper: 0 1px 2px oklch(18% 0.028 300 / 0.07);
+  --shadow-floating: 0 0.75rem 2rem oklch(18% 0.028 300 / 0.16);
+  --shadow-workbench: 0 0.5rem 1.5rem oklch(6% 0.025 305 / 0.18);
+}
+
+:root.dark[data-theme="rose-purple"] {
+  --color-paper: oklch(13.5% 0.028 305);
+  --color-paper-2: oklch(17% 0.032 310);
+  --color-paper-3: oklch(21% 0.038 315);
+  --color-surface: oklch(18.5% 0.032 310);
+  --color-ink: oklch(94.5% 0.014 340);
+  --color-ink-2: oklch(81% 0.022 330);
+  --color-muted: oklch(70% 0.028 318);
+  --color-rule: oklch(27% 0.034 315);
+  --color-rule-strong: oklch(39% 0.052 312);
+  --color-accent: oklch(73% 0.175 355);
+  --color-accent-hover: oklch(79% 0.16 355);
+  --color-accent-soft: oklch(25% 0.075 345);
+  --color-accent-ink: oklch(14% 0.028 305);
+  --color-focus: oklch(80% 0.11 300);
+  --color-lilac: oklch(77% 0.125 295);
+  --shadow-whisper: 0 1px 2px oklch(4% 0.02 305 / 0.36);
+  --shadow-floating: 0 0.75rem 2rem oklch(4% 0.02 305 / 0.48);
 }
