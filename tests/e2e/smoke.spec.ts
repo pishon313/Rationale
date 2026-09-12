@@ -289,6 +289,43 @@ test("Mac 설정 언어를 따르다가 선택한 언어를 저장한다", async
   await expect(page.locator("html")).toHaveAttribute("lang", "ko");
 });
 
+test("색상 테마를 즉시 적용하고 화면 이동과 새로고침 후에도 기기 로컬로 유지한다", async ({ page }) => {
+  await page.goto("/settings");
+  await page.evaluate(() => localStorage.removeItem("rationale.theme"));
+  await page.reload();
+
+  const root = page.locator("html");
+  const mint = page.getByRole("radio", { name: "민트" });
+  const rosePurple = page.getByRole("radio", { name: "로즈 퍼플" });
+  await expect(root).toHaveAttribute("data-theme", "mint");
+  await expect(mint).toBeChecked();
+  await expect(rosePurple).not.toBeChecked();
+
+  await mint.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(root).toHaveAttribute("data-theme", "rose-purple");
+  await expect(rosePurple).toBeChecked();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("rationale.theme"))).toBe("rose-purple");
+
+  await page.goto("/portfolio");
+  await expect(root).toHaveAttribute("data-theme", "rose-purple");
+  await page.goto("/trades");
+  await expect(root).toHaveAttribute("data-theme", "rose-purple");
+  await page.goto("/settings");
+  await expect(rosePurple).toBeChecked();
+  await page.reload();
+  await expect(root).toHaveAttribute("data-theme", "rose-purple");
+
+  await page.getByRole("button", { name: "어두운 모드" }).click();
+  await expect(root).toHaveClass(/dark/);
+  await page.getByText("민트", { exact: true }).click();
+  await expect(root).toHaveAttribute("data-theme", "mint");
+  await expect(root).toHaveClass(/dark/);
+  await page.reload();
+  await expect(root).toHaveAttribute("data-theme", "mint");
+  await expect(root).toHaveClass(/dark/);
+});
+
 test("지원하지 않는 Mac 언어는 English로 표시한다", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "languages", { get: () => ["zh-CN"] });
