@@ -290,6 +290,7 @@ test("Mac 설정 언어를 따르다가 선택한 언어를 저장한다", async
 });
 
 test("색상 테마를 즉시 적용하고 화면 이동과 새로고침 후에도 기기 로컬로 유지한다", async ({ page }) => {
+  test.slow();
   await page.goto("/settings");
   await page.evaluate(() => localStorage.removeItem("rationale.theme"));
   await page.reload();
@@ -297,9 +298,14 @@ test("색상 테마를 즉시 적용하고 화면 이동과 새로고침 후에�
   const root = page.locator("html");
   const mint = page.getByRole("radio", { name: "민트" });
   const rosePurple = page.getByRole("radio", { name: "로즈 퍼플" });
+  const midnight = page.getByRole("radio", { name: "미드나이트" });
+  const lemon = page.getByRole("radio", { name: "레몬" });
   await expect(root).toHaveAttribute("data-theme", "mint");
   await expect(mint).toBeChecked();
   await expect(rosePurple).not.toBeChecked();
+  await expect(midnight).not.toBeChecked();
+  await expect(lemon).not.toBeChecked();
+  await expect(page.getByRole("radio", { name: /민트|로즈 퍼플|미드나이트|레몬/ })).toHaveCount(4);
 
   await mint.focus();
   await page.keyboard.press("ArrowRight");
@@ -316,18 +322,48 @@ test("색상 테마를 즉시 적용하고 화면 이동과 새로고침 후에�
   await page.reload();
   await expect(root).toHaveAttribute("data-theme", "rose-purple");
 
+  await page.getByText("미드나이트", { exact: true }).click();
+  await expect(root).toHaveAttribute("data-theme", "midnight");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("rationale.theme"))).toBe("midnight");
+  await page.goto("/portfolio");
+  await expect(root).toHaveAttribute("data-theme", "midnight");
+  await page.goto("/trades");
+  await expect(root).toHaveAttribute("data-theme", "midnight");
+  await page.goto("/accounts");
+  await expect(root).toHaveAttribute("data-theme", "midnight");
+  await page.goto("/settings");
+  await page.reload();
+  await expect(root).toHaveAttribute("data-theme", "midnight");
+  await expect(midnight).toBeChecked();
+
   await page.getByRole("button", { name: "어두운 모드" }).click();
   await expect(root).toHaveClass(/dark/);
-  await page.getByText("민트", { exact: true }).click();
-  await expect(root).toHaveAttribute("data-theme", "mint");
+  await page.getByText("레몬", { exact: true }).click();
+  await expect(root).toHaveAttribute("data-theme", "lemon");
   await expect(root).toHaveClass(/dark/);
   await page.reload();
-  await expect(root).toHaveAttribute("data-theme", "mint");
+  await expect(root).toHaveAttribute("data-theme", "lemon");
   await expect(root).toHaveClass(/dark/);
 
   await page.getByText("로즈 퍼플", { exact: true }).click();
   await expect(root).toHaveAttribute("data-theme", "rose-purple");
   await expect(root).toHaveClass(/dark/);
+  await page.getByText("민트", { exact: true }).click();
+  await expect(root).toHaveAttribute("data-theme", "mint");
+  await expect(root).toHaveClass(/dark/);
+  await page.getByText("미드나이트", { exact: true }).click();
+  await expect(root).toHaveAttribute("data-theme", "midnight");
+  await expect(root).toHaveClass(/dark/);
+  await page.getByText("레몬", { exact: true }).click();
+  await expect(root).toHaveAttribute("data-theme", "lemon");
+  await expect(root).toHaveClass(/dark/);
+
+  await page.getByRole("button", { name: "밝은 모드" }).click();
+  await expect(root).not.toHaveClass(/dark/);
+  await expect(root).toHaveAttribute("data-theme", "lemon");
+  await page.reload();
+  await expect(root).not.toHaveClass(/dark/);
+  await expect(root).toHaveAttribute("data-theme", "lemon");
 });
 
 test("지원하지 않는 Mac 언어는 English로 표시한다", async ({ page }) => {
