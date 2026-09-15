@@ -1,4 +1,4 @@
-export const themeIds = ["mint", "rose-purple"] as const;
+export const themeIds = ["mint", "rose-purple", "midnight", "lemon"] as const;
 export type ThemeId = (typeof themeIds)[number];
 
 export const defaultTheme: ThemeId = "mint";
@@ -50,9 +50,10 @@ export function subscribeToTheme(listener: () => void): () => void {
 
 export const themeBootstrapScript = `(() => {
   const fallback = ${JSON.stringify(defaultTheme)};
+  const themes = ${JSON.stringify(themeIds)};
   try {
     const stored = localStorage.getItem(${JSON.stringify(themeStorageKey)});
-    document.documentElement.setAttribute("data-theme", stored === "rose-purple" ? stored : fallback);
+    document.documentElement.setAttribute("data-theme", themes.includes(stored) ? stored : fallback);
   } catch {
     document.documentElement.setAttribute("data-theme", fallback);
   }
