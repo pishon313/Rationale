@@ -49,14 +49,20 @@ pnpm app:dev
 source "$HOME/.cargo/env"
 ```
 
-### 여러 저장소 복제본과 로컬 데이터
+### 개발 앱과 release 앱의 로컬 데이터
 
-`pnpm app:dev`로 실행하는 개발 빌드도 현재 Tauri 식별자 `com.tradejournal.local`을 사용합니다. 저장소의 파일 경로는 앱 데이터를 격리하지 않으므로 같은 Mac의 모든 복제본은 `~/Library/Application Support/com.tradejournal.local` 아래의 SQLite 데이터베이스, 자동 백업, 손상 데이터 격리 영역과 macOS Keychain 항목을 공유합니다.
+개발 실행과 release 빌드는 다음처럼 별도 identity를 사용합니다.
 
-- 서로 다른 복제본에서 데스크톱 앱을 동시에 실행하지 마세요.
-- 저장소·백업 코드를 개발하기 전 앱을 모두 종료하고 앱 데이터 폴더를 외부의 타임스탬프가 포함된 위치에 안전하게 복사하세요.
-- 개발용 식별자와 Keychain 네임스페이스 분리는 별도 검토와 데이터 이전 설계가 필요한 후속 작업입니다.
-- 기존 식별자를 이전 절차 없이 변경하면 기존 기록이 삭제된 것이 아니라 새 저장 위치에서 보이지 않게 됩니다.
+| 용도 | 표시 이름 | Tauri identifier | SQLite / 자동 백업 | Keychain service |
+| --- | --- | --- | --- | --- |
+| `pnpm app:dev` | `Rationale Dev` | `com.tradejournal.local.dev` | `~/Library/Application Support/com.tradejournal.local.dev/tradejournal.db` / `backups` | `com.tradejournal.local.dev` |
+| `pnpm app:build` | `TradeJournal` | `com.tradejournal.local` | `~/Library/Application Support/com.tradejournal.local/tradejournal.db` / `backups` | `com.tradejournal.local` |
+
+`pnpm app:dev`는 기본 release 설정에 `src-tauri/tauri.dev.conf.json`을 병합합니다. SQLite 데이터베이스, 자동 백업과 같은 app-data 파일, 손상 데이터 격리 영역 및 복원 스냅샷, macOS Keychain 항목은 dev/release identifier별로 분리됩니다. 저장소 clone 경로는 이 분리의 기준이 아니며, 여러 clone에서 실행한 개발 앱은 동일한 dev identity를 사용합니다.
+
+개발 앱은 반드시 `pnpm app:dev`로 실행하세요. `pnpm tauri dev`를 직접 호출하면 dev override를 우회하고 기본 release 설정을 사용합니다. 서로 다른 앱 이름과 identifier 덕분에 `Rationale Dev`와 설치된 `TradeJournal`은 같은 Mac에 함께 둘 수 있습니다.
+
+기존 `com.tradejournal.local` 데이터와 Keychain 항목은 이동, 복사, 삭제 또는 변경하지 않습니다. 기존 설치 앱과 `pnpm app:build` 결과물은 계속 같은 release identity로 기존 데이터에 접근합니다. 최종 Rationale production identifier를 정하고 기존 데이터를 이전하는 작업은 별도의 후속 설계와 검증이 필요합니다.
 
 자동 백업은 검증된 후보의 컬렉션별 항목 수를 원본 SQLite 행 수와 대조하여 누락을 차단합니다. 후보 생성과 원본 대조 사이에 항목 수까지 바뀌면 안전하게 중단하지만, 같은 수의 레코드가 동시에 변경되는 경우까지 하나의 읽기 스냅샷으로 보장하지는 않습니다. 완전한 단일 SQLite 읽기 트랜잭션 스냅샷은 후속 작업입니다.
 

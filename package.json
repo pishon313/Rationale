@@ -17,7 +17,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "tauri": "tauri",
-    "app:dev": "tauri dev",
+    "app:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "app:build": "tauri build"
   },
   "dependencies": {

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Rationale Dev",
+  "identifier": "com.tradejournal.local.dev",
+  "app": {
+    "windows": [
+      {
+        "title": "Rationale Dev",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 980,
+        "minHeight": 680,
+        "resizable": true
+      }
+    ]
+  }
+}
