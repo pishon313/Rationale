@@ -21,7 +21,6 @@ use tauri::{Manager, State};
 use tauri_plugin_sql::{DbInstances, DbPool, Migration, MigrationKind};
 use zeroize::{Zeroize, Zeroizing};
 
-const SERVICE: &str = "com.tradejournal.local";
 const TWELVE_DATA_PROVIDER: &str = "twelve-data";
 const EODHD_PROVIDER: &str = "eodhd";
 const DATABASE_URL: &str = "sqlite:tradejournal.db";
@@ -532,14 +531,22 @@ async fn acknowledge_sync_records(
         .map_err(|error| error.to_string())
 }
 
+fn keychain_service_name(identifier: &str) -> &str {
+    identifier
+}
+
+fn keychain_entry(app: &tauri::AppHandle, provider: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(keychain_service_name(&app.config().identifier), provider)
+        .map_err(|_| "KEYCHAIN_UNAVAILABLE".to_string())
+}
+
 #[tauri::command]
-fn save_api_key(provider: String, value: String) -> Result<(), String> {
+fn save_api_key(app: tauri::AppHandle, provider: String, value: String) -> Result<(), String> {
     validate_quote_provider(&provider)?;
     if value.len() > 512 {
         return Err("INVALID_API_KEY".into());
     }
-    let entry =
-        keyring::Entry::new(SERVICE, &provider).map_err(|_| "KEYCHAIN_UNAVAILABLE".to_string())?;
+    let entry = keychain_entry(&app, &provider)?;
     if value.is_empty() {
         entry
             .delete_credential()
@@ -556,10 +563,9 @@ fn save_api_key(provider: String, value: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn has_api_key(provider: String) -> Result<bool, String> {
+fn has_api_key(app: tauri::AppHandle, provider: String) -> Result<bool, String> {
     validate_quote_provider(&provider)?;
-    let entry =
-        keyring::Entry::new(SERVICE, &provider).map_err(|_| "KEYCHAIN_UNAVAILABLE".to_string())?;
+    let entry = keychain_entry(&app, &provider)?;
     match entry.get_password() {
         Ok(value) => Ok(!value.is_empty()),
         Err(keyring::Error::NoEntry) => Ok(false),
@@ -719,10 +725,9 @@ struct MarketQuoteResult {
     is_market_open: Option<bool>,
 }
 
-fn provider_key(provider: &str) -> Result<String, String> {
+fn provider_key(app: &tauri::AppHandle, provider: &str) -> Result<String, String> {
     validate_quote_provider(provider)?;
-    let entry =
-        keyring::Entry::new(SERVICE, provider).map_err(|_| "KEYCHAIN_UNAVAILABLE".to_string())?;
+    let entry = keychain_entry(app, provider)?;
     entry.get_password().map_err(|error| match error {
         keyring::Error::NoEntry => "API_KEY_MISSING".into(),
         _ => "KEYCHAIN_READ_FAILED".into(),
@@ -754,6 +759,7 @@ fn safe_provider_error(status: reqwest::StatusCode, body: &serde_json::Value) ->
 
 #[tauri::command]
 async fn search_instruments(
+    app: tauri::AppHandle,
     request: InstrumentSearchRequest,
 ) -> Result<Vec<InstrumentSearchResult>, String> {
     if request.provider != EODHD_PROVIDER
@@ -764,7 +770,7 @@ async fn search_instruments(
         return Err("INVALID_MARKET_DATA_REQUEST".into());
     }
     let limit = request.limit.unwrap_or(20).clamp(1, 25);
-    let api_key = provider_key(EODHD_PROVIDER)?;
+    let api_key = provider_key(&app, EODHD_PROVIDER)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(12))
         .build()
@@ -866,7 +872,10 @@ async fn search_instruments(
 }
 
 #[tauri::command]
-async fn fetch_market_quote(request: MarketQuoteRequest) -> Result<MarketQuoteResult, String> {
+async fn fetch_market_quote(
+    app: tauri::AppHandle,
+    request: MarketQuoteRequest,
+) -> Result<MarketQuoteResult, String> {
     validate_quote_provider(&request.provider)?;
     if request.provider_symbol.trim().is_empty()
         || request.provider_symbol.len() > 40
@@ -874,7 +883,7 @@ async fn fetch_market_quote(request: MarketQuoteRequest) -> Result<MarketQuoteRe
     {
         return Err("INVALID_MARKET_DATA_REQUEST".into());
     }
-    let api_key = provider_key(&request.provider)?;
+    let api_key = provider_key(&app, &request.provider)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(12))
         .build()
@@ -997,14 +1006,14 @@ async fn fetch_market_quote(request: MarketQuoteRequest) -> Result<MarketQuoteRe
 
 #[tauri::command]
 async fn fetch_quote(
+    app: tauri::AppHandle,
     symbol: String,
     country: String,
     exchange: String,
     expected_currency: String,
 ) -> Result<QuoteResult, String> {
     validate_quote_request(&symbol, &country, &exchange, &expected_currency)?;
-    let entry = keyring::Entry::new(SERVICE, TWELVE_DATA_PROVIDER)
-        .map_err(|_| "KEYCHAIN_UNAVAILABLE".to_string())?;
+    let entry = keychain_entry(&app, TWELVE_DATA_PROVIDER)?;
     let api_key = entry.get_password().map_err(|e| match e {
         keyring::Error::NoEntry => "API_KEY_MISSING".to_string(),
         _ => "KEYCHAIN_READ_FAILED".to_string(),
@@ -1562,6 +1571,167 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("TradeJournal 실행 중 오류가 발생했습니다");
+}
+
+#[cfg(test)]
+mod app_identity_tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    const RELEASE_CONFIG: &str = include_str!("../tauri.conf.json");
+    const DEVELOPMENT_CONFIG: &str = include_str!("../tauri.dev.conf.json");
+    const PACKAGE_JSON: &str = include_str!("../../package.json");
+
+    fn parsed(value: &str) -> serde_json::Value {
+        serde_json::from_str(value).unwrap()
+    }
+
+    fn config_value<'a>(config: &'a serde_json::Value, key: &str) -> &'a str {
+        config.get(key).and_then(|value| value.as_str()).unwrap()
+    }
+
+    #[test]
+    fn development_and_release_identity_contracts_are_distinct() {
+        let release = parsed(RELEASE_CONFIG);
+        let development = parsed(DEVELOPMENT_CONFIG);
+        let package = parsed(PACKAGE_JSON);
+
+        let release_identifier = config_value(&release, "identifier");
+        let development_identifier = config_value(&development, "identifier");
+        assert_eq!(release_identifier, "com.tradejournal.local");
+        assert_eq!(development_identifier, "com.tradejournal.local.dev");
+        assert_ne!(release_identifier, development_identifier);
+        assert_eq!(config_value(&release, "productName"), "TradeJournal");
+        assert_eq!(config_value(&development, "productName"), "Rationale Dev");
+        assert_eq!(release["app"]["windows"][0]["title"], "TradeJournal");
+        assert_eq!(development["app"]["windows"][0]["title"], "Rationale Dev");
+
+        assert_eq!(
+            package["scripts"]["app:dev"],
+            "tauri dev --config src-tauri/tauri.dev.conf.json"
+        );
+        assert_eq!(package["scripts"]["app:build"], "tauri build");
+
+        assert_eq!(
+            keychain_service_name(release_identifier),
+            release_identifier
+        );
+        assert_eq!(
+            keychain_service_name(development_identifier),
+            development_identifier
+        );
+        assert_ne!(
+            keychain_service_name(release_identifier),
+            keychain_service_name(development_identifier)
+        );
+    }
+
+    #[test]
+    fn development_overlay_contains_identity_only() {
+        let development = parsed(DEVELOPMENT_CONFIG);
+        let mut root_keys = development
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        root_keys.sort_unstable();
+        assert_eq!(root_keys, ["$schema", "app", "identifier", "productName"]);
+        assert!(development.get("build").is_none());
+        assert!(development.get("bundle").is_none());
+        assert!(development.get("plugins").is_none());
+        assert_eq!(DATABASE_URL, "sqlite:tradejournal.db");
+        assert_eq!(AUTOMATIC_BACKUP_PREFIX, "tradejournal-auto-");
+        assert_eq!(AUTOMATIC_BACKUP_SUFFIX, ".json");
+    }
+
+    #[test]
+    fn identity_scoped_fixture_databases_and_backups_do_not_overlap() {
+        tauri::async_runtime::block_on(async {
+            let release = parsed(RELEASE_CONFIG);
+            let development = parsed(DEVELOPMENT_CONFIG);
+            let release_identifier = config_value(&release, "identifier");
+            let development_identifier = config_value(&development, "identifier");
+            let fixture_root = std::env::temp_dir().join(format!(
+                "rationale-app-identity-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            let database_name = DATABASE_URL.strip_prefix("sqlite:").unwrap();
+            let release_database = fixture_root
+                .join("config")
+                .join(release_identifier)
+                .join(database_name);
+            let development_database = fixture_root
+                .join("config")
+                .join(development_identifier)
+                .join(database_name);
+            let release_backups = fixture_root
+                .join("data")
+                .join(release_identifier)
+                .join("backups");
+            let development_backups = fixture_root
+                .join("data")
+                .join(development_identifier)
+                .join("backups");
+
+            assert_ne!(release_database, development_database);
+            assert_ne!(release_backups, development_backups);
+            fs::create_dir_all(release_database.parent().unwrap()).unwrap();
+            fs::create_dir_all(development_database.parent().unwrap()).unwrap();
+            fs::create_dir_all(&release_backups).unwrap();
+            fs::create_dir_all(&development_backups).unwrap();
+
+            for (path, record) in [
+                (&release_database, "release-record"),
+                (&development_database, "development-record"),
+            ] {
+                let url = format!("sqlite://{}?mode=rwc", path.display());
+                let pool = SqlitePoolOptions::new()
+                    .max_connections(1)
+                    .connect(&url)
+                    .await
+                    .unwrap();
+                sqlx::query("CREATE TABLE records (value TEXT NOT NULL)")
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                sqlx::query("INSERT INTO records (value) VALUES (?)")
+                    .bind(record)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                pool.close().await;
+            }
+
+            for (path, expected) in [
+                (&release_database, "release-record"),
+                (&development_database, "development-record"),
+            ] {
+                let url = format!("sqlite://{}", path.display());
+                let pool = SqlitePoolOptions::new()
+                    .max_connections(1)
+                    .connect(&url)
+                    .await
+                    .unwrap();
+                let values = sqlx::query_scalar::<_, String>("SELECT value FROM records")
+                    .fetch_all(&pool)
+                    .await
+                    .unwrap();
+                assert_eq!(values, [expected]);
+                pool.close().await;
+            }
+
+            fs::write(release_backups.join("release.json"), b"release").unwrap();
+            fs::write(development_backups.join("development.json"), b"development").unwrap();
+            assert!(!release_backups.join("development.json").exists());
+            assert!(!development_backups.join("release.json").exists());
+            fs::remove_dir_all(fixture_root).unwrap();
+        });
+    }
 }
 
 #[cfg(test)]
