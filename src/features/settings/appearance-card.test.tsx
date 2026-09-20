@@ -25,6 +25,7 @@ describe("AppearanceCard", () => {
     expect(lemon).not.toBeChecked();
     expect(screen.getAllByRole("radio")).toHaveLength(4);
     expect(screen.getByText("현재 테마")).toBeInTheDocument();
+    expect(screen.getByText("밝고 낙관적인")).toBeInTheDocument();
     expect(document.documentElement).toHaveAttribute("data-theme", "mint");
     expect(container.querySelector("fieldset > div")).toHaveClass("lg:grid-cols-1", "2xl:grid-cols-2");
   });

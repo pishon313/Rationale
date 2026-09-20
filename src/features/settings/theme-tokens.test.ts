@@ -82,6 +82,24 @@ describe("theme token contracts", () => {
     }
   });
 
+  it("keeps secondary accent text readable on muted badge backgrounds", () => {
+    for (const [name, selector] of [
+      ["Mint Light", ':root,\n:root[data-theme="mint"]'],
+      ["Mint Dark", ':root.dark,\n:root.dark[data-theme="mint"]'],
+      ["Rose Purple Light", ':root[data-theme="rose-purple"]'],
+      ["Rose Purple Dark", ':root.dark[data-theme="rose-purple"]'],
+      ["Midnight Light", ':root[data-theme="midnight"]'],
+      ["Midnight Dark", ':root.dark[data-theme="midnight"]'],
+      ["Lemon Light", ':root[data-theme="lemon"]'],
+      ["Lemon Dark", ':root.dark[data-theme="lemon"]'],
+    ] as const) {
+      const block = declarations(selector);
+      const foreground = colorToken(block, "secondary-accent-text");
+      const background = colorToken(block, "paper-2");
+      expect(contrastRatio(foreground, background), name).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
   it("resolves every required semantic token for all eight palette and appearance combinations", () => {
     const mintLight = declarations(':root,\n:root[data-theme="mint"]');
     const mintDark = declarations(':root.dark,\n:root.dark[data-theme="mint"]');
@@ -97,7 +115,7 @@ describe("theme token contracts", () => {
 
 const requiredPaletteTokens = [
   "paper", "paper-2", "paper-3", "surface", "ink", "ink-2", "muted", "rule", "rule-strong",
-  "accent", "accent-hover", "accent-soft", "accent-ink", "focus", "secondary-accent", "lilac",
+  "accent", "accent-hover", "accent-soft", "accent-ink", "focus", "secondary-accent", "secondary-accent-text", "lilac",
   "amber", "danger", "success", "workbench-border", "workbench-background", "workbench-ink",
   "workbench-brand-rule", "workbench-accent", "workbench-muted", "workbench-field-rule", "workbench-field",
   "workbench-nav", "workbench-nav-ink", "workbench-active-rule", "workbench-active", "workbench-active-ink",
@@ -107,4 +125,35 @@ const requiredPaletteTokens = [
 function expectCompletePalette(block: string) {
   for (const token of requiredPaletteTokens) expect(block).toContain(`--color-${token}:`);
   for (const shadow of ["whisper", "floating", "workbench"]) expect(block).toContain(`--shadow-${shadow}:`);
+}
+
+type Oklch = { lightness: number; chroma: number; hue: number };
+
+function colorToken(block: string, name: string): Oklch {
+  const value = block.match(new RegExp(`--color-${name}:\\s*oklch\\(([^)]+)\\)`))?.[1];
+  if (!value) throw new Error(`Missing OKLCH token: --color-${name}`);
+  const [lightness, chroma, hue] = value.split(/\s+/).map(Number.parseFloat);
+  return { lightness: lightness / 100, chroma, hue };
+}
+
+function contrastRatio(first: Oklch, second: Oklch) {
+  const [lighter, darker] = [relativeLuminance(first), relativeLuminance(second)].sort((a, b) => b - a);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+function relativeLuminance({ lightness, chroma, hue }: Oklch) {
+  const radians = hue * Math.PI / 180;
+  const a = chroma * Math.cos(radians);
+  const b = chroma * Math.sin(radians);
+  const l = Math.pow(lightness + 0.3963377774 * a + 0.2158037573 * b, 3);
+  const m = Math.pow(lightness - 0.1055613458 * a - 0.0638541728 * b, 3);
+  const s = Math.pow(lightness - 0.0894841775 * a - 1.291485548 * b, 3);
+  const red = clamp(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s);
+  const green = clamp(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s);
+  const blue = clamp(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s);
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+}
+
+function clamp(value: number) {
+  return Math.min(1, Math.max(0, value));
 }
