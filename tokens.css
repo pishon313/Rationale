@@ -16,6 +16,7 @@
   --color-accent-ink: oklch(98% 0.008 170);
   --color-focus: oklch(45% 0.17 166);
   --color-secondary-accent: oklch(67% 0.12 295);
+  --color-secondary-accent-text: oklch(54% 0.12 295);
   --color-lilac: var(--color-secondary-accent);
   --color-amber: oklch(72% 0.13 75);
   --color-danger: oklch(56% 0.19 25);
@@ -97,6 +98,7 @@
   --color-accent-ink: oklch(16% 0.025 225);
   --color-focus: oklch(80% 0.15 166);
   --color-secondary-accent: oklch(75% 0.11 295);
+  --color-secondary-accent-text: oklch(75% 0.11 295);
   --color-lilac: var(--color-secondary-accent);
   --color-amber: oklch(79% 0.12 75);
   --color-danger: oklch(72% 0.16 25);
@@ -121,6 +123,7 @@
   --color-accent-ink: oklch(98% 0.008 330);
   --color-focus: oklch(54% 0.18 305);
   --color-secondary-accent: oklch(58% 0.15 295);
+  --color-secondary-accent-text: oklch(54% 0.15 295);
   --color-lilac: var(--color-secondary-accent);
 
   --color-workbench-border: oklch(37% 0.045 315);
@@ -159,6 +162,7 @@
   --color-accent-ink: oklch(14% 0.028 305);
   --color-focus: oklch(80% 0.11 300);
   --color-secondary-accent: oklch(77% 0.125 295);
+  --color-secondary-accent-text: oklch(77% 0.125 295);
   --color-lilac: var(--color-secondary-accent);
   --shadow-whisper: 0 1px 2px oklch(4% 0.02 305 / 0.36);
   --shadow-floating: 0 0.75rem 2rem oklch(4% 0.02 305 / 0.48);
@@ -180,6 +184,7 @@
   --color-accent-ink: oklch(98% 0.006 250);
   --color-focus: oklch(52% 0.17 282);
   --color-secondary-accent: oklch(60% 0.13 300);
+  --color-secondary-accent-text: oklch(54% 0.13 300);
   --color-lilac: var(--color-secondary-accent);
   --color-amber: oklch(65% 0.16 65);
   --color-danger: oklch(56% 0.19 25);
@@ -221,6 +226,7 @@
   --color-accent-ink: oklch(13% 0.03 255);
   --color-focus: oklch(80% 0.14 285);
   --color-secondary-accent: oklch(76% 0.13 300);
+  --color-secondary-accent-text: oklch(76% 0.13 300);
   --color-lilac: var(--color-secondary-accent);
   --color-amber: oklch(79% 0.12 75);
   --color-danger: oklch(72% 0.16 25);
@@ -262,6 +268,7 @@
   --color-accent-ink: oklch(98% 0.005 100);
   --color-focus: oklch(48% 0.14 115);
   --color-secondary-accent: oklch(52% 0.1 135);
+  --color-secondary-accent-text: oklch(52% 0.1 135);
   --color-lilac: var(--color-secondary-accent);
   --color-amber: oklch(65% 0.16 65);
   --color-danger: oklch(56% 0.19 25);
@@ -303,6 +310,7 @@
   --color-accent-ink: oklch(17% 0.03 80);
   --color-focus: oklch(84% 0.14 110);
   --color-secondary-accent: oklch(72% 0.11 135);
+  --color-secondary-accent-text: oklch(72% 0.11 135);
   --color-lilac: var(--color-secondary-accent);
   --color-amber: oklch(79% 0.12 65);
   --color-danger: oklch(72% 0.16 25);

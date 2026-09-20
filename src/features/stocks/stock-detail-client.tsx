@@ -174,7 +174,7 @@ export function formatHoldingAveragePrice(holding: Pick<StockAccountHolding, "av
 }
 
 function TradeTypeBadge({ type, t }: { type: Trade["tradeType"]; t: ReturnType<typeof useI18n>["t"] }) {
-  const tone = type === "매수" || type === "입금" ? "bg-[var(--accent-soft)] text-[var(--accent)]" : type === "매도" || type === "출금" ? "bg-[var(--surface-muted)] text-[var(--color-secondary-accent)]" : "bg-[var(--surface-muted)] text-[var(--muted)]";
+  const tone = type === "매수" || type === "입금" ? "bg-[var(--accent-soft)] text-[var(--accent)]" : type === "매도" || type === "출금" ? "bg-[var(--surface-muted)] text-[var(--color-secondary-accent-text)]" : "bg-[var(--surface-muted)] text-[var(--muted)]";
   return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${tone}`}>{t(type)}</span>;
 }
 

@@ -9,7 +9,7 @@ const themeCopy: Record<ThemeId, { label: string; description: string }> = {
   mint: { label: "민트", description: "차분하고 집중된" },
   "rose-purple": { label: "로즈 퍼플", description: "따뜻하고 현대적인" },
   midnight: { label: "미드나이트", description: "차갑고 정밀한" },
-  lemon: { label: "레몬", description: "밝고 성숙한" },
+  lemon: { label: "레몬", description: "밝고 낙관적인" },
 };
 
 export function AppearanceCard() {

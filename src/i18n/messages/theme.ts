@@ -10,7 +10,7 @@ const entries = [
   ["미드나이트", "ミッドナイト", "Midnight", "Minuit", "Mezzanotte", "Medianoche"],
   ["차갑고 정밀한", "クールで精密", "Cool and precise", "Frais et précis", "Freddo e preciso", "Frío y preciso"],
   ["레몬", "レモン", "Lemon", "Citron", "Limone", "Limón"],
-  ["밝고 성숙한", "明るく洗練された", "Bright and mature", "Lumineux et mature", "Luminoso e maturo", "Luminoso y maduro"],
+  ["밝고 낙관적인", "明るく楽観的", "Bright and optimistic", "Lumineux et optimiste", "Luminoso e ottimista", "Luminoso y optimista"],
   ["현재 테마", "現在のテーマ", "Current theme", "Thème actuel", "Tema attuale", "Tema actual"],
 ] as const;
 
