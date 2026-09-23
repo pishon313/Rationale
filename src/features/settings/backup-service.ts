@@ -22,7 +22,7 @@ import { isLegacyPortfolioPlanV6Data, migratePortfolioPlanV6 } from "@/features/
 import { migrateLegacyAccounts } from "@/features/accounts/migrate-accounts";
 import { fallbackLanguagePreference, type LanguagePreference } from "@/i18n/i18n-provider";
 import type { Locale } from "@/i18n/types";
-import { getCorruptionSnapshot, loadCollection, saveCollectionsAtomically, type CollectionWrite } from "@/lib/local-repository";
+import { getCorruptionSnapshot, loadBackupSnapshotCollections, saveCollectionsAtomically, type CollectionWrite } from "@/lib/local-repository";
 import { validateBackupPayload, type DashboardNoteBackup, type EarningsEventBackup, type ValidatedBackup } from "./backup";
 
 export const automaticBackupSourceCollections = [
@@ -47,6 +47,13 @@ export const automaticBackupSourceCollections = [
 export type AutomaticBackupSourceCollection = (typeof automaticBackupSourceCollections)[number];
 export type AutomaticBackupSourceCount = { collection: AutomaticBackupSourceCollection; count: number };
 export type BackupCandidate = { backup: BackupV7; sourceCounts: AutomaticBackupSourceCount[] };
+
+function backupFallback(collection: AutomaticBackupSourceCollection): Array<{ id: string; updatedAt?: string }> {
+  if (collection === "language-preferences") return [fallbackLanguagePreference];
+  if (collection === "dashboard-notes") return [emptyDashboardNote];
+  if (collection === "preferences") return [fallbackCurrencyPreference];
+  return [];
+}
 
 export type BackupV5 = {
   version: 5;
@@ -84,26 +91,11 @@ export type RestoreSnapshot = { id: "latest"; content: string; createdAt: string
 export const restoreSnapshotCollection = "restore-snapshots";
 
 export async function createBackupCandidate(localeOverride?: Locale, options: { allowCorrupted?: boolean } = {}): Promise<BackupCandidate> {
-  const [accounts, stocks, plans, trades, observations, reviews, rules, notes, languages, dashboardNotes, earningsEvents, preferences, portfolioPlanState, portfolioPlanRevisions, portfolioAllocationGroups, portfolioAllocationTargets] = await Promise.all([
-    loadCollection<InvestmentAccount>("accounts", []),
-    loadCollection<Stock>("stocks", []),
-    loadCollection<BuyPlan>("plans", []),
-    loadCollection<Trade>("trades", []),
-    loadCollection<Observation>("observations", []),
-    loadCollection<Review>("reviews", []),
-    loadCollection<InvestmentRule>("rules", []),
-    loadCollection<Note>("notes", []),
-    loadCollection<LanguagePreference>("language-preferences", [fallbackLanguagePreference]),
-    loadCollection<DashboardNoteBackup>("dashboard-notes", [emptyDashboardNote]),
-    loadCollection<EarningsEventBackup>("earnings-events", []),
-    loadCollection<CurrencyPreference>("preferences", [fallbackCurrencyPreference]),
-    loadCollection<PortfolioPlanState | LegacyPortfolioPlanStateV6>("portfolio-plan-state", []),
-    loadCollection<PortfolioPlanRevision | LegacyPortfolioPlanRevisionV6>("portfolio-plan-revisions", []),
-    loadCollection<PortfolioAllocationGroup>("portfolio-allocation-groups", []),
-    loadCollection<PortfolioAllocationTarget | LegacyPortfolioAllocationTargetV6>("portfolio-allocation-targets", []),
-  ]);
-  const sourceValues = [accounts, stocks, plans, trades, observations, reviews, rules, notes, languages, dashboardNotes, earningsEvents, preferences, portfolioPlanState, portfolioPlanRevisions, portfolioAllocationGroups, portfolioAllocationTargets] as const;
-  const sourceCounts = automaticBackupSourceCollections.map((collection, index) => ({ collection, count: sourceValues[index].length }));
+  const sourceCollections = await loadBackupSnapshotCollections(automaticBackupSourceCollections.map((collection) => ({ collection, fallback: backupFallback(collection) })));
+  const [accounts, stocks, plans, trades, observations, reviews, rules, notes, languages, dashboardNotes, earningsEvents, preferences, portfolioPlanState, portfolioPlanRevisions, portfolioAllocationGroups, portfolioAllocationTargets] = sourceCollections.map(({ values }) => values) as unknown as [
+    InvestmentAccount[], Stock[], BuyPlan[], Trade[], Observation[], Review[], InvestmentRule[], Note[], LanguagePreference[], DashboardNoteBackup[], EarningsEventBackup[], CurrencyPreference[], (PortfolioPlanState | LegacyPortfolioPlanStateV6)[], (PortfolioPlanRevision | LegacyPortfolioPlanRevisionV6)[], PortfolioAllocationGroup[], (PortfolioAllocationTarget | LegacyPortfolioAllocationTargetV6)[],
+  ];
+  const sourceCounts = sourceCollections.map(({ collection, rawCount }) => ({ collection: collection as AutomaticBackupSourceCollection, count: rawCount }));
   const sourceCollectionSet = new Set<string>(automaticBackupSourceCollections);
   if (!options.allowCorrupted && getCorruptionSnapshot().collections.some((item) => sourceCollectionSet.has(item.collection))) {
     throw new Error("AUTOMATIC_BACKUP_SOURCE_CORRUPTED");

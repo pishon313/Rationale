@@ -5,7 +5,7 @@ import type { ImportMappingProfile } from "@/features/import/import-types";
 import type { InvestmentAccount } from "@/features/accounts/types";
 import { sampleTrades } from "@/features/trades/sample-data";
 import type { Trade } from "@/features/trades/types";
-import { clearPersistenceError, getCorruptionSnapshot, getPersistenceSnapshot, loadCollection, resetCorruptedCollection, resolveCorruption, retryLastSave, saveCollection, saveCollectionsAtomically } from "./local-repository";
+import { clearPersistenceError, getCorruptionSnapshot, getPersistenceSnapshot, loadBackupSnapshotCollections, loadCollection, resetCorruptedCollection, resolveCorruption, retryLastSave, saveCollection, saveCollectionsAtomically } from "./local-repository";
 
 const sqlMocks = vi.hoisted(() => ({ load: vi.fn(), invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-sql", () => ({ default: { load: sqlMocks.load } }));
@@ -445,6 +445,53 @@ describe("Tauri local repository", () => {
     sqlMocks.load.mockReset();
     sqlMocks.invoke.mockReset();
     (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+  });
+
+  it("loads backup sources through one native snapshot and preserves initialized-empty fallbacks", async () => {
+    const select = vi.fn();
+    sqlMocks.load.mockResolvedValue({ select, execute: vi.fn() });
+    sqlMocks.invoke.mockResolvedValue([
+      { collection: "language-preferences", initialized: false, rawCount: 0, records: [] },
+      { collection: "dashboard-notes", initialized: true, rawCount: 0, records: [] },
+    ]);
+    const languageFallback = { id: "language", locale: "en", updatedAt: "2026-08-16T00:00:00.000Z" };
+    const noteFallback = { id: "dashboard", content: "", updatedAt: "2026-08-16T00:00:00.000Z" };
+
+    await expect(loadBackupSnapshotCollections([
+      { collection: "language-preferences", fallback: [languageFallback] },
+      { collection: "dashboard-notes", fallback: [noteFallback] },
+    ])).resolves.toEqual([
+      { collection: "language-preferences", values: [languageFallback], rawCount: 0 },
+      { collection: "dashboard-notes", values: [], rawCount: 0 },
+    ]);
+
+    expect(sqlMocks.load).toHaveBeenCalledTimes(1);
+    expect(select).not.toHaveBeenCalled();
+    expect(sqlMocks.invoke).toHaveBeenCalledWith("load_backup_snapshot");
+  });
+
+  it("reuses SQLite migration and quarantine handling after the native snapshot closes", async () => {
+    const valid = sampleStocks[0];
+    sqlMocks.load.mockResolvedValue({ select: vi.fn(), execute: vi.fn() });
+    sqlMocks.invoke.mockImplementation((command: string) => command === "load_backup_snapshot" ? Promise.resolve([
+      { collection: "stocks", initialized: true, rawCount: 2, records: [
+        { id: valid.id, data: JSON.stringify(valid), updatedAt: valid.updatedAt },
+        { id: "broken", data: "{", updatedAt: "2026-08-16T00:00:00.000Z" },
+      ] },
+    ]) : Promise.resolve(undefined));
+
+    const result = await loadBackupSnapshotCollections([{ collection: "stocks", fallback: [] }]);
+
+    expect(result).toEqual([{ collection: "stocks", values: [{ ...valid, countryCode: "KR", providerRefs: [], quotePreference: "manual" }], rawCount: 2 }]);
+    expect(sqlMocks.invoke).toHaveBeenCalledWith("quarantine_corrupt_records", { entries: [expect.objectContaining({ recordId: "broken", errorType: "JSON_PARSE_ERROR" })] });
+    expect(getCorruptionSnapshot().collections).toEqual([expect.objectContaining({ collection: "stocks", source: "sqlite", affectedRecordCount: 1, validRecordCount: 1 })]);
+  });
+
+  it("rejects a native snapshot whose order or same-snapshot row count is invalid", async () => {
+    sqlMocks.load.mockResolvedValue({ select: vi.fn(), execute: vi.fn() });
+    sqlMocks.invoke.mockResolvedValue([{ collection: "trades", initialized: true, rawCount: 1, records: [] }]);
+
+    await expect(loadBackupSnapshotCollections([{ collection: "stocks", fallback: [] }])).rejects.toThrow("BACKUP_SNAPSHOT_INVALID_RESPONSE");
   });
 
   it("loads an initialized empty collection without inserting fallback rows", async () => {

@@ -7,7 +7,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     fs::{self, File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
@@ -1128,6 +1128,23 @@ struct AutomaticBackupSourceCount {
     count: u64,
 }
 
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct BackupSnapshotRecord {
+    id: String,
+    data: String,
+    updated_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct BackupSnapshotCollection {
+    collection: String,
+    initialized: bool,
+    raw_count: usize,
+    records: Vec<BackupSnapshotRecord>,
+}
+
 #[derive(Clone)]
 struct AutomaticBackupFile {
     path: PathBuf,
@@ -1161,7 +1178,6 @@ fn get_automatic_backup_status(app: tauri::AppHandle) -> Result<AutomaticBackupS
 #[tauri::command]
 async fn ensure_automatic_backup(
     app: tauri::AppHandle,
-    db_instances: State<'_, DbInstances>,
     content: String,
     source_counts: Vec<AutomaticBackupSourceCount>,
 ) -> Result<AutomaticBackupStatus, String> {
@@ -1171,8 +1187,7 @@ async fn ensure_automatic_backup(
     if !current.backup_needed {
         return Ok(current);
     }
-    let raw_counts = raw_automatic_backup_source_counts(db_instances).await?;
-    verify_automatic_backup_source_counts(&source_counts, &raw_counts)?;
+    validate_automatic_backup_source_counts(&source_counts)?;
     ensure_automatic_backup_in_directory(&directory, &content, now)
 }
 
@@ -1196,74 +1211,116 @@ fn automatic_backup_status(directory: &Path, now: u64) -> Result<AutomaticBackup
     Ok(status_from_files(&inventory, now, false))
 }
 
-async fn raw_automatic_backup_source_counts(
+#[tauri::command]
+async fn load_backup_snapshot(
     db_instances: State<'_, DbInstances>,
-) -> Result<Vec<AutomaticBackupSourceCount>, String> {
+) -> Result<Vec<BackupSnapshotCollection>, String> {
     let instances = db_instances.0.read().await;
     let pool = match instances.get(DATABASE_URL) {
         Some(DbPool::Sqlite(pool)) => pool.clone(),
         _ => return Err("LOCAL_DATABASE_NOT_LOADED".into()),
     };
     drop(instances);
-    let mut counts = Vec::with_capacity(AUTOMATIC_BACKUP_SOURCE_COLLECTIONS.len());
-    for collection in AUTOMATIC_BACKUP_SOURCE_COLLECTIONS {
-        let count =
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_records WHERE collection = ?")
+    read_backup_snapshot_from_pool(&pool).await
+}
+
+async fn read_backup_snapshot_from_pool(
+    pool: &sqlx::SqlitePool,
+) -> Result<Vec<BackupSnapshotCollection>, String> {
+    read_backup_snapshot_from_pool_with_hook(pool, |_| Ok(())).await
+}
+
+async fn read_backup_snapshot_from_pool_with_hook<F>(
+    pool: &sqlx::SqlitePool,
+    mut after_collection: F,
+) -> Result<Vec<BackupSnapshotCollection>, String>
+where
+    F: FnMut(&str) -> Result<(), String>,
+{
+    let mut transaction = pool
+        .begin()
+        .await
+        .map_err(|_| "BACKUP_SNAPSHOT_BEGIN_FAILED".to_string())?;
+    let result: Result<Vec<BackupSnapshotCollection>, String> = async {
+        let mut collections = Vec::with_capacity(AUTOMATIC_BACKUP_SOURCE_COLLECTIONS.len());
+        for collection in AUTOMATIC_BACKUP_SOURCE_COLLECTIONS {
+            let rows = sqlx::query_as::<_, (String, String, String)>(
+                "SELECT id, data, updated_at FROM app_records WHERE collection = ? ORDER BY updated_at DESC",
+            )
+            .bind(collection)
+            .fetch_all(&mut *transaction)
+            .await
+            .map_err(|_| "BACKUP_SNAPSHOT_QUERY_FAILED".to_string())?;
+            let initialized = if rows.is_empty() {
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT 1 FROM app_records WHERE collection = ? AND id = ? LIMIT 1",
+                )
+                .bind(COLLECTION_STATE)
                 .bind(collection)
-                .fetch_one(&pool)
+                .fetch_optional(&mut *transaction)
                 .await
-                .map_err(|_| "AUTOMATIC_BACKUP_SOURCE_COUNT_QUERY_FAILED".to_string())?;
-        let count = u64::try_from(count)
-            .map_err(|_| "AUTOMATIC_BACKUP_SOURCE_COUNT_QUERY_FAILED".to_string())?;
-        counts.push(AutomaticBackupSourceCount {
-            collection: collection.into(),
-            count,
-        });
+                .map_err(|_| "BACKUP_SNAPSHOT_QUERY_FAILED".to_string())?
+                .is_some()
+            } else {
+                true
+            };
+            let records = rows
+                .into_iter()
+                .map(|(id, data, updated_at)| BackupSnapshotRecord {
+                    id,
+                    data,
+                    updated_at,
+                })
+                .collect::<Vec<_>>();
+            collections.push(BackupSnapshotCollection {
+                collection: collection.into(),
+                initialized,
+                raw_count: records.len(),
+                records,
+            });
+            after_collection(collection)?;
+        }
+        Ok(collections)
     }
-    Ok(counts)
+    .await;
+
+    match result {
+        Ok(collections) => {
+            transaction
+                .commit()
+                .await
+                .map_err(|_| "BACKUP_SNAPSHOT_COMMIT_FAILED".to_string())?;
+            Ok(collections)
+        }
+        Err(error) => {
+            let _ = transaction.rollback().await;
+            Err(error)
+        }
+    }
 }
 
-fn verify_automatic_backup_source_counts(
-    provided: &[AutomaticBackupSourceCount],
-    raw: &[AutomaticBackupSourceCount],
-) -> Result<(), String> {
-    let provided = automatic_backup_source_count_map(provided)?;
-    let raw = automatic_backup_source_count_map(raw)?;
-    if AUTOMATIC_BACKUP_SOURCE_COLLECTIONS
-        .iter()
-        .any(|collection| provided.get(*collection) != raw.get(*collection))
-    {
-        return Err("AUTOMATIC_BACKUP_SOURCE_COUNT_MISMATCH".into());
-    }
-    Ok(())
-}
-
-fn automatic_backup_source_count_map(
+fn validate_automatic_backup_source_counts(
     counts: &[AutomaticBackupSourceCount],
-) -> Result<HashMap<String, u64>, String> {
+) -> Result<(), String> {
     if counts.len() != AUTOMATIC_BACKUP_SOURCE_COLLECTIONS.len() {
         return Err("AUTOMATIC_BACKUP_SOURCE_COUNTS_INVALID".into());
     }
     let allowed = AUTOMATIC_BACKUP_SOURCE_COLLECTIONS
         .into_iter()
         .collect::<HashSet<_>>();
-    let mut result = HashMap::with_capacity(counts.len());
+    let mut seen = HashSet::with_capacity(counts.len());
     for entry in counts {
-        if !allowed.contains(entry.collection.as_str())
-            || result
-                .insert(entry.collection.clone(), entry.count)
-                .is_some()
-        {
+        if !allowed.contains(entry.collection.as_str()) || !seen.insert(entry.collection.as_str()) {
             return Err("AUTOMATIC_BACKUP_SOURCE_COUNTS_INVALID".into());
         }
     }
     if AUTOMATIC_BACKUP_SOURCE_COLLECTIONS
         .iter()
-        .any(|collection| !result.contains_key(*collection))
+        .any(|collection| !seen.contains(*collection))
     {
         return Err("AUTOMATIC_BACKUP_SOURCE_COUNTS_INVALID".into());
     }
-    Ok(result)
+    Ok(())
 }
 
 fn ensure_automatic_backup_in_directory(
@@ -1563,6 +1620,7 @@ pub fn run() {
             get_sync_outbox,
             get_sync_runtime_status,
             acknowledge_sync_records,
+            load_backup_snapshot,
             get_automatic_backup_status,
             ensure_automatic_backup,
             encrypt_backup,
@@ -1730,6 +1788,343 @@ mod app_identity_tests {
             assert!(!release_backups.join("development.json").exists());
             assert!(!development_backups.join("release.json").exists());
             fs::remove_dir_all(fixture_root).unwrap();
+        });
+    }
+}
+
+#[cfg(test)]
+mod backup_snapshot_tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+    use std::sync::mpsc::sync_channel;
+
+    fn temporary_snapshot_directory(label: &str) -> PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        std::env::temp_dir().join(format!(
+            "rationale-snapshot-{label}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    async fn snapshot_pool(label: &str, max_connections: u32) -> (PathBuf, sqlx::SqlitePool) {
+        let directory = temporary_snapshot_directory(label);
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        let url = format!(
+            "sqlite://{}?mode=rwc",
+            directory.join("snapshot.db").display()
+        );
+        let pool = SqlitePoolOptions::new()
+            .max_connections(max_connections)
+            .connect(&url)
+            .await
+            .unwrap();
+        sqlx::query("PRAGMA journal_mode = WAL")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE app_records (collection TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (collection, id))")
+            .execute(&pool)
+            .await
+            .unwrap();
+        (directory, pool)
+    }
+
+    async fn insert_record(
+        pool: &sqlx::SqlitePool,
+        collection: &str,
+        id: &str,
+        data: serde_json::Value,
+    ) {
+        sqlx::query(
+            "INSERT INTO app_records (collection, id, data, updated_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(collection)
+        .bind(id)
+        .bind(data.to_string())
+        .bind("2026-09-01T00:00:00.000Z")
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    fn snapshot_record<'a>(
+        snapshot: &'a [BackupSnapshotCollection],
+        collection: &str,
+        id: &str,
+    ) -> &'a BackupSnapshotRecord {
+        snapshot
+            .iter()
+            .find(|item| item.collection == collection)
+            .unwrap()
+            .records
+            .iter()
+            .find(|item| item.id == id)
+            .unwrap()
+    }
+
+    #[test]
+    fn snapshot_keeps_the_exact_allowlist_and_existing_row_order() {
+        tauri::async_runtime::block_on(async {
+            let (directory, pool) = snapshot_pool("order", 1).await;
+            for (id, updated_at) in [
+                ("older", "2026-09-01T00:00:00.000Z"),
+                ("newer", "2026-09-02T00:00:00.000Z"),
+            ] {
+                sqlx::query("INSERT INTO app_records (collection, id, data, updated_at) VALUES ('notes', ?, ?, ?)")
+                    .bind(id)
+                    .bind(serde_json::json!({"id":id}).to_string())
+                    .bind(updated_at)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+
+            let snapshot = read_backup_snapshot_from_pool(&pool).await.unwrap();
+
+            assert_eq!(
+                snapshot
+                    .iter()
+                    .map(|item| item.collection.as_str())
+                    .collect::<Vec<_>>(),
+                AUTOMATIC_BACKUP_SOURCE_COLLECTIONS
+            );
+            let notes = snapshot
+                .iter()
+                .find(|item| item.collection == "notes")
+                .unwrap();
+            assert_eq!(notes.raw_count, 2);
+            assert_eq!(
+                notes
+                    .records
+                    .iter()
+                    .map(|record| record.id.as_str())
+                    .collect::<Vec<_>>(),
+                ["newer", "older"]
+            );
+
+            pool.close().await;
+            fs::remove_dir_all(directory).unwrap();
+        });
+    }
+
+    #[test]
+    fn same_count_updates_never_mix_collection_versions() {
+        for run in 0..10 {
+            tauri::async_runtime::block_on(async {
+                let (directory, pool) = snapshot_pool(&format!("same-count-{run}"), 4).await;
+                insert_record(
+                    &pool,
+                    "accounts",
+                    "account-1",
+                    serde_json::json!({"id":"account-1","generation":"before"}),
+                )
+                .await;
+                insert_record(
+                    &pool,
+                    "trades",
+                    "trade-1",
+                    serde_json::json!({"id":"trade-1","accountId":"account-1","generation":"before"}),
+                )
+                .await;
+
+                let (first_read_sender, first_read_receiver) = sync_channel::<()>(0);
+                let (write_done_sender, write_done_receiver) = sync_channel::<()>(0);
+                let writer_pool = pool.clone();
+                let writer = std::thread::spawn(move || {
+                    first_read_receiver.recv().unwrap();
+                    tauri::async_runtime::block_on(async {
+                        let mut transaction = writer_pool.begin().await.unwrap();
+                        for (collection, id, data) in [
+                            (
+                                "accounts",
+                                "account-1",
+                                serde_json::json!({"id":"account-1","generation":"after"}),
+                            ),
+                            (
+                                "trades",
+                                "trade-1",
+                                serde_json::json!({"id":"trade-1","accountId":"account-1","generation":"after"}),
+                            ),
+                        ] {
+                            sqlx::query("UPDATE app_records SET data = ?, updated_at = ? WHERE collection = ? AND id = ?")
+                                .bind(data.to_string())
+                                .bind("2026-09-02T00:00:00.000Z")
+                                .bind(collection)
+                                .bind(id)
+                                .execute(&mut *transaction)
+                                .await
+                                .unwrap();
+                        }
+                        transaction.commit().await.unwrap();
+                    });
+                    write_done_sender.send(()).unwrap();
+                });
+
+                let mut paused = false;
+                let snapshot = read_backup_snapshot_from_pool_with_hook(&pool, |collection| {
+                    if collection == "accounts" && !paused {
+                        paused = true;
+                        first_read_sender.send(()).unwrap();
+                        write_done_receiver.recv().unwrap();
+                    }
+                    Ok(())
+                })
+                .await
+                .unwrap();
+                writer.join().unwrap();
+
+                let account: serde_json::Value =
+                    serde_json::from_str(&snapshot_record(&snapshot, "accounts", "account-1").data)
+                        .unwrap();
+                let trade: serde_json::Value =
+                    serde_json::from_str(&snapshot_record(&snapshot, "trades", "trade-1").data)
+                        .unwrap();
+                assert_eq!(account["generation"], "before");
+                assert_eq!(trade["generation"], "before");
+                assert_eq!(
+                    snapshot
+                        .iter()
+                        .find(|item| item.collection == "accounts")
+                        .unwrap()
+                        .raw_count,
+                    1
+                );
+                assert_eq!(
+                    snapshot
+                        .iter()
+                        .find(|item| item.collection == "trades")
+                        .unwrap()
+                        .raw_count,
+                    1
+                );
+
+                pool.close().await;
+                fs::remove_dir_all(directory).unwrap();
+            });
+        }
+    }
+
+    #[test]
+    fn insert_delete_and_relationship_changes_share_one_snapshot() {
+        tauri::async_runtime::block_on(async {
+            let (directory, pool) = snapshot_pool("relationships", 4).await;
+            insert_record(
+                &pool,
+                "stocks",
+                "stock-before",
+                serde_json::json!({"id":"stock-before"}),
+            )
+            .await;
+            insert_record(
+                &pool,
+                "portfolio-allocation-targets",
+                "target-1",
+                serde_json::json!({"id":"target-1","stockId":"stock-before"}),
+            )
+            .await;
+
+            let (stock_read_sender, stock_read_receiver) = sync_channel::<()>(0);
+            let (write_done_sender, write_done_receiver) = sync_channel::<()>(0);
+            let writer_pool = pool.clone();
+            let writer = std::thread::spawn(move || {
+                stock_read_receiver.recv().unwrap();
+                tauri::async_runtime::block_on(async {
+                    let mut transaction = writer_pool.begin().await.unwrap();
+                    sqlx::query("DELETE FROM app_records WHERE collection = 'stocks' AND id = 'stock-before'")
+                        .execute(&mut *transaction)
+                        .await
+                        .unwrap();
+                    sqlx::query("INSERT INTO app_records (collection, id, data, updated_at) VALUES ('stocks', 'stock-after', ?, '2026-09-02T00:00:00.000Z')")
+                        .bind(serde_json::json!({"id":"stock-after"}).to_string())
+                        .execute(&mut *transaction)
+                        .await
+                        .unwrap();
+                    sqlx::query("UPDATE app_records SET data = ? WHERE collection = 'portfolio-allocation-targets' AND id = 'target-1'")
+                        .bind(serde_json::json!({"id":"target-1","stockId":"stock-after"}).to_string())
+                        .execute(&mut *transaction)
+                        .await
+                        .unwrap();
+                    transaction.commit().await.unwrap();
+                });
+                write_done_sender.send(()).unwrap();
+            });
+
+            let mut paused = false;
+            let snapshot = read_backup_snapshot_from_pool_with_hook(&pool, |collection| {
+                if collection == "stocks" && !paused {
+                    paused = true;
+                    stock_read_sender.send(()).unwrap();
+                    write_done_receiver.recv().unwrap();
+                }
+                Ok(())
+            })
+            .await
+            .unwrap();
+            writer.join().unwrap();
+
+            let stock = snapshot_record(&snapshot, "stocks", "stock-before");
+            let target: serde_json::Value = serde_json::from_str(
+                &snapshot_record(&snapshot, "portfolio-allocation-targets", "target-1").data,
+            )
+            .unwrap();
+            assert_eq!(stock.id, "stock-before");
+            assert_eq!(target["stockId"], "stock-before");
+            assert!(!snapshot
+                .iter()
+                .find(|item| item.collection == "stocks")
+                .unwrap()
+                .records
+                .iter()
+                .any(|item| item.id == "stock-after"));
+
+            pool.close().await;
+            fs::remove_dir_all(directory).unwrap();
+        });
+    }
+
+    #[test]
+    fn snapshot_failure_rolls_back_and_releases_the_connection() {
+        tauri::async_runtime::block_on(async {
+            let (directory, pool) = snapshot_pool("rollback", 1).await;
+            insert_record(
+                &pool,
+                "accounts",
+                "account-1",
+                serde_json::json!({"id":"account-1","generation":"before"}),
+            )
+            .await;
+
+            let result = read_backup_snapshot_from_pool_with_hook(&pool, |collection| {
+                if collection == "accounts" {
+                    Err("BACKUP_SNAPSHOT_INJECTED_FAILURE".into())
+                } else {
+                    Ok(())
+                }
+            })
+            .await;
+            assert_eq!(result, Err("BACKUP_SNAPSHOT_INJECTED_FAILURE".into()));
+
+            sqlx::query("UPDATE app_records SET data = ? WHERE collection = 'accounts' AND id = 'account-1'")
+                .bind(serde_json::json!({"id":"account-1","generation":"after"}).to_string())
+                .execute(&pool)
+                .await
+                .unwrap();
+            let data = sqlx::query_scalar::<_, String>(
+                "SELECT data FROM app_records WHERE collection = 'accounts' AND id = 'account-1'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&data).unwrap()["generation"],
+                "after"
+            );
+            assert!(!directory.join("backups").exists());
+
+            pool.close().await;
+            fs::remove_dir_all(directory).unwrap();
         });
     }
 }
@@ -1911,48 +2306,42 @@ mod encrypted_backup_tests {
     #[test]
     fn automatic_backup_source_counts_require_the_exact_allowlist() {
         let expected = source_counts(2);
-        assert!(verify_automatic_backup_source_counts(&expected, &expected).is_ok());
+        assert!(validate_automatic_backup_source_counts(&expected).is_ok());
 
         let mut duplicate = expected.clone();
         duplicate[1].collection = duplicate[0].collection.clone();
         assert_eq!(
-            verify_automatic_backup_source_counts(&duplicate, &expected),
+            validate_automatic_backup_source_counts(&duplicate),
             Err("AUTOMATIC_BACKUP_SOURCE_COUNTS_INVALID".into())
         );
 
         let missing = &expected[..expected.len() - 1];
         assert_eq!(
-            verify_automatic_backup_source_counts(missing, &expected),
+            validate_automatic_backup_source_counts(missing),
             Err("AUTOMATIC_BACKUP_SOURCE_COUNTS_INVALID".into())
         );
 
         let mut unknown = expected.clone();
         unknown[0].collection = "unknown".into();
         assert_eq!(
-            verify_automatic_backup_source_counts(&unknown, &expected),
+            validate_automatic_backup_source_counts(&unknown),
             Err("AUTOMATIC_BACKUP_SOURCE_COUNTS_INVALID".into())
         );
 
-        let mut mismatch = expected.clone();
-        mismatch[1].count += 1;
-        assert_eq!(
-            verify_automatic_backup_source_counts(&mismatch, &expected),
-            Err("AUTOMATIC_BACKUP_SOURCE_COUNT_MISMATCH".into())
-        );
+        let different_snapshot_counts = source_counts(9);
+        assert!(validate_automatic_backup_source_counts(&different_snapshot_counts).is_ok());
     }
 
     #[test]
-    fn source_count_mismatch_creates_nothing_and_prunes_nothing() {
-        let directory = temporary_backup_directory("count-mismatch");
+    fn invalid_source_count_shape_creates_nothing_and_prunes_nothing() {
+        let directory = temporary_backup_directory("invalid-source-counts");
         for timestamp in 1..=7 {
             create_backup_file(&directory, timestamp);
         }
-        let raw = source_counts(1);
-        let mut provided = raw.clone();
-        provided[1].count = 0;
+        let provided = &source_counts(1)[..AUTOMATIC_BACKUP_SOURCE_COLLECTIONS.len() - 1];
         assert_eq!(
-            verify_automatic_backup_source_counts(&provided, &raw),
-            Err("AUTOMATIC_BACKUP_SOURCE_COUNT_MISMATCH".into())
+            validate_automatic_backup_source_counts(provided),
+            Err("AUTOMATIC_BACKUP_SOURCE_COUNTS_INVALID".into())
         );
         assert_eq!(automatic_backup_files(&directory).unwrap().valid.len(), 7);
         assert!(!directory
