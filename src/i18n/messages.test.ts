@@ -21,6 +21,22 @@ describe("translations", () => {
     expect(translate("en", "밝고 낙관적인")).toBe("Bright and optimistic");
   });
 
+  it("provides the new theme names and descriptions in every supported locale", () => {
+    const descriptions = {
+      ja: ["穏やかで澄んだブルー", "深みのある洗練されたモノクローム"],
+      en: ["Calm and clear blue", "Deep and refined monochrome"],
+      fr: ["Bleu calme et limpide", "Monochrome profond et raffiné"],
+      it: ["Blu calmo e limpido", "Monocromia profonda e raffinata"],
+      es: ["Azul sereno y claro", "Monocromo profundo y refinado"],
+    } as const;
+
+    for (const locale of translatedLocales) {
+      expect(translate(locale, "Sierra Blue")).toBe("Sierra Blue");
+      expect(translate(locale, "Deep Black")).toBe("Deep Black");
+      expect([translate(locale, "차분하고 맑은 블루"), translate(locale, "절제되고 깊은 모노크롬")]).toEqual(descriptions[locale]);
+    }
+  });
+
   it("keeps the account migration retry label translated in the account catalog", () => {
     expect(Object.fromEntries(translatedLocales.map((locale) => [locale, accountMessages[locale]["다시 시도"]]))).toEqual({
       ja: "再試行", en: "Try again", fr: "Réessayer", it: "Riprova", es: "Intentar de nuevo",
@@ -92,7 +108,8 @@ describe("translations", () => {
 const indirectUiKeys = [
   "밝은 모드", "어두운 모드", "자동 저장됨", "이 Mac에 자동 저장",
   "민트", "차분하고 집중된", "로즈 퍼플", "따뜻하고 현대적인",
-  "미드나이트", "차갑고 정밀한", "레몬", "밝고 낙관적인", "현재 테마",
+  "미드나이트", "차갑고 정밀한", "차분하고 맑은 블루",
+  "레몬", "밝고 낙관적인", "절제되고 깊은 모노크롬", "현재 테마",
   "인터넷 연결이 없어 마지막 저장 환율을 사용합니다.",
   "15MB 이하 이미지만 첨부할 수 있습니다.", "이미지를 읽지 못했습니다.", "지원하지 않는 이미지 형식입니다.",
   "갱신 중", "현재가 갱신", "자동 갱신", "오프라인·저장 가격", "수동 입력",
