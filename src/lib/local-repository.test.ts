@@ -35,6 +35,26 @@ describe("browser local repository", () => {
     await expect(loadCollection("saved-empty", fallback)).resolves.toEqual([]);
   });
 
+  it("loads backup snapshot requests through the existing browser fallbacks without native calls", async () => {
+    const storedLanguage = { id: "language", locale: "ja", updatedAt: "2026-08-16T00:00:00.000Z" };
+    const preferenceFallback = { id: "currency", displayCurrency: "KRW", updatedAt: "2026-08-16T00:00:00.000Z" };
+    const dashboardFallback = { id: "dashboard", content: "fallback", updatedAt: "2026-08-16T00:00:00.000Z" };
+    localStorage.setItem("tradejournal.language-preferences.v1", JSON.stringify([storedLanguage]));
+    localStorage.setItem("tradejournal.dashboard-notes.v1", "[]");
+
+    await expect(loadBackupSnapshotCollections([
+      { collection: "language-preferences", fallback: [] },
+      { collection: "preferences", fallback: [preferenceFallback] },
+      { collection: "dashboard-notes", fallback: [dashboardFallback] },
+    ])).resolves.toEqual([
+      { collection: "language-preferences", values: [storedLanguage], rawCount: 1 },
+      { collection: "preferences", values: [preferenceFallback], rawCount: 1 },
+      { collection: "dashboard-notes", values: [], rawCount: 0 },
+    ]);
+    expect(sqlMocks.load).not.toHaveBeenCalled();
+    expect(sqlMocks.invoke).not.toHaveBeenCalled();
+  });
+
   it("quarantines malformed JSON without replacing the active value", async () => {
     const raw = '[{"id":"stock-1",';
     localStorage.setItem("tradejournal.stocks.v1", raw);

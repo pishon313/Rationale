@@ -10,6 +10,7 @@ import { sampleStocks } from "@/features/stocks/sample-data";
 import type { Stock } from "@/features/stocks/types";
 import { sampleTrades } from "@/features/trades/sample-data";
 import { fallbackLanguagePreference } from "@/i18n/i18n-provider";
+import automaticBackupSourceCollectionsContract from "../../../tests/contracts/automatic-backup-source-collections.json";
 import { automaticBackupSourceCollections, createBackupCandidate, createBackupPayload } from "./backup-service";
 
 const repositoryMocks = vi.hoisted(() => ({ loadBackupSnapshotCollections: vi.fn(), getCorruptionSnapshot: vi.fn() }));
@@ -54,6 +55,11 @@ describe("automatic backup candidate", () => {
     repositoryMocks.loadBackupSnapshotCollections.mockReset();
     repositoryMocks.getCorruptionSnapshot.mockReset().mockReturnValue({ collections: [] });
     useSources();
+  });
+
+  it("matches the shared Rust and TypeScript source-collection contract", () => {
+    expect(automaticBackupSourceCollectionsContract).toHaveLength(16);
+    expect(automaticBackupSourceCollections).toEqual(automaticBackupSourceCollectionsContract);
   });
 
   it("contains every allowed source collection exactly once and excludes device-local caches", async () => {

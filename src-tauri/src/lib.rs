@@ -1798,6 +1798,9 @@ mod backup_snapshot_tests {
     use sqlx::sqlite::SqlitePoolOptions;
     use std::sync::mpsc::sync_channel;
 
+    const SOURCE_COLLECTIONS_CONTRACT: &str =
+        include_str!("../../tests/contracts/automatic-backup-source-collections.json");
+
     fn temporary_snapshot_directory(label: &str) -> PathBuf {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         std::env::temp_dir().join(format!(
@@ -1862,6 +1865,16 @@ mod backup_snapshot_tests {
             .iter()
             .find(|item| item.id == id)
             .unwrap()
+    }
+
+    #[test]
+    fn source_collections_match_the_shared_rust_and_typescript_contract() {
+        let contract = serde_json::from_str::<Vec<String>>(SOURCE_COLLECTIONS_CONTRACT).unwrap();
+        assert_eq!(contract.len(), 16);
+        assert_eq!(
+            AUTOMATIC_BACKUP_SOURCE_COLLECTIONS.to_vec(),
+            contract.iter().map(String::as_str).collect::<Vec<_>>()
+        );
     }
 
     #[test]
