@@ -121,6 +121,26 @@ describe("AutomaticBackup", () => {
     expect(mocks.invoke).toHaveBeenCalledTimes(1);
   });
 
+  it("never invokes the native writer when snapshot creation fails", async () => {
+    mocks.invoke.mockResolvedValue(due);
+    mocks.createBackupCandidate.mockRejectedValue(new Error("BACKUP_SNAPSHOT_QUERY_FAILED"));
+    render(<AutomaticBackup />);
+    expect(await screen.findByText("백업 데이터 검증에 실패하여 자동 백업을 중단했습니다.")).toBeInTheDocument();
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+    expect(mocks.invoke).toHaveBeenCalledWith("get_automatic_backup_status");
+  });
+
+  it("never invokes the native writer when candidate serialization fails", async () => {
+    const circular: Record<string, unknown> = { version: 7 };
+    circular.self = circular;
+    mocks.invoke.mockResolvedValue(due);
+    mocks.createBackupCandidate.mockResolvedValue({ backup: circular, sourceCounts: candidate.sourceCounts });
+    render(<AutomaticBackup />);
+    expect(await screen.findByText("자동 백업 파일을 안전하게 기록하고 검증하지 못했습니다.")).toBeInTheDocument();
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+    expect(mocks.invoke).toHaveBeenCalledWith("get_automatic_backup_status");
+  });
+
   it("clears a prior error after a later successful save and publishes verified counts", async () => {
     vi.useFakeTimers();
     mocks.invoke

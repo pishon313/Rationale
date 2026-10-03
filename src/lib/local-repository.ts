@@ -5,6 +5,8 @@ import type { SyncConflictV1, SyncEntityType, SyncEnvelopeV1, SyncWriteSource } 
 
 type Identifiable = { id: string; updatedAt?: string };
 export type CollectionWrite = { collection: string; values: readonly Identifiable[] };
+export type BackupSnapshotRequest = { collection: string; fallback: readonly Identifiable[] };
+export type BackupSnapshotCollection = { collection: string; values: Identifiable[]; rawCount: number };
 export type SaveFailurePolicy = "global-retry" | "caller-managed";
 export type SaveCollectionsOptions = {
   resolveCorruption?: boolean;
@@ -92,6 +94,46 @@ async function database() {
   return Database.load("sqlite:tradejournal.db");
 }
 
+type SqliteRecordRow = { id: string; data: string; updated_at: string };
+type NativeBackupSnapshotRecord = { id: string; data: string; updatedAt: string };
+type NativeBackupSnapshotCollection = {
+  collection: string;
+  initialized: boolean;
+  rawCount: number;
+  records: NativeBackupSnapshotRecord[];
+};
+
+export async function loadBackupSnapshotCollections(requests: readonly BackupSnapshotRequest[]): Promise<BackupSnapshotCollection[]> {
+  if (!isTauriApp()) {
+    return Promise.all(requests.map(async ({ collection, fallback }) => {
+      const values = await loadCollection(collection, [...fallback]);
+      return { collection, values, rawCount: values.length };
+    }));
+  }
+
+  await database();
+  const { invoke } = await import("@tauri-apps/api/core");
+  const snapshot = await invoke<NativeBackupSnapshotCollection[]>("load_backup_snapshot");
+  if (snapshot.length !== requests.length) throw new Error("BACKUP_SNAPSHOT_INVALID_RESPONSE");
+
+  const result: BackupSnapshotCollection[] = [];
+  for (const [index, request] of requests.entries()) {
+    const collection = snapshot[index];
+    if (!collection || collection.collection !== request.collection || typeof collection.initialized !== "boolean" || !Number.isSafeInteger(collection.rawCount) || collection.rawCount < 0 || !Array.isArray(collection.records) || collection.rawCount !== collection.records.length || collection.records.some((record) => typeof record.id !== "string" || typeof record.data !== "string" || typeof record.updatedAt !== "string")) {
+      throw new Error("BACKUP_SNAPSHOT_INVALID_RESPONSE");
+    }
+    if (!collection.records.length) {
+      result.push({ collection: request.collection, values: collection.initialized ? [] : [...request.fallback], rawCount: 0 });
+      continue;
+    }
+    const rows = collection.records.map(({ id, data, updatedAt }) => ({ id, data, updated_at: updatedAt }));
+    const parsed = parseSqliteCollectionRows(request.collection, rows);
+    await persistSqliteCorruption(request.collection, parsed);
+    result.push({ collection: request.collection, values: parsed.valid, rawCount: collection.rawCount });
+  }
+  return result;
+}
+
 export async function loadCollection<T extends Identifiable>(collection: string, fallback: T[]): Promise<T[]> {
   try {
     if (!isTauriApp()) {
@@ -114,36 +156,11 @@ export async function loadCollection<T extends Identifiable>(collection: string,
       return parsed as T[];
     }
     const db = await database();
-    const rows = await db.select<Array<{ id: string; data: string; updated_at: string }>>("SELECT id, data, updated_at FROM app_records WHERE collection = $1 ORDER BY updated_at DESC", [collection]);
+    const rows = await db.select<SqliteRecordRow[]>("SELECT id, data, updated_at FROM app_records WHERE collection = $1 ORDER BY updated_at DESC", [collection]);
     if (rows.length) {
-      const valid: T[] = [];
-      const corrupt: SqliteQuarantineInput[] = [];
-      const invalidIndexes: number[] = [];
-      let summaryType: CorruptionErrorType = "INVALID_RECORD";
-      for (const [index, row] of rows.entries()) {
-        let parsed: unknown;
-        let errorType: CorruptionErrorType = "INVALID_RECORD";
-        try { parsed = JSON.parse(row.data); }
-        catch { errorType = "JSON_PARSE_ERROR"; }
-        try {
-          if (errorType === "JSON_PARSE_ERROR") throw new Error("parse");
-          const migrated = migrateStoredCollection(collection, [parsed]);
-          parsed = Array.isArray(migrated) ? migrated[0] : parsed;
-          validateStoredRecord(collection, parsed, index);
-          if ((parsed as Identifiable).id !== row.id) throw new Error("record id mismatch");
-          valid.push(parsed as T);
-          continue;
-        } catch {
-          summaryType = errorType;
-          invalidIndexes.push(index);
-          corrupt.push({ quarantineId: quarantineIdentifier("sqlite", collection, row.id, row.data), collection, recordId: row.id, rawData: row.data, originalUpdatedAt: row.updated_at, detectedAt: new Date().toISOString(), errorType, itemIndex: index });
-        }
-      }
-      if (corrupt.length) {
-        await quarantineSqlite(corrupt);
-        registerCorruption({ collection, source: "sqlite", affectedRecordCount: corrupt.length, validRecordCount: valid.length, quarantineIds: corrupt.map((item) => item.quarantineId), errorType: summaryType, invalidIndexes });
-      }
-      return valid;
+      const parsed = parseSqliteCollectionRows<T>(collection, rows);
+      await persistSqliteCorruption(collection, parsed);
+      return parsed.valid;
     }
     const state = await db.select<Array<{ id: string }>>("SELECT id FROM app_records WHERE collection = $1 AND id = $2 LIMIT 1", [COLLECTION_STATE, collection]);
     if (state.length) return [];
@@ -320,6 +337,40 @@ function registerCorruption(item: Omit<CorruptedCollection, "detectedAt">) {
 
 type BrowserQuarantine = { quarantineId: string; collection: string; detectedAt: string; originalKey: string; rawData: string; errorType: CorruptionErrorType; itemIndex?: number };
 type SqliteQuarantineInput = { quarantineId: string; collection: string; recordId: string; rawData: string; originalUpdatedAt: string; detectedAt: string; errorType: CorruptionErrorType; itemIndex: number };
+type ParsedSqliteCollection<T extends Identifiable = Identifiable> = { valid: T[]; corrupt: SqliteQuarantineInput[]; invalidIndexes: number[]; errorType: CorruptionErrorType };
+
+function parseSqliteCollectionRows<T extends Identifiable = Identifiable>(collection: string, rows: readonly SqliteRecordRow[]): ParsedSqliteCollection<T> {
+  const valid: T[] = [];
+  const corrupt: SqliteQuarantineInput[] = [];
+  const invalidIndexes: number[] = [];
+  let summaryType: CorruptionErrorType = "INVALID_RECORD";
+  for (const [index, row] of rows.entries()) {
+    let parsed: unknown;
+    let errorType: CorruptionErrorType = "INVALID_RECORD";
+    try { parsed = JSON.parse(row.data); }
+    catch { errorType = "JSON_PARSE_ERROR"; }
+    try {
+      if (errorType === "JSON_PARSE_ERROR") throw new Error("parse");
+      const migrated = migrateStoredCollection(collection, [parsed]);
+      parsed = Array.isArray(migrated) ? migrated[0] : parsed;
+      validateStoredRecord(collection, parsed, index);
+      if ((parsed as Identifiable).id !== row.id) throw new Error("record id mismatch");
+      valid.push(parsed as T);
+      continue;
+    } catch {
+      summaryType = errorType;
+      invalidIndexes.push(index);
+      corrupt.push({ quarantineId: quarantineIdentifier("sqlite", collection, row.id, row.data), collection, recordId: row.id, rawData: row.data, originalUpdatedAt: row.updated_at, detectedAt: new Date().toISOString(), errorType, itemIndex: index });
+    }
+  }
+  return { valid, corrupt, invalidIndexes, errorType: summaryType };
+}
+
+async function persistSqliteCorruption(collection: string, parsed: ParsedSqliteCollection) {
+  if (!parsed.corrupt.length) return;
+  await quarantineSqlite(parsed.corrupt);
+  registerCorruption({ collection, source: "sqlite", affectedRecordCount: parsed.corrupt.length, validRecordCount: parsed.valid.length, quarantineIds: parsed.corrupt.map((item) => item.quarantineId), errorType: parsed.errorType, invalidIndexes: parsed.invalidIndexes });
+}
 
 function quarantineBrowser(collection: string, rawData: string, errorType: CorruptionErrorType, itemIndex?: number) {
   const quarantineId = quarantineIdentifier("localStorage", collection, "", rawData);

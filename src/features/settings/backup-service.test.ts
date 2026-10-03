@@ -10,11 +10,12 @@ import { sampleStocks } from "@/features/stocks/sample-data";
 import type { Stock } from "@/features/stocks/types";
 import { sampleTrades } from "@/features/trades/sample-data";
 import { fallbackLanguagePreference } from "@/i18n/i18n-provider";
+import automaticBackupSourceCollectionsContract from "../../../tests/contracts/automatic-backup-source-collections.json";
 import { automaticBackupSourceCollections, createBackupCandidate, createBackupPayload } from "./backup-service";
 
-const repositoryMocks = vi.hoisted(() => ({ loadCollection: vi.fn(), getCorruptionSnapshot: vi.fn() }));
+const repositoryMocks = vi.hoisted(() => ({ loadBackupSnapshotCollections: vi.fn(), getCorruptionSnapshot: vi.fn() }));
 vi.mock("@/lib/local-repository", () => ({
-  loadCollection: repositoryMocks.loadCollection,
+  loadBackupSnapshotCollections: repositoryMocks.loadBackupSnapshotCollections,
   getCorruptionSnapshot: repositoryMocks.getCorruptionSnapshot,
   saveCollectionsAtomically: vi.fn(),
 }));
@@ -45,15 +46,20 @@ function sourceCollections() {
 
 function useSources(overrides: Partial<ReturnType<typeof sourceCollections>> = {}) {
   const values = { ...sourceCollections(), ...overrides };
-  repositoryMocks.loadCollection.mockImplementation(async (collection: keyof typeof values) => values[collection]);
+  repositoryMocks.loadBackupSnapshotCollections.mockImplementation(async (requests: Array<{ collection: keyof typeof values }>) => requests.map(({ collection }) => ({ collection, values: values[collection], rawCount: values[collection].length })));
   return values;
 }
 
 describe("automatic backup candidate", () => {
   beforeEach(() => {
-    repositoryMocks.loadCollection.mockReset();
+    repositoryMocks.loadBackupSnapshotCollections.mockReset();
     repositoryMocks.getCorruptionSnapshot.mockReset().mockReturnValue({ collections: [] });
     useSources();
+  });
+
+  it("matches the shared Rust and TypeScript source-collection contract", () => {
+    expect(automaticBackupSourceCollectionsContract).toHaveLength(16);
+    expect(automaticBackupSourceCollections).toEqual(automaticBackupSourceCollectionsContract);
   });
 
   it("contains every allowed source collection exactly once and excludes device-local caches", async () => {
@@ -110,7 +116,8 @@ describe("automatic backup candidate", () => {
     expect(candidate.backup.trades).toEqual(tombstones.map((trade) => expect.objectContaining({ id: trade.id, createdAt: trade.createdAt, quantity: trade.quantity, price: trade.price, origin: expect.any(Object), deletedAt: resetAt, updatedAt: resetAt })));
     expect(candidate.backup.trades.every((trade) => trade.deletedAt === resetAt)).toBe(true);
     expect(candidate).not.toHaveProperty("tradeLedgerResetSnapshots");
-    expect(repositoryMocks.loadCollection).not.toHaveBeenCalledWith("trade-ledger-reset-snapshots", expect.anything());
+    const requests = repositoryMocks.loadBackupSnapshotCollections.mock.calls[0]?.[0] as Array<{ collection: string }>;
+    expect(requests.map(({ collection }) => collection)).not.toContain("trade-ledger-reset-snapshots");
   });
 
   it("refuses a candidate when any source collection has unresolved corruption", async () => {

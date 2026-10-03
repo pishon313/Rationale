@@ -1,0 +1,18 @@
+[
+  "accounts",
+  "stocks",
+  "plans",
+  "trades",
+  "observations",
+  "reviews",
+  "rules",
+  "notes",
+  "language-preferences",
+  "dashboard-notes",
+  "earnings-events",
+  "preferences",
+  "portfolio-plan-state",
+  "portfolio-plan-revisions",
+  "portfolio-allocation-groups",
+  "portfolio-allocation-targets"
+]
