@@ -97,7 +97,9 @@ thead { letter-spacing: 0.015em; }
 .theme-preview[data-theme-preview="mint"] { --preview-paper: oklch(97.5% 0.012 170); --preview-accent: oklch(55% 0.145 168); --preview-soft: oklch(92.5% 0.045 169); --preview-ink: oklch(19% 0.025 245); }
 .theme-preview[data-theme-preview="rose-purple"] { --preview-paper: oklch(97.4% 0.009 340); --preview-accent: oklch(49% 0.19 356); --preview-soft: oklch(58% 0.15 295); --preview-ink: oklch(18% 0.028 300); }
 .theme-preview[data-theme-preview="midnight"] { --preview-paper: oklch(97.3% 0.01 255); --preview-accent: oklch(45% 0.17 268); --preview-soft: oklch(60% 0.13 300); --preview-ink: oklch(18% 0.038 255); }
+.theme-preview[data-theme-preview="sierra-blue"] { --preview-paper: oklch(97.2% 0.012 240); --preview-accent: oklch(46% 0.105 240); --preview-soft: oklch(57% 0.09 230); --preview-ink: oklch(20% 0.035 245); }
 .theme-preview[data-theme-preview="lemon"] { --preview-paper: oklch(98.2% 0.012 100); --preview-accent: oklch(42% 0.13 92); --preview-soft: oklch(88% 0.14 100); --preview-ink: oklch(20% 0.025 70); }
+.theme-preview[data-theme-preview="deep-black"] { --preview-paper: oklch(97% 0.004 90); --preview-accent: oklch(25% 0.005 260); --preview-soft: oklch(58% 0.012 250); --preview-ink: oklch(16% 0.005 260); }
 
 ::selection { background: var(--color-accent-soft); color: var(--color-ink); }
 

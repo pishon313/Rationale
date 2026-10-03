@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { themeIds, type ThemeId } from "./theme-preference";
 
 const css = readFileSync(join(process.cwd(), "tokens.css"), "utf8");
 
@@ -65,53 +66,103 @@ describe("theme token contracts", () => {
     expectCompletePalette(dark);
   });
 
+  it("defines complete Sierra Blue light, dark, and desaturated blue anchors", () => {
+    const light = declarations(':root[data-theme="sierra-blue"]');
+    const dark = declarations(':root.dark[data-theme="sierra-blue"]');
+
+    expect(light).toContain("--color-paper: oklch(97.2% 0.012 240)");
+    expect(light).toContain("--color-accent: oklch(46% 0.105 240)");
+    expect(light).toContain("--color-workbench-background: oklch(14.5% 0.03 235)");
+    expect(dark).toContain("--color-paper: oklch(13.5% 0.025 235)");
+    expect(dark).toContain("--color-accent: oklch(75% 0.1 235)");
+    expect(dark).toContain("--color-focus: oklch(82% 0.12 235)");
+    expectCompletePalette(light);
+    expectCompletePalette(dark);
+  });
+
+  it("defines complete Deep Black light, dark, and layered monochrome anchors", () => {
+    const light = declarations(':root[data-theme="deep-black"]');
+    const dark = declarations(':root.dark[data-theme="deep-black"]');
+
+    expect(light).toContain("--color-paper: oklch(97% 0.004 90)");
+    expect(light).toContain("--color-accent: oklch(25% 0.005 260)");
+    expect(light).toContain("--color-workbench-background: oklch(7% 0.004 260)");
+    expect(dark).toContain("--color-paper: oklch(8% 0.004 260)");
+    expect(dark).toContain("--color-surface: oklch(15.5% 0.006 260)");
+    expect(dark).toContain("--color-accent: oklch(82% 0.008 250)");
+    expectCompletePalette(light);
+    expectCompletePalette(dark);
+  });
+
   it("keeps the secondary accent compatibility alias in every palette", () => {
-    for (const selector of [
-      ':root,\n:root[data-theme="mint"]',
-      ':root.dark,\n:root.dark[data-theme="mint"]',
-      ':root[data-theme="rose-purple"]',
-      ':root.dark[data-theme="rose-purple"]',
-      ':root[data-theme="midnight"]',
-      ':root.dark[data-theme="midnight"]',
-      ':root[data-theme="lemon"]',
-      ':root.dark[data-theme="lemon"]',
-    ]) {
+    for (const theme of themeIds) for (const appearance of ["light", "dark"] as const) {
+      const selector = paletteSelector(theme, appearance);
       const block = declarations(selector);
       expect(block).toContain("--color-secondary-accent:");
       expect(block).toContain("--color-lilac: var(--color-secondary-accent)");
     }
   });
 
-  it("keeps secondary accent text readable on muted badge backgrounds", () => {
-    for (const [name, selector] of [
-      ["Mint Light", ':root,\n:root[data-theme="mint"]'],
-      ["Mint Dark", ':root.dark,\n:root.dark[data-theme="mint"]'],
-      ["Rose Purple Light", ':root[data-theme="rose-purple"]'],
-      ["Rose Purple Dark", ':root.dark[data-theme="rose-purple"]'],
-      ["Midnight Light", ':root[data-theme="midnight"]'],
-      ["Midnight Dark", ':root.dark[data-theme="midnight"]'],
-      ["Lemon Light", ':root[data-theme="lemon"]'],
-      ["Lemon Dark", ':root.dark[data-theme="lemon"]'],
-    ] as const) {
+  it("keeps core text, badge text, and focus indicators readable in all twelve combinations", () => {
+    for (const theme of themeIds) for (const appearance of ["light", "dark"] as const) {
+      const name = `${theme} ${appearance}`;
+      const selector = paletteSelector(theme, appearance);
       const block = declarations(selector);
-      const foreground = colorToken(block, "secondary-accent-text");
-      const background = colorToken(block, "paper-2");
-      expect(contrastRatio(foreground, background), name).toBeGreaterThanOrEqual(4.5);
+      for (const [foreground, background] of [
+        ["ink", "paper"], ["ink", "surface"], ["muted", "paper"], ["muted", "surface"],
+        ["secondary-accent-text", "paper-2"],
+      ] as const) {
+        expect(contrastRatio(colorToken(block, foreground), colorToken(block, background)), `${name}: ${foreground}/${background}`).toBeGreaterThanOrEqual(4.5);
+      }
+      for (const background of ["paper", "surface"] as const) {
+        expect(contrastRatio(colorToken(block, "focus"), colorToken(block, background)), `${name}: focus/${background}`).toBeGreaterThanOrEqual(3);
+      }
     }
   });
 
-  it("resolves every required semantic token for all eight palette and appearance combinations", () => {
+  it("resolves every required semantic token for all twelve palette and appearance combinations", () => {
     const mintLight = declarations(':root,\n:root[data-theme="mint"]');
     const mintDark = declarations(':root.dark,\n:root.dark[data-theme="mint"]');
 
-    for (const theme of ["mint", "rose-purple", "midnight", "lemon"] as const) {
+    for (const theme of themeIds) {
       const paletteLight = theme === "mint" ? "" : declarations(`:root[data-theme="${theme}"]`);
       const paletteDark = theme === "mint" ? "" : declarations(`:root.dark[data-theme="${theme}"]`);
       expectCompletePalette(mintLight + paletteLight);
       expectCompletePalette(mintLight + mintDark + paletteLight + paletteDark);
     }
   });
+
+  it("meets text, action, status, focus, and control contrast targets in both new themes", () => {
+    for (const theme of ["sierra-blue", "deep-black"] as const) for (const appearance of ["light", "dark"] as const) {
+      const name = `${theme} ${appearance}`;
+      const block = declarations(paletteSelector(theme, appearance));
+
+      for (const [foreground, background] of [
+        ["ink", "paper"], ["ink", "surface"], ["muted", "paper"], ["muted", "surface"],
+        ["accent-ink", "accent"], ["secondary-accent-text", "paper-2"],
+        ["danger", "paper"], ["danger", "surface"], ["success", "paper"], ["success", "surface"],
+        ["amber", "paper"], ["amber", "surface"],
+        ["workbench-ink", "workbench-background"], ["workbench-muted", "workbench-background"],
+        ["workbench-nav-ink", "workbench-nav"], ["workbench-active-ink", "workbench-active"],
+      ] as const) {
+        expect(contrastRatio(colorToken(block, foreground), colorToken(block, background)), `${name}: ${foreground}/${background}`).toBeGreaterThanOrEqual(4.5);
+      }
+
+      for (const [foreground, background] of [
+        ["focus", "paper"], ["focus", "surface"], ["focus", "accent-soft"],
+        ["rule-strong", "paper"], ["rule-strong", "surface"],
+        ["accent", "surface"], ["workbench-field-rule", "workbench-field"],
+      ] as const) {
+        expect(contrastRatio(colorToken(block, foreground), colorToken(block, background)), `${name}: ${foreground}/${background}`).toBeGreaterThanOrEqual(3);
+      }
+    }
+  });
 });
+
+function paletteSelector(theme: ThemeId, appearance: "light" | "dark") {
+  if (theme === "mint") return appearance === "light" ? ':root,\n:root[data-theme="mint"]' : ':root.dark,\n:root.dark[data-theme="mint"]';
+  return appearance === "light" ? `:root[data-theme="${theme}"]` : `:root.dark[data-theme="${theme}"]`;
+}
 
 const requiredPaletteTokens = [
   "paper", "paper-2", "paper-3", "surface", "ink", "ink-2", "muted", "rule", "rule-strong",

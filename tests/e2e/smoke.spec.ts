@@ -299,13 +299,17 @@ test("색상 테마를 즉시 적용하고 화면 이동과 새로고침 후에�
   const mint = page.getByRole("radio", { name: "민트" });
   const rosePurple = page.getByRole("radio", { name: "로즈 퍼플" });
   const midnight = page.getByRole("radio", { name: "미드나이트" });
+  const sierraBlue = page.getByRole("radio", { name: "Sierra Blue" });
   const lemon = page.getByRole("radio", { name: "레몬" });
+  const deepBlack = page.getByRole("radio", { name: "Deep Black" });
   await expect(root).toHaveAttribute("data-theme", "mint");
   await expect(mint).toBeChecked();
   await expect(rosePurple).not.toBeChecked();
   await expect(midnight).not.toBeChecked();
+  await expect(sierraBlue).not.toBeChecked();
   await expect(lemon).not.toBeChecked();
-  await expect(page.getByRole("radio", { name: /민트|로즈 퍼플|미드나이트|레몬/ })).toHaveCount(4);
+  await expect(deepBlack).not.toBeChecked();
+  await expect(page.getByRole("radio", { name: /민트|로즈 퍼플|미드나이트|Sierra Blue|레몬|Deep Black/ })).toHaveCount(6);
 
   await mint.focus();
   await page.keyboard.press("ArrowRight");
@@ -336,6 +340,45 @@ test("색상 테마를 즉시 적용하고 화면 이동과 새로고침 후에�
   await expect(root).toHaveAttribute("data-theme", "midnight");
   await expect(midnight).toBeChecked();
 
+  await page.getByText("Sierra Blue", { exact: true }).click();
+  await expect(root).toHaveAttribute("data-theme", "sierra-blue");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("rationale.theme"))).toBe("sierra-blue");
+  await page.goto("/dashboard");
+  await expect(root).toHaveAttribute("data-theme", "sierra-blue");
+  await page.goto("/stocks");
+  await expect(root).toHaveAttribute("data-theme", "sierra-blue");
+  await page.goto("/settings");
+  await page.reload();
+  await expect(sierraBlue).toBeChecked();
+
+  await page.getByRole("button", { name: "어두운 모드" }).click();
+  await expect(root).toHaveClass(/dark/);
+  await expect(root).toHaveAttribute("data-theme", "sierra-blue");
+  await page.reload();
+  await expect(root).toHaveAttribute("data-theme", "sierra-blue");
+  await expect(root).toHaveClass(/dark/);
+
+  await page.getByText("Deep Black", { exact: true }).click();
+  await expect(root).toHaveAttribute("data-theme", "deep-black");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("rationale.theme"))).toBe("deep-black");
+  await page.goto("/portfolio");
+  await expect(root).toHaveAttribute("data-theme", "deep-black");
+  await page.goto("/trades");
+  await expect(root).toHaveAttribute("data-theme", "deep-black");
+  await page.goto("/settings");
+  await page.reload();
+  await expect(root).toHaveAttribute("data-theme", "deep-black");
+  await expect(root).toHaveClass(/dark/);
+  await expect(deepBlack).toBeChecked();
+
+  await page.getByRole("button", { name: "밝은 모드" }).click();
+  await expect(root).not.toHaveClass(/dark/);
+  await expect(root).toHaveAttribute("data-theme", "deep-black");
+  await page.reload();
+  await expect(root).not.toHaveClass(/dark/);
+  await expect(root).toHaveAttribute("data-theme", "deep-black");
+
+  await page.getByText("미드나이트", { exact: true }).click();
   await page.getByRole("button", { name: "어두운 모드" }).click();
   await expect(root).toHaveClass(/dark/);
   await page.getByText("레몬", { exact: true }).click();

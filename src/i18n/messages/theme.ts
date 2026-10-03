@@ -9,8 +9,12 @@ const entries = [
   ["따뜻하고 현대적인", "温かくモダン", "Warm and modern", "Chaleureux et moderne", "Caldo e moderno", "Cálido y moderno"],
   ["미드나이트", "ミッドナイト", "Midnight", "Minuit", "Mezzanotte", "Medianoche"],
   ["차갑고 정밀한", "クールで精密", "Cool and precise", "Frais et précis", "Freddo e preciso", "Frío y preciso"],
+  ["Sierra Blue", "Sierra Blue", "Sierra Blue", "Sierra Blue", "Sierra Blue", "Sierra Blue"],
+  ["차분하고 맑은 블루", "穏やかで澄んだブルー", "Calm and clear blue", "Bleu calme et limpide", "Blu calmo e limpido", "Azul sereno y claro"],
   ["레몬", "レモン", "Lemon", "Citron", "Limone", "Limón"],
   ["밝고 낙관적인", "明るく楽観的", "Bright and optimistic", "Lumineux et optimiste", "Luminoso e ottimista", "Luminoso y optimista"],
+  ["Deep Black", "Deep Black", "Deep Black", "Deep Black", "Deep Black", "Deep Black"],
+  ["절제되고 깊은 모노크롬", "深みのある洗練されたモノクローム", "Deep and refined monochrome", "Monochrome profond et raffiné", "Monocromia profonda e raffinata", "Monocromo profundo y refinado"],
   ["현재 테마", "現在のテーマ", "Current theme", "Thème actuel", "Tema attuale", "Tema actual"],
 ] as const;
 

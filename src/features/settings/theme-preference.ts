@@ -1,4 +1,4 @@
-export const themeIds = ["mint", "rose-purple", "midnight", "lemon"] as const;
+export const themeIds = ["mint", "rose-purple", "midnight", "sierra-blue", "lemon", "deep-black"] as const;
 export type ThemeId = (typeof themeIds)[number];
 
 export const defaultTheme: ThemeId = "mint";

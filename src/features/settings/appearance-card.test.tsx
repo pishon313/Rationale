@@ -18,21 +18,27 @@ describe("AppearanceCard", () => {
     const mint = screen.getByRole("radio", { name: "민트" });
     const rose = screen.getByRole("radio", { name: "로즈 퍼플" });
     const midnight = screen.getByRole("radio", { name: "미드나이트" });
+    const sierraBlue = screen.getByRole("radio", { name: "Sierra Blue" });
     const lemon = screen.getByRole("radio", { name: "레몬" });
+    const deepBlack = screen.getByRole("radio", { name: "Deep Black" });
     await waitFor(() => expect(mint).toBeChecked());
     expect(rose).not.toBeChecked();
     expect(midnight).not.toBeChecked();
+    expect(sierraBlue).not.toBeChecked();
     expect(lemon).not.toBeChecked();
-    expect(screen.getAllByRole("radio")).toHaveLength(4);
+    expect(deepBlack).not.toBeChecked();
+    expect(screen.getAllByRole("radio")).toHaveLength(6);
     expect(screen.getByText("현재 테마")).toBeInTheDocument();
     expect(screen.getByText("밝고 낙관적인")).toBeInTheDocument();
+    expect(screen.getByText("차분하고 맑은 블루")).toBeInTheDocument();
+    expect(screen.getByText("절제되고 깊은 모노크롬")).toBeInTheDocument();
     expect(document.documentElement).toHaveAttribute("data-theme", "mint");
     expect(container.querySelector("fieldset > div")).toHaveClass("lg:grid-cols-1", "2xl:grid-cols-2");
   });
 
   it("applies and persists every palette immediately", async () => {
     render(<AppearanceCard />);
-    for (const [name, id] of [["로즈 퍼플", "rose-purple"], ["미드나이트", "midnight"], ["레몬", "lemon"], ["민트", "mint"]] as const) {
+    for (const [name, id] of [["로즈 퍼플", "rose-purple"], ["미드나이트", "midnight"], ["Sierra Blue", "sierra-blue"], ["레몬", "lemon"], ["Deep Black", "deep-black"], ["민트", "mint"]] as const) {
       const option = screen.getByRole("radio", { name });
       fireEvent.click(option);
       expect(option).toBeChecked();

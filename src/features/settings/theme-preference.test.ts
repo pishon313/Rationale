@@ -9,8 +9,8 @@ describe("theme preference", () => {
 
   afterEach(() => vi.restoreAllMocks());
 
-  it("accepts only the four V2 theme IDs", () => {
-    expect(themeIds).toEqual(["mint", "rose-purple", "midnight", "lemon"]);
+  it("accepts all six canonical theme IDs in display order", () => {
+    expect(themeIds).toEqual(["mint", "rose-purple", "midnight", "sierra-blue", "lemon", "deep-black"]);
     for (const theme of themeIds) expect(isThemeId(theme)).toBe(true);
     expect(isThemeId("unknown")).toBe(false);
   });
