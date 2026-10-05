@@ -1,4 +1,4 @@
-# TradeJournal
+# Rationale
 
 투자 아이디어 → 관찰 → 매수 계획 → 실제 매매 → 계획 대비 분석 → 회고를 연결하는 개인용 로컬 투자일지입니다. Next.js와 Tauri로 제작되어 웹 개발 환경과 macOS 앱에서 실행할 수 있습니다.
 
@@ -55,14 +55,14 @@ source "$HOME/.cargo/env"
 
 | 용도 | 표시 이름 | Tauri identifier | SQLite / 자동 백업 | Keychain service |
 | --- | --- | --- | --- | --- |
-| `pnpm app:dev` | `Rationale Dev` | `com.tradejournal.local.dev` | `~/Library/Application Support/com.tradejournal.local.dev/tradejournal.db` / `backups` | `com.tradejournal.local.dev` |
-| `pnpm app:build` | `TradeJournal` | `com.tradejournal.local` | `~/Library/Application Support/com.tradejournal.local/tradejournal.db` / `backups` | `com.tradejournal.local` |
+| `pnpm app:dev` | `Rationale Dev` | `com.concinnia.rationale.dev` | `~/Library/Application Support/com.concinnia.rationale.dev/tradejournal.db` / `backups` | `com.concinnia.rationale.dev` |
+| `pnpm app:build` | `Rationale` | `com.concinnia.rationale` | `~/Library/Application Support/com.concinnia.rationale/tradejournal.db` / `backups` | `com.concinnia.rationale` |
 
 `pnpm app:dev`는 기본 release 설정에 `src-tauri/tauri.dev.conf.json`을 병합합니다. SQLite 데이터베이스, 자동 백업과 같은 app-data 파일, 손상 데이터 격리 영역 및 복원 스냅샷, macOS Keychain 항목은 dev/release identifier별로 분리됩니다. 저장소 clone 경로는 이 분리의 기준이 아니며, 여러 clone에서 실행한 개발 앱은 동일한 dev identity를 사용합니다.
 
-개발 앱은 반드시 `pnpm app:dev`로 실행하세요. `pnpm tauri dev`를 직접 호출하면 dev override를 우회하고 기본 release 설정을 사용합니다. 서로 다른 앱 이름과 identifier 덕분에 `Rationale Dev`와 설치된 `TradeJournal`은 같은 Mac에 함께 둘 수 있습니다.
+개발 앱은 반드시 `pnpm app:dev`로 실행하세요. `pnpm tauri dev`를 직접 호출하면 dev override를 우회하고 기본 release 설정을 사용합니다. 서로 다른 앱 이름과 identifier 덕분에 `Rationale Dev`와 설치된 `Rationale`은 같은 Mac에 함께 둘 수 있습니다.
 
-기존 `com.tradejournal.local` 데이터와 Keychain 항목은 이동, 복사, 삭제 또는 변경하지 않습니다. 기존 설치 앱과 `pnpm app:build` 결과물은 계속 같은 release identity로 기존 데이터에 접근합니다. 최종 Rationale production identifier를 정하고 기존 데이터를 이전하는 작업은 별도의 후속 설계와 검증이 필요합니다.
+공식 배포 전 production identity를 `com.concinnia.rationale`로 확정했으며, 이전 개발 identity의 데이터와 Keychain 항목은 이전하지 않습니다. 공식 배포 이후에는 이 identifier를 유지해 앱 업데이트가 같은 SQLite, 자동 백업과 Keychain namespace를 계속 사용하도록 합니다.
 
 Mac 앱의 자동 백업과 수동 내보내기는 백업 대상 16개 컬렉션을 하나의 SQLite 읽기 트랜잭션과 동일 connection에서 읽습니다. 따라서 백업 도중 같은 개수의 update나 관계 레코드 변경이 발생해도 서로 다른 시점의 값이 한 파일에 섞이지 않습니다. 트랜잭션은 raw 행을 메모리에 담은 직후 종료되며, 마이그레이션·검증·직렬화·파일 기록은 그 뒤에 수행됩니다. 이 보장은 임시 WAL SQLite의 두 connection과 명시적 동기화 지점을 사용하는 반복 동시성 테스트로 검증하며, 실제 사용자 데이터는 테스트에 사용하지 않습니다.
 
@@ -75,11 +75,15 @@ pnpm app:build
 결과물은 다음 위치에 생성됩니다.
 
 ```text
-src-tauri/target/release/bundle/macos/TradeJournal.app
+src-tauri/target/release/bundle/macos/Rationale.app
 src-tauri/target/release/bundle/dmg/*.dmg
 ```
 
 개인 개발 서명 없이 만든 앱은 다른 Mac에서 Gatekeeper 경고가 표시될 수 있습니다.
+
+### 릴리스 버전과 데이터 migration
+
+현재 앱 버전은 `0.1.0`입니다. 정식 릴리스마다 patch 버전을 `0.0.1`씩 올리며 다음 릴리스는 `0.1.1`입니다. 기존 SQLite migration은 수정하지 않고 schema 변경마다 새 migration 버전을 추가합니다. 릴리스 전에는 이전 앱 버전의 데이터베이스가 새 앱에서 정상적으로 migration되는지 검증합니다.
 
 ## 브라우저 미리보기
 

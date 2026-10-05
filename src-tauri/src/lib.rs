@@ -1628,7 +1628,7 @@ pub fn run() {
             quarantine_corrupt_records
         ])
         .run(tauri::generate_context!())
-        .expect("TradeJournal 실행 중 오류가 발생했습니다");
+        .expect("Rationale 실행 중 오류가 발생했습니다");
 }
 
 #[cfg(test)]
@@ -1656,12 +1656,17 @@ mod app_identity_tests {
 
         let release_identifier = config_value(&release, "identifier");
         let development_identifier = config_value(&development, "identifier");
-        assert_eq!(release_identifier, "com.tradejournal.local");
-        assert_eq!(development_identifier, "com.tradejournal.local.dev");
+        assert_eq!(release_identifier, "com.concinnia.rationale");
+        assert_eq!(development_identifier, "com.concinnia.rationale.dev");
+        assert_eq!(release_identifier, release_identifier.to_ascii_lowercase());
+        assert_eq!(
+            development_identifier,
+            development_identifier.to_ascii_lowercase()
+        );
         assert_ne!(release_identifier, development_identifier);
-        assert_eq!(config_value(&release, "productName"), "TradeJournal");
+        assert_eq!(config_value(&release, "productName"), "Rationale");
         assert_eq!(config_value(&development, "productName"), "Rationale Dev");
-        assert_eq!(release["app"]["windows"][0]["title"], "TradeJournal");
+        assert_eq!(release["app"]["windows"][0]["title"], "Rationale");
         assert_eq!(development["app"]["windows"][0]["title"], "Rationale Dev");
 
         assert_eq!(

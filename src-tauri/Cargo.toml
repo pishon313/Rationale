@@ -2,7 +2,7 @@
 name = "tradejournal"
 version = "0.1.0"
 description = "개인 투자 의사결정·매매일지"
-authors = ["TradeJournal"]
+authors = ["Rationale"]
 edition = "2021"
 
 [lib]

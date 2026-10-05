@@ -14,9 +14,8 @@ Tests use the TypeScript mock transport for contract/ledger behavior, Swift unit
 
 ## Configuration gate
 
-The repository currently has placeholder bundle identifier `com.tradejournal.local`, no CloudKit entitlement file, no Apple team/signing configuration, and no explicit macOS minimum. Real bridge activation must wait for:
+The repository uses the finalized macOS bundle identifier `com.concinnia.rationale`, but has no CloudKit entitlement file, Apple team/signing configuration, or explicit macOS minimum. Real bridge activation must still wait for:
 
-- final macOS bundle ID
 - future iOS bundle ID
 - shared `iCloud.<identifier>` container
 - Apple Team/App IDs with iCloud + CloudKit capability

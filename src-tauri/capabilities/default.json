@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "TradeJournal 로컬 앱 권한",
+  "description": "Rationale 로컬 앱 권한",
   "windows": [
     "main"
   ],

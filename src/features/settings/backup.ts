@@ -114,7 +114,7 @@ const supportedCurrencies = new Set<string>(currencies);
 
 export function validateBackupPayload(value: unknown): ValidatedBackup {
   if (!isRecord(value) || typeof value.version !== "number" || !supportedVersions.has(value.version)) {
-    throw new Error("올바른 TradeJournal 백업이 아닙니다.");
+    throw new Error("올바른 Rationale 백업이 아닙니다.");
   }
 
   const stocks = validateRecords(value.stocks, "종목");

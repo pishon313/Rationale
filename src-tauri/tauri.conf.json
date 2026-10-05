@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "TradeJournal",
+  "productName": "Rationale",
   "version": "0.1.0",
-  "identifier": "com.tradejournal.local",
+  "identifier": "com.concinnia.rationale",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:3000",
@@ -10,7 +10,7 @@
     "frontendDist": "../out"
   },
   "app": {
-    "windows": [{ "title": "TradeJournal", "width": 1440, "height": 900, "minWidth": 980, "minHeight": 680, "resizable": true }],
+    "windows": [{ "title": "Rationale", "width": 1440, "height": 900, "minWidth": 980, "minHeight": 680, "resizable": true }],
     "security": { "csp": null }
   },
   "bundle": { "active": true, "targets": ["dmg", "app"], "icon": [] }
